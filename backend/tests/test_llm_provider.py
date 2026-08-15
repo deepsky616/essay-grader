@@ -75,6 +75,48 @@ def test_provider_subclass_cannot_override_boundary_protection_hooks(
         type("BypassProvider", (LLMProvider,), namespace)
 
 
+@pytest.mark.parametrize(
+    "protected_name",
+    ["complete", "list_models", "__getattribute__"],
+)
+def test_provider_subclass_rejects_guarded_method_inherited_from_leading_mixin(
+    protected_name,
+):
+    guarded_mixin = type(
+        "GuardedMethodMixin",
+        (),
+        {protected_name: lambda *args, **kwargs: None},
+    )
+    namespace = {
+        "_complete": lambda self, request, max_output_tokens, json_output: LLMResponse(
+            text="unused"
+        ),
+        "_list_models": lambda self, request: [],
+    }
+
+    with pytest.raises(TypeError, match=protected_name):
+        type(
+            "InheritedBypassProvider",
+            (guarded_mixin, LLMProvider),
+            namespace,
+        )
+
+
+def test_provider_subclass_rejects_noncooperative_leading_init_subclass_mixin():
+    class NonCooperativeMixin:
+        def __init_subclass__(cls, **kwargs):
+            pass
+
+    with pytest.raises(TypeError, match="__init_subclass__"):
+
+        class BypassProvider(NonCooperativeMixin, LLMProvider):
+            def _complete(self, request, max_output_tokens, json_output):
+                return LLMResponse(text="unused")
+
+            def _list_models(self, request):
+                return []
+
+
 @pytest.mark.parametrize("method_name", ["complete", "list_models"])
 def test_provider_instance_cannot_replace_guarded_public_method(method_name):
     provider = FakeLLMProvider(responses=[])

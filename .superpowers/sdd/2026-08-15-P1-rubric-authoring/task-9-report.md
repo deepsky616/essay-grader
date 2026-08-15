@@ -196,3 +196,47 @@
 - 직접 대입과 인스턴스 속성 사전 가림 모두 공개 호출 결과를 바꾸지 못한다. 컴파일 쪽은 식별정보 차단 감사, 설정 쪽은 통과 감사를 각각 확인했다.
 - 제공자 클래스 객체 자체를 실행 중에 바꾸는 전역 변조는 이번 주입 경계보다 넓은 실행 환경 권한 문제이므로 범위에 넣지 않았다.
 - 전체 검사 경고 7개는 기존 시험 클라이언트, 제미나이 도구, 피디에프 도구의 사용 중단 예정 알림이다.
+
+---
+
+## 고침 4차
+
+### 상태
+
+앞쪽 혼합 기반에서 물려받은 보호 메서드와 상위 호출을 끊는 클래스 생성 훅도 제공자 공개 경계를 가로채지 못하도록 클래스 생성 검사를 실제 메서드 탐색 순서 기준으로 바꿨다.
+
+### 실패 뒤 성공 근거
+
+- 앞쪽 혼합 기반이 `complete`, `list_models`, `__getattribute__`를 각각 제공하는 세 검사는 클래스 생성 오류가 나지 않아 모두 실패했다.
+- 앞쪽 혼합 기반의 `__init_subclass__`가 `super`를 부르지 않는 검사는 기존 `LLMProvider.__init_subclass__` 검사를 건너뛰고 클래스가 만들어져 실패했다.
+- 전용 메타클래스가 클래스 생성 뒤 실제 메서드 탐색 결과를 검사하도록 바꾼 뒤 새 검사 네 개가 모두 성공했다.
+
+### 구현 내용
+
+- `ABCMeta`를 확장한 `_SealedProviderMeta`를 `LLMProvider`에 붙였다. 이 메타클래스는 클래스 객체가 만들어진 뒤 전체 메서드 탐색 순서를 검사하므로 혼합 기반의 비협력 클래스 생성 훅에도 의존하지 않는다.
+- `complete`, `list_models`, `__getattribute__`, `__setattr__`, `__init_subclass__`마다 새 클래스의 전체 기반 순서에서 이름을 처음 정의한 객체를 찾고, `LLMProvider` 자료 사전의 원본 객체와 같은지 비교한다. 클래스 몸체 재정의와 앞쪽 혼합 기반 상속을 같은 규칙으로 거절한다.
+- `LLMProvider.__init_subclass__`는 협력 상위 호출만 남겼다. 봉인 판단은 새 메타클래스 한 곳이 맡으며, 뒤쪽 혼합 기반처럼 실제 탐색 결과가 `LLMProvider` 원본인 정상 다중 상속은 허용한다.
+- `GeminiLLMProvider`와 `FakeLLMProvider`의 단일 상속 구조, 공개 메서드 직접 호출, 컴파일러와 설정의 기반 원본 직접 호출은 바꾸지 않았다.
+
+### 검사 명령과 결과
+
+- 실패 확인: `backend/.venv/bin/python -m pytest tests/test_llm_provider.py::test_provider_subclass_rejects_guarded_method_inherited_from_leading_mixin tests/test_llm_provider.py::test_provider_subclass_rejects_noncooperative_leading_init_subclass_mixin -q`: 4개 실패.
+- 같은 초점 검사 재실행: 4개 성공, 경고 2개.
+- `backend/.venv/bin/python -m pytest tests/test_llm_provider.py -q`: 22개 성공, 경고 2개.
+- `backend/.venv/bin/python -m pytest tests/test_gateway.py tests/test_llm_provider.py tests/test_rubric_validator.py tests/test_rubric_compiler.py tests/test_api_settings.py -q`: 126개 성공, 경고 7개.
+- `backend/.venv/bin/python -m pytest tests/ -q`: 166개 성공, 경고 7개.
+- `backend/.venv/bin/python -m compileall -q app tests`: 성공.
+- `git diff --check`: 성공.
+
+### 바뀐 파일
+
+- `backend/app/providers/base.py`
+- `backend/tests/test_llm_provider.py`
+- 이 보고 파일
+
+### 자체 검토와 걱정거리
+
+- 직접 `provider.complete`와 `provider.list_models`를 부르는 흐름은 기존 식별정보 차단 및 감사 검사를 통과했다. 컴파일러와 설정이 `LLMProvider` 원본을 직접 부르는 제품 흐름도 같은 관문 검사를 유지했다.
+- 정확한 전송 관문 자료형과 원본 `send`, 슬롯 봉인, 교사 정본 전체 보존, 수준 경계 선검증, 구조 오류 한 번 재시도 회귀가 모두 관련 시험에서 유지됐다.
+- 실행 중에 제공자 클래스 객체 자체를 바꿀 수 있는 같은 권한의 코드는 여전히 이번 클래스 생성 계약보다 넓은 실행 환경 권한 문제다.
+- 전체 검사 경고 7개는 기존 시험 클라이언트, 제미나이 도구, 피디에프 도구의 사용 중단 예정 알림이다.

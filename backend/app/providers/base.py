@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from typing import final
 
@@ -9,6 +9,43 @@ _SEALED_PUBLIC_METHODS = frozenset({"complete", "list_models"})
 _SEALED_PROVIDER_OVERRIDES = _SEALED_PUBLIC_METHODS | frozenset(
     {"__getattribute__", "__setattr__", "__init_subclass__"}
 )
+
+
+class _SealedProviderMeta(ABCMeta):
+    """실제 메서드 탐색 결과가 공통 전송 경계를 가리키도록 강제한다."""
+
+    def __new__(
+        mcls,
+        name: str,
+        bases: tuple[type, ...],
+        namespace: dict[str, object],
+        **kwargs: object,
+    ) -> type:
+        cls = super().__new__(mcls, name, bases, namespace, **kwargs)
+        provider_base = globals().get("LLMProvider")
+        if (
+            not isinstance(provider_base, type)
+            or provider_base not in cls.__mro__[1:]
+        ):
+            return cls
+
+        overridden = {
+            method_name
+            for method_name in _SEALED_PROVIDER_OVERRIDES
+            if next(
+                base.__dict__[method_name]
+                for base in cls.__mro__
+                if method_name in base.__dict__
+            )
+            is not provider_base.__dict__[method_name]
+        }
+        if overridden:
+            names = ", ".join(sorted(overridden))
+            raise TypeError(
+                "전송 관문이 소유한 제공자 메서드는 다시 정의할 수 없습니다: "
+                f"{names}"
+            )
+        return cls
 
 
 @dataclass
@@ -33,7 +70,7 @@ def _require_transmission_gateway(provider: object) -> TransmissionGateway:
     return gateway
 
 
-class LLMProvider(ABC):
+class LLMProvider(ABC, metaclass=_SealedProviderMeta):
     """모든 언어 모형 제공자가 공유하는 강제 전송 경계다.
 
     공개 메서드는 요청을 불변 전송 자료로 복사한 뒤 관문으로 보낸다. 하위
@@ -42,13 +79,6 @@ class LLMProvider(ABC):
 
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
-        overridden = _SEALED_PROVIDER_OVERRIDES.intersection(cls.__dict__)
-        if overridden:
-            names = ", ".join(sorted(overridden))
-            raise TypeError(
-                "전송 관문이 소유한 제공자 메서드는 다시 정의할 수 없습니다: "
-                f"{names}"
-            )
 
     def __getattribute__(self, name: str):
         if name == "complete":
