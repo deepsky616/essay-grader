@@ -1,6 +1,7 @@
 from typing import Any
 
 from sqlalchemy import JSON, Integer, String
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -18,9 +19,9 @@ class Assessment(Base, TimestampMixin):
     total_points: Mapped[int] = mapped_column(Integer, nullable=False)
 
     achievement_standards: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, nullable=False, default=list
+        MutableList.as_mutable(JSON), nullable=False, default=list
     )
     level_cutoffs: Mapped[dict[str, int]] = mapped_column(
-        JSON, nullable=False, default=dict
+        MutableDict.as_mutable(JSON), nullable=False, default=dict
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
