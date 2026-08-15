@@ -23,7 +23,7 @@ class DataPolicyAcknowledgement(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     wording_version: Mapped[str] = mapped_column(String(80), nullable=False)
-    wording_text: Mapped[str] = mapped_column(Text, nullable=False)
+    wording_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False)
     confirmed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
