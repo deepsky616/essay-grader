@@ -242,7 +242,21 @@ def test_provider_exception_does_not_put_payload_in_audit_log(gateway, tmp_path)
     assert "api-key-secret" not in audit_text
 
 
-@pytest.mark.parametrize("ignored_character", ["\u034f", "\ufe0f", "\U000e0100"])
+@pytest.mark.parametrize(
+    "ignored_character",
+    [
+        "\u034f",
+        "\u115f",
+        "\u1160",
+        "\u3164",
+        "\uffa0",
+        "\ufff0",
+        "\U000e0001",
+        "\U000e0020",
+        "\ufe0f",
+        "\U000e0100",
+    ],
+)
 def test_basic_ignorable_character_cannot_bypass_roster_name_check(
     gateway, ignored_character
 ):
@@ -253,6 +267,8 @@ def test_basic_ignorable_character_cannot_bypass_roster_name_check(
 
     with pytest.raises(PIIViolation):
         gateway.send(request, lambda req: "should not run")
+
+    assert request.text_parts == (f"김{ignored_character}미래",)
 
 
 def test_gateway_provider_is_fixed_when_writing_audit(tmp_path):

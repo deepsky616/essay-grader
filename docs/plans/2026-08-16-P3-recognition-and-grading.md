@@ -1054,7 +1054,9 @@ from tests.fakes import FakeLLMProvider
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -1424,7 +1426,9 @@ from tests.fakes import FakeLLMProvider
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -2050,7 +2054,9 @@ from tests.fakes import FakeRecognitionProvider
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -2672,7 +2678,9 @@ from tests.fakes import FakeLLMProvider, FakeRecognitionProvider
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -3448,6 +3456,7 @@ def execute_run(session: Session, run_id: int) -> None:
         gateway = TransmissionGateway(
             audit_log_path=settings.audit_log_path(),
             pii_terms_provider=roster_pii_terms(session),
+            provider="gemini",
         )
         llm = GeminiLLMProvider(api_key=api_key, model=model)
         recognizer = GeminiRecognitionProvider(llm=llm, gateway=gateway)

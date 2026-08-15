@@ -430,6 +430,18 @@ def test_context_uses_anonymous_token_for_llm(graded_setup, db_session):
     assert "김미래" not in str(payload)
 
 
+def test_rejects_when_anonymous_token_is_missing(graded_setup, db_session):
+    from app.models.scan import Submission
+
+    run_id = graded_setup["run"].id
+    _confirm_all(db_session, run_id)
+    submission = db_session.query(Submission).first()
+    submission.anonymous_token = None
+
+    with pytest.raises(NotConfirmed, match="익명 토큰"):
+        build_contexts(db_session, run_id, _rubric())
+
+
 def test_item_detail_includes_criterion_and_max(graded_setup, db_session):
     run_id = graded_setup["run"].id
     _confirm_all(db_session, run_id, score_value=1)
@@ -606,6 +618,10 @@ def build_contexts(
     for submission_id, item_scores in grouped.items():
         submission = session.get(Submission, submission_id)
         student = session.get(Student, submission.student_id)
+        if not submission.anonymous_token:
+            raise NotConfirmed(
+                "익명 토큰이 없는 답안이 있습니다. P2 처리 단계를 다시 확인하세요."
+            )
 
         details: list[ItemDetail] = []
         for score in sorted(item_scores, key=lambda s: s.item_no):
@@ -643,7 +659,7 @@ def build_contexts(
                 submission_id=submission_id,
                 student_number=student.number,
                 student_name=student.name,
-                anonymous_token=submission.anonymous_token or f"S-{submission_id}",
+                anonymous_token=submission.anonymous_token,
                 grade=rubric.assessment.grade,
                 subject=rubric.assessment.subject,
                 total_score=total,
@@ -663,7 +679,7 @@ def build_contexts(
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_feedback_builder.py -v`
-Expected: PASS (7 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -698,7 +714,9 @@ from tests.fakes import FakeLLMProvider
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -1713,6 +1731,7 @@ def generate(run_id: int, session: Session = Depends(get_session)) -> dict[str, 
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
         pii_terms_provider=roster_pii_terms(session),
+        provider="gemini",
     )
     provider = GeminiLLMProvider(api_key=api_key, model=model)
 

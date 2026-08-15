@@ -3923,6 +3923,7 @@ def roster_pii_terms(session: Session) -> Callable[[], set[str]]:
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
         pii_terms_provider=roster_pii_terms(session),
+        provider="gemini",
     )
 ```
 

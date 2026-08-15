@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
-from unicodedata import category, normalize
+from unicodedata import normalize
 
 T = TypeVar("T")
 
@@ -26,12 +26,27 @@ _ALLOWED_PURPOSES = frozenset(
     }
 )
 _ANONYMOUS_TOKEN = re.compile(r"S-[0-9a-f]{8}", re.ASCII)
-_BASIC_IGNORABLE_CODEPOINTS = frozenset({0x034F})
-_VARIATION_SELECTOR_RANGES = (
-    (0x180B, 0x180D),
-    (0x180F, 0x180F),
+# 유니코드 16.0.0 DerivedCoreProperties의
+# Default_Ignorable_Code_Point 전체 범위다. 런타임 유니코드 자료에 의존하지
+# 않아 동작이 버전 변화로 달라지지 않도록 고정한다.
+_DEFAULT_IGNORABLE_RANGES_UNICODE_16_0 = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
     (0xFE00, 0xFE0F),
-    (0xE0100, 0xE01EF),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
 )
 
 
@@ -138,10 +153,10 @@ class TransmissionGateway:
 
 
 def _comparison_text(value: str) -> str:
-    """비교 전 우회에 쓰일 수 있는 기본 무시 글자를 제거한다.
+    """비교 전 유니코드 16.0.0 기본 무시 글자를 제거한다.
 
     한글을 포함한 일반 문자를 보존하기 위해 결합 문자 범주 전체를 지우지
-    않는다. 형식 글자와 결합 그래핌 결합자, 명시한 변형 선택자 범위만 제거한다.
+    않고, 고정한 기본 무시 글자 범위만 제거한다. 실제 전송 본문은 바꾸지 않는다.
     """
     return "".join(
         character
@@ -151,9 +166,8 @@ def _comparison_text(value: str) -> str:
 
 
 def _is_basic_ignorable(character: str) -> bool:
-    if category(character) == "Cf" or ord(character) in _BASIC_IGNORABLE_CODEPOINTS:
-        return True
     codepoint = ord(character)
     return any(
-        start <= codepoint <= end for start, end in _VARIATION_SELECTOR_RANGES
+        start <= codepoint <= end
+        for start, end in _DEFAULT_IGNORABLE_RANGES_UNICODE_16_0
     )

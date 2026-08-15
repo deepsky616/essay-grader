@@ -1359,6 +1359,7 @@ def gateway(tmp_path):
     return TransmissionGateway(
         audit_log_path=tmp_path / "audit.log",
         pii_terms_provider=lambda: {"김미래", "박균형"},
+        provider="test-provider",
     )
 
 
@@ -1477,9 +1478,11 @@ class TransmissionGateway:
         self,
         audit_log_path: Path,
         pii_terms_provider: Callable[[], set[str]],
+        provider: str,
     ) -> None:
         self._audit_log_path = audit_log_path
         self._pii_terms_provider = pii_terms_provider
+        self._provider = provider
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def send(self, request: OutboundRequest, call: Callable[[OutboundRequest], T]) -> T:
@@ -1502,6 +1505,7 @@ class TransmissionGateway:
         # 페이로드 본문은 절대 기록하지 않는다. 크기와 메타데이터만 남긴다.
         entry: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "provider": self._provider,
             "purpose": request.purpose,
             "pii_check": pii_check,
             "anonymous_token": request.anonymous_token,
@@ -2174,7 +2178,9 @@ VALID_RUBRIC = {
 @pytest.fixture
 def gateway(tmp_path):
     return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
+        audit_log_path=tmp_path / "audit.log",
+        pii_terms_provider=set,
+        provider="test-provider",
     )
 
 
@@ -3175,6 +3181,7 @@ def run_compile(
         audit_log_path=settings.audit_log_path(),
         # P1 에서는 명렬표가 없다. P2 에서 학생 이름 집합을 넘기도록 교체한다.
         pii_terms_provider=set,
+        provider="gemini",
     )
     return compile_rubric(provider, gateway, extracts, assessment.total_points)
 
