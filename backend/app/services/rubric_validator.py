@@ -9,11 +9,17 @@ from dataclasses import dataclass
 from app.schemas.rubric import AnswerSpec, ItemType, Rubric, RubricItem
 
 
-_REQUIRES_ANSWERS = {
-    ItemType.CLOSED_SHORT,
-    ItemType.CLOSED_TABLE,
-    ItemType.NUMERIC,
-    ItemType.CHOICE,
+_DETERMINISTIC_CONDITIONS = frozenset(
+    {"all_correct", "none_correct", "partial"}
+)
+_ALLOWED_CONDITIONS = {
+    ItemType.CLOSED_SHORT: _DETERMINISTIC_CONDITIONS,
+    ItemType.CLOSED_TABLE: frozenset({"set_exact", "set_partial"}),
+    ItemType.NUMERIC: _DETERMINISTIC_CONDITIONS,
+    ItemType.CHOICE: _DETERMINISTIC_CONDITIONS,
+    ItemType.DRAWING: frozenset({"manual"}),
+    ItemType.OPEN_TEXT: frozenset({"llm"}),
+    ItemType.COMPOSITE: _DETERMINISTIC_CONDITIONS,
 }
 
 
@@ -25,19 +31,46 @@ class ValidationError:
     message: str
 
 
-def _has_answers(spec: AnswerSpec, item_type: ItemType) -> bool:
+def _condition_is_allowed(item_type: ItemType, condition: str) -> bool:
+    allowed_conditions = _ALLOWED_CONDITIONS[item_type]
+    return condition in allowed_conditions or (
+        "partial" in allowed_conditions and condition.startswith("partial:")
+    )
+
+
+def _validate_answer_spec(
+    spec: AnswerSpec, item_type: ItemType, path: str, label: str
+) -> list[ValidationError]:
+    errors: list[ValidationError] = []
     if item_type == ItemType.CLOSED_SHORT:
-        return bool(spec.blanks)
-    if item_type == ItemType.CLOSED_TABLE:
-        return bool(spec.columns)
-    if item_type == ItemType.NUMERIC:
-        return bool(spec.numeric_answers)
-    if item_type == ItemType.CHOICE:
-        return bool(spec.choices) and spec.correct_choice is not None
-    return True
+        if not spec.blanks:
+            errors.append(ValidationError(path, f"{label}: 정답 후보가 비어 있습니다."))
+    elif item_type == ItemType.CLOSED_TABLE:
+        if not spec.columns:
+            errors.append(ValidationError(path, f"{label}: 정답 후보가 비어 있습니다."))
+        for column in spec.columns:
+            if not column.answers:
+                errors.append(
+                    ValidationError(
+                        path, f"{label}: {column.header} 열의 정답 후보가 비어 있습니다."
+                    )
+                )
+    elif item_type == ItemType.NUMERIC:
+        if not spec.numeric_answers:
+            errors.append(ValidationError(path, f"{label}: 정답 후보가 비어 있습니다."))
+    elif item_type == ItemType.CHOICE:
+        if not spec.choices or spec.correct_choice is None:
+            errors.append(ValidationError(path, f"{label}: 정답 후보가 비어 있습니다."))
+        elif spec.correct_choice not in spec.choices:
+            errors.append(
+                ValidationError(path, f"{label}: 정답 선택지가 선택지 후보에 없습니다.")
+            )
+    return errors
 
 
-def _validate_item(item: RubricItem, standard_ids: set[str]) -> list[ValidationError]:
+def _validate_item(
+    item: RubricItem, standard_ranges: dict[str, tuple[int, int]]
+) -> list[ValidationError]:
     errors: list[ValidationError] = []
     path = f"items[{item.item_no}]"
     scores = [rule.score for rule in item.scoring]
@@ -58,14 +91,19 @@ def _validate_item(item: RubricItem, standard_ids: set[str]) -> list[ValidationE
                 )
             )
 
-    if item.type in _REQUIRES_ANSWERS and not _has_answers(item, item.type):
-        errors.append(
-            ValidationError(
-                path,
-                f"{item.item_no}번({item.type.value}): 정답 후보가 비어 있습니다. "
-                "폐집합 매칭을 쓸 수 없어 자동 채점이 불가능합니다.",
+    for rule in item.scoring:
+        if not _condition_is_allowed(item.type, rule.condition):
+            errors.append(
+                ValidationError(
+                    path,
+                    f"{item.item_no}번({item.type.value}): 조건식 {rule.condition!r}은 "
+                    "이 문항 유형에 사용할 수 없습니다.",
+                )
             )
-        )
+
+    errors.extend(
+        _validate_answer_spec(item, item.type, path, f"{item.item_no}번({item.type.value})")
+    )
 
     if item.type == ItemType.COMPOSITE:
         if not item.parts:
@@ -83,21 +121,32 @@ def _validate_item(item: RubricItem, standard_ids: set[str]) -> list[ValidationE
                     )
                 )
             for part in item.parts:
-                if part.type in _REQUIRES_ANSWERS and not _has_answers(part, part.type):
-                    errors.append(
-                        ValidationError(
-                            f"{path}.parts[{part.part_id}]",
-                            f"{item.item_no}번 파트 {part.part_id}: 정답 후보가 비어 있습니다.",
-                        )
+                errors.extend(
+                    _validate_answer_spec(
+                        part,
+                        part.type,
+                        f"{path}.parts[{part.part_id}]",
+                        f"{item.item_no}번 파트 {part.part_id}",
                     )
+                )
 
-    if item.standard_id is not None and item.standard_id not in standard_ids:
-        errors.append(
-            ValidationError(
-                path,
-                f"{item.item_no}번: 알 수 없는 성취기준 id {item.standard_id!r} 입니다.",
+    if item.standard_id is not None:
+        standard_range = standard_ranges.get(item.standard_id)
+        if standard_range is None:
+            errors.append(
+                ValidationError(
+                    path,
+                    f"{item.item_no}번: 알 수 없는 성취기준 id {item.standard_id!r} 입니다.",
+                )
             )
-        )
+        elif not standard_range[0] <= item.item_no <= standard_range[1]:
+            errors.append(
+                ValidationError(
+                    path,
+                    f"{item.item_no}번: 성취기준 {item.standard_id!r}의 문항 범위 "
+                    f"{list(standard_range)} 밖입니다.",
+                )
+            )
 
     return errors
 
@@ -155,9 +204,12 @@ def validate_rubric(rubric: Rubric) -> list[ValidationError]:
             ValidationError("items", f"문항 번호가 1부터 연속되지 않습니다: {sorted(numbers)}")
         )
 
-    standard_ids = {standard.id for standard in rubric.achievement_standards}
+    standard_ranges = {
+        standard.id: (standard.item_range[0], standard.item_range[1])
+        for standard in rubric.achievement_standards
+    }
     for item in rubric.items:
-        errors.extend(_validate_item(item, standard_ids))
+        errors.extend(_validate_item(item, standard_ranges))
 
     errors.extend(_validate_cutoffs(rubric))
     return errors
