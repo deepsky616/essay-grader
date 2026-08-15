@@ -227,7 +227,7 @@ def list_models(
 
         provider = build_provider(api_key, read_setting(session, KEY_LLM_MODEL))
         try:
-            return {"models": provider.list_models()}
+            return {"models": LLMProvider.list_models(provider)}
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -256,7 +256,8 @@ def set_model(
             )
         fingerprint_before = _key_fingerprint(api_key)
         try:
-            available_models = build_provider(api_key, None).list_models()
+            provider = build_provider(api_key, None)
+            available_models = LLMProvider.list_models(provider)
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

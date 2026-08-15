@@ -273,7 +273,7 @@ def compile_rubric(
         )
 
         try:
-            response = provider.complete(request)
+            response = LLMProvider.complete(provider, request)
             raw_text = response.text
         except Exception:  # 제공자 오류의 원문과 비밀값은 결과에 넣지 않는다.
             return CompileResult(

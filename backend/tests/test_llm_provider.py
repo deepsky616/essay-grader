@@ -40,6 +40,49 @@ def test_provider_subclass_cannot_override_guarded_public_model_listing():
                 return []
 
 
+def test_provider_subclass_cannot_empty_guard_set_to_override_public_flow():
+    with pytest.raises(TypeError, match="complete"):
+
+        class BypassProvider(LLMProvider):
+            _GUARDED_PUBLIC_METHODS = frozenset()
+
+            def complete(self, request):
+                return LLMResponse(text="unguarded")
+
+            def _complete(self, request, max_output_tokens, json_output):
+                return LLMResponse(text="unused")
+
+            def _list_models(self, request):
+                return []
+
+
+@pytest.mark.parametrize(
+    "protected_name",
+    ["__getattribute__", "__setattr__", "__init_subclass__"],
+)
+def test_provider_subclass_cannot_override_boundary_protection_hooks(
+    protected_name,
+):
+    namespace = {
+        protected_name: lambda *args, **kwargs: None,
+        "_complete": lambda self, request, max_output_tokens, json_output: LLMResponse(
+            text="unused"
+        ),
+        "_list_models": lambda self, request: [],
+    }
+
+    with pytest.raises(TypeError, match=protected_name):
+        type("BypassProvider", (LLMProvider,), namespace)
+
+
+@pytest.mark.parametrize("method_name", ["complete", "list_models"])
+def test_provider_instance_cannot_replace_guarded_public_method(method_name):
+    provider = FakeLLMProvider(responses=[])
+
+    with pytest.raises(AttributeError, match=method_name):
+        setattr(provider, method_name, lambda *args: None)
+
+
 def test_provider_cannot_replace_gateway_with_an_unchecked_sender():
     calls = []
 
@@ -91,7 +134,7 @@ def test_transmission_gateway_instance_send_cannot_be_replaced(tmp_path):
         gateway.send = lambda request, callback: callback(request)
 
 
-def test_fake_provider_completion_is_blocked_by_its_gateway(tmp_path):
+def test_fake_provider_completion_instance_shadow_cannot_bypass_gateway(tmp_path):
     audit_path = tmp_path / "audit.log"
     gateway = TransmissionGateway(
         audit_path,
@@ -99,12 +142,17 @@ def test_fake_provider_completion_is_blocked_by_its_gateway(tmp_path):
         provider="test-provider",
     )
     provider = FakeLLMProvider(responses=["should not be returned"], gateway=gateway)
+    bypass_calls = []
+    provider.__dict__["complete"] = lambda request: (
+        bypass_calls.append(request) or LLMResponse(text="unguarded")
+    )
 
     with pytest.raises(PIIViolation):
         provider.complete(
             LLMRequest(system="안전한 지시", user_text="김미래", images=[])
         )
 
+    assert bypass_calls == []
     assert provider.requests == []
     entry = json.loads(audit_path.read_text(encoding="utf-8"))
     assert entry["provider"] == "test-provider"
@@ -141,7 +189,7 @@ def test_fake_provider_lists_models():
     assert provider.list_models() == ["gemini-a", "gemini-b"]
 
 
-def test_gemini_model_list_uses_gateway_and_writes_safe_audit(tmp_path):
+def test_gemini_model_list_instance_shadow_cannot_bypass_gateway_and_audit(tmp_path):
     audit_path = tmp_path / "audit.log"
     gateway = TransmissionGateway(audit_path, set, "test-provider")
     models = SimpleNamespace(
@@ -159,8 +207,13 @@ def test_gemini_model_list_uses_gateway_and_writes_safe_audit(tmp_path):
     provider = GeminiLLMProvider(
         api_key="api-key-secret", model=None, gateway=gateway, client=client
     )
+    bypass_calls = []
+    provider.__dict__["list_models"] = lambda: (
+        bypass_calls.append(True) or ["models/bypass"]
+    )
 
     assert provider.list_models() == ["models/gemini-a", "models/gemini-b"]
+    assert bypass_calls == []
 
     entry = json.loads(audit_path.read_text(encoding="utf-8"))
     assert entry["provider"] == "test-provider"

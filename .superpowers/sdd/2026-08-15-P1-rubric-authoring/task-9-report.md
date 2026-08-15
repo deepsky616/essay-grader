@@ -147,3 +147,52 @@
 - 관문 하위 클래스 확장점은 의도적으로 닫혔다. 검사 시점 동작이 필요한 시험과 뒤 구현은 생성자 손잡이를 사용해야 한다.
 - 클래스 자체를 실행 중에 바꾸는 악성 코드까지 막는 넓은 틀은 추가하지 않았다. 이번 경계는 주입 객체의 하위 자료형과 인스턴스 메서드 바꿔치기를 막는다.
 - 큰 피디에프 요청 크기 정책과 기존 외부 도구 경고 7개는 이번 범위 밖으로 남는다.
+
+---
+
+## 고침 3차
+
+### 상태
+
+하위 제공자가 보호 목록을 비우는 우회와 제공자 인스턴스의 공개 메서드 가림을 봉인했다. 루브릭 컴파일과 설정의 두 모델 목록 경로도 기반 제공자의 원본 공개 흐름을 직접 거치게 고정했다.
+
+### 실패 뒤 성공 근거
+
+- 하위 클래스가 `_GUARDED_PUBLIC_METHODS`를 빈 집합으로 바꾸고 `complete`를 다시 정의하는 검사는 아무 오류도 나지 않아 실패했다. 보호 이름을 모듈 수준의 변경 불가 집합으로 옮긴 뒤 `complete` 재정의가 클래스 생성 때 거절됐다.
+- 하위 클래스가 `__getattribute__`, `__setattr__`, `__init_subclass__`를 다시 정의하는 세 검사는 모두 허용되어 실패했다. 세 보호 고리를 같은 고정 집합에 넣은 뒤 모두 클래스 생성 때 거절됐다.
+- 제공자 인스턴스에 `complete`와 `list_models`를 직접 대입하는 두 검사는 대입이 성공해 실패했다. 기반 제공자의 속성 대입 보호 뒤 두 메서드 모두 속성 오류로 거절됐다.
+- 인스턴스 속성 사전에 `complete` 우회 함수를 심은 컴파일 검사는 감사와 식별정보 검사를 건너뛰고 성공해 실패했다. 기반 제공자의 원본 `complete`를 직접 호출하게 바꾼 뒤 우회 함수는 실행되지 않았고 식별정보 차단 감사와 고정 제공자 오류가 남았다.
+- 인스턴스 속성 사전에 `list_models` 우회 함수를 심은 설정 목록 검사는 우회 모델을 반환했고, 모델 선택 검사는 정상 모델을 사용할 수 없다며 실패했다. 두 설정 경로가 기반 제공자의 원본 목록 흐름을 직접 호출하게 바꾼 뒤 우회 함수는 실행되지 않았고 정상 목록과 감사 기록이 남았다.
+
+### 구현 내용
+
+- `complete`, `list_models`, `__getattribute__`, `__setattr__`, `__init_subclass__` 보호 이름을 하위 클래스가 바꿀 수 없는 모듈 수준 변경 불가 집합으로 정의했다.
+- 하위 클래스 생성 검사는 하위 클래스 속성이 아닌 이 모듈 집합만 참조한다. 보호 목록을 흉내 낸 하위 클래스 속성은 봉인 결과에 영향을 주지 않는다.
+- 기반 제공자의 속성 대입 보호가 공개 메서드 두 개의 인스턴스 대입을 거절한다. 속성 읽기 보호는 인스턴스 속성 사전에 같은 이름을 직접 넣어도 기반 제공자의 공개 메서드를 돌려준다.
+- 루브릭 컴파일러는 `LLMProvider.complete(provider, request)`를 호출한다. 설정의 모델 목록 조회와 모델 선택은 모두 `LLMProvider.list_models(provider)`를 호출한다.
+- 제미나이 제공자와 시험 제공자의 내부 콜백, 출력 설정 보존, 재시도, 교사 정본 적용, 모델 선택 잠금 흐름은 바꾸지 않았다.
+
+### 검사 명령과 결과
+
+- 실패 확인: `backend/.venv/bin/python -m pytest tests/test_llm_provider.py tests/test_rubric_compiler.py::test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks tests/test_api_settings.py::test_model_list_ignores_instance_shadow_and_keeps_audit tests/test_api_settings.py::test_model_selection_ignores_instance_model_list_shadow -q`: 9개 실패, 12개 성공.
+- 같은 초점 검사 재실행: 21개 성공, 경고 7개.
+- `backend/.venv/bin/python -m pytest tests/test_gateway.py tests/test_llm_provider.py tests/test_rubric_validator.py tests/test_rubric_compiler.py tests/test_api_settings.py -q`: 122개 성공, 경고 7개.
+- `backend/.venv/bin/python -m pytest tests/ -q`: 162개 성공, 경고 7개.
+- `backend/.venv/bin/python -m compileall -q app tests`: 성공.
+- `git diff --check`: 성공.
+
+### 바뀐 파일
+
+- `backend/app/providers/base.py`
+- `backend/app/services/rubric_compiler.py`
+- `backend/app/api/settings.py`
+- `backend/tests/test_llm_provider.py`
+- `backend/tests/test_rubric_compiler.py`
+- `backend/tests/test_api_settings.py`
+- 이 보고 파일
+
+### 자체 검토와 걱정거리
+
+- 직접 대입과 인스턴스 속성 사전 가림 모두 공개 호출 결과를 바꾸지 못한다. 컴파일 쪽은 식별정보 차단 감사, 설정 쪽은 통과 감사를 각각 확인했다.
+- 제공자 클래스 객체 자체를 실행 중에 바꾸는 전역 변조는 이번 주입 경계보다 넓은 실행 환경 권한 문제이므로 범위에 넣지 않았다.
+- 전체 검사 경고 7개는 기존 시험 클라이언트, 제미나이 도구, 피디에프 도구의 사용 중단 예정 알림이다.

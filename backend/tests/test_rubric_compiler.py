@@ -266,6 +266,40 @@ def test_rejects_provider_that_does_not_own_a_transmission_gateway(
         compile_rubric(BypassProvider(), extracts, authority)
 
 
+def test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks(
+    tmp_path, authority
+):
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(
+        audit_path,
+        pii_terms_provider=lambda: {"김미래"},
+        provider="test-provider",
+    )
+    provider = FakeLLMProvider(responses=[_payload()], gateway=gateway)
+    bypass_calls = []
+    provider.__dict__["complete"] = lambda request: (
+        bypass_calls.append(request) or LLMResponse(text=_payload())
+    )
+    extracts = [
+        PdfExtract(
+            source_path=Path("rubric.pdf"),
+            pages=[PdfPage(page_no=1, text="김미래", image_png=b"image")],
+        )
+    ]
+
+    result = compile_rubric(provider, extracts, authority)
+
+    assert not result.succeeded
+    assert result.attempts == 1
+    assert result.errors == ["언어 모형 제공자 호출에 실패했습니다."]
+    assert bypass_calls == []
+    assert provider.requests == []
+    entry = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert entry["provider"] == "test-provider"
+    assert entry["purpose"] == "rubric_compile"
+    assert entry["pii_check"] == "blocked"
+
+
 def test_compiles_valid_rubric(extracts, authority):
     provider = FakeLLMProvider(responses=[_payload()])
 

@@ -5,6 +5,12 @@ from typing import final
 from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 
+_SEALED_PUBLIC_METHODS = frozenset({"complete", "list_models"})
+_SEALED_PROVIDER_OVERRIDES = _SEALED_PUBLIC_METHODS | frozenset(
+    {"__getattribute__", "__setattr__", "__init_subclass__"}
+)
+
+
 @dataclass
 class LLMRequest:
     system: str
@@ -34,17 +40,27 @@ class LLMProvider(ABC):
     제공자는 검사된 요청을 받는 내부 콜백만 구현할 수 있다.
     """
 
-    _GUARDED_PUBLIC_METHODS = frozenset({"complete", "list_models"})
-
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
-        overridden = cls._GUARDED_PUBLIC_METHODS.intersection(cls.__dict__)
+        overridden = _SEALED_PROVIDER_OVERRIDES.intersection(cls.__dict__)
         if overridden:
             names = ", ".join(sorted(overridden))
             raise TypeError(
-                "전송 관문이 소유한 공개 메서드는 다시 정의할 수 없습니다: "
+                "전송 관문이 소유한 제공자 메서드는 다시 정의할 수 없습니다: "
                 f"{names}"
             )
+
+    def __getattribute__(self, name: str):
+        if name == "complete":
+            return LLMProvider.complete.__get__(self, type(self))
+        if name == "list_models":
+            return LLMProvider.list_models.__get__(self, type(self))
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in _SEALED_PUBLIC_METHODS:
+            raise AttributeError(f"보호된 제공자 메서드는 바꿀 수 없습니다: {name}")
+        object.__setattr__(self, name, value)
 
     def __init__(self, gateway: TransmissionGateway) -> None:
         if type(gateway) is not TransmissionGateway:

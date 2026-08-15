@@ -11,6 +11,7 @@ from app.db import get_session
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.providers.credentials import CredentialStore
+from app.providers.gateway import TransmissionGateway
 from tests.fakes import FakeKeyring, FakeLLMProvider
 
 
@@ -80,6 +81,33 @@ def test_model_list_returns_available_models_before_model_selection(client):
     assert body["models"] == ["models/gemini-pro", "models/gemini-flash"]
 
 
+def test_model_list_ignores_instance_shadow_and_keeps_audit(
+    client, monkeypatch, tmp_path
+):
+    audit_path = tmp_path / "audit.log"
+    provider = FakeLLMProvider(
+        responses=[],
+        models=["models/guarded"],
+        gateway=TransmissionGateway(audit_path, set, "test-provider"),
+    )
+    bypass_calls = []
+    provider.__dict__["list_models"] = lambda: (
+        bypass_calls.append(True) or ["models/bypass"]
+    )
+    monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)
+    client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
+
+    response = client.get("/api/settings/models")
+
+    assert response.status_code == 200
+    assert response.json()["models"] == ["models/guarded"]
+    assert bypass_calls == []
+    entry = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert entry["provider"] == "test-provider"
+    assert entry["purpose"] == "list_models"
+    assert entry["pii_check"] == "pass"
+
+
 def test_model_list_failure_does_not_expose_provider_error_or_key(client, monkeypatch):
     class FailedProvider(FakeLLMProvider):
         def _list_models(self, request):
@@ -107,6 +135,35 @@ def test_select_model_persists(client):
 
     assert response.status_code == 200
     assert client.get("/api/settings").json()["llm_model"] == "models/gemini-pro"
+
+
+def test_model_selection_ignores_instance_model_list_shadow(
+    client, monkeypatch, tmp_path
+):
+    audit_path = tmp_path / "audit.log"
+    provider = FakeLLMProvider(
+        responses=[],
+        models=["models/guarded"],
+        gateway=TransmissionGateway(audit_path, set, "test-provider"),
+    )
+    bypass_calls = []
+    provider.__dict__["list_models"] = lambda: (
+        bypass_calls.append(True) or ["models/bypass"]
+    )
+    monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)
+    client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
+
+    response = client.put(
+        "/api/settings/model", json={"llm_model": "models/guarded"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["llm_model"] == "models/guarded"
+    assert bypass_calls == []
+    entry = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert entry["provider"] == "test-provider"
+    assert entry["purpose"] == "list_models"
+    assert entry["pii_check"] == "pass"
 
 
 def test_empty_model_is_rejected(client):
