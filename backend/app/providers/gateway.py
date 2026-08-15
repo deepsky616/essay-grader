@@ -153,16 +153,18 @@ class TransmissionGateway:
 
 
 def _comparison_text(value: str) -> str:
-    """비교 전 유니코드 16.0.0 기본 무시 글자를 제거한다.
+    """비교 전 기본 무시 글자를 제거하고 다시 조합한다.
 
     한글을 포함한 일반 문자를 보존하기 위해 결합 문자 범주 전체를 지우지
     않고, 고정한 기본 무시 글자 범위만 제거한다. 실제 전송 본문은 바꾸지 않는다.
     """
-    return "".join(
+    normalized_value = normalize("NFC", value)
+    without_ignorables = "".join(
         character
-        for character in normalize("NFC", value)
+        for character in normalized_value
         if not _is_basic_ignorable(character)
     )
+    return normalize("NFC", without_ignorables)
 
 
 def _is_basic_ignorable(character: str) -> bool:

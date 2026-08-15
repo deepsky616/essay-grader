@@ -271,6 +271,75 @@ def test_basic_ignorable_character_cannot_bypass_roster_name_check(
     assert request.text_parts == (f"김{ignored_character}미래",)
 
 
+@pytest.mark.parametrize(
+    "ignored_character",
+    [
+        "\u115f",
+        "\u034f",
+        "\ufff0",
+        "\U000e0020",
+        "\ufe0f",
+        "\U000e0100",
+    ],
+)
+def test_basic_ignorable_between_decomposed_hangul_jamo_cannot_bypass_check(
+    gateway, ignored_character
+):
+    disguised_name = ignored_character.join(normalize("NFD", "김")) + "미래"
+    request = OutboundRequest(
+        purpose="grade_open_text",
+        text_parts=[disguised_name],
+    )
+
+    with pytest.raises(PIIViolation):
+        gateway.send(request, lambda req: "should not run")
+
+    assert request.text_parts == (disguised_name,)
+
+
+def test_all_fixed_basic_ignorables_between_decomposed_hangul_jamo_are_blocked(
+    gateway,
+):
+    fixed_ranges = (
+        (0x00AD, 0x00AD),
+        (0x034F, 0x034F),
+        (0x061C, 0x061C),
+        (0x115F, 0x1160),
+        (0x17B4, 0x17B5),
+        (0x180B, 0x180F),
+        (0x200B, 0x200F),
+        (0x202A, 0x202E),
+        (0x2060, 0x206F),
+        (0x3164, 0x3164),
+        (0xFE00, 0xFE0F),
+        (0xFEFF, 0xFEFF),
+        (0xFFA0, 0xFFA0),
+        (0xFFF0, 0xFFF8),
+        (0x1BCA0, 0x1BCA3),
+        (0x1D173, 0x1D17A),
+        (0xE0000, 0xE0FFF),
+    )
+    decomposed_syllable = normalize("NFD", "김")
+    bypasses = []
+
+    for start, end in fixed_ranges:
+        for codepoint in range(start, end + 1):
+            ignored_character = chr(codepoint)
+            disguised_name = ignored_character.join(decomposed_syllable) + "미래"
+            request = OutboundRequest(
+                purpose="grade_open_text",
+                text_parts=[disguised_name],
+            )
+            try:
+                gateway.send(request, lambda req: "sent")
+            except PIIViolation:
+                continue
+            bypasses.append(codepoint)
+
+    sample = ", ".join(f"U+{codepoint:04X}" for codepoint in bypasses[:20])
+    assert not bypasses, f"{len(bypasses)} bypasses; first code points: {sample}"
+
+
 def test_gateway_provider_is_fixed_when_writing_audit(tmp_path):
     gateway = TransmissionGateway(tmp_path / "audit.log", set, "gemini")
     request = OutboundRequest(purpose="rubric_compile")
