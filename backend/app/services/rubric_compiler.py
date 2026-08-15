@@ -6,18 +6,22 @@
 
 import json
 import re
+from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any, Self
 
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import TypeAdapter, ValidationError as PydanticValidationError
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.schemas.rubric import Rubric
+from app.schemas.rubric import AchievementStandard, AssessmentMeta, Rubric
 from app.services.pdf_extract import PdfExtract
 from app.services.rubric_validator import validate_rubric
 from app.services.rubric_warnings import Warning, detect_warnings
 
 
 MAX_ATTEMPTS = 2
+_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(dict[str, int])
 _CODE_FENCE = re.compile(
     r"\A```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```[ \t]*\Z",
     re.IGNORECASE | re.DOTALL,
@@ -50,6 +54,105 @@ SYSTEM_PROMPT = """당신은 한국 초중등 논술형 평가의 채점기준�
 JSON 객체 하나만 출력하고 설명이나 코드 울타리를 붙이지 마세요."""
 
 
+@dataclass(frozen=True, init=False)
+class RubricCompileAuthority:
+    """교사가 정한 루브릭 메타자료의 깊은 불변 스냅샷이다.
+
+    뒤 API는 평가 행의 메타자료와 JSON 칸을 이 공개 자료형으로 한 번 묶어
+    컴파일러에 전달한다. 속성은 매번 새 복사본을 돌려주므로 호출자가 바꿔도
+    저장된 정본은 변하지 않는다.
+    """
+
+    _snapshot_json: str = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        assessment: AssessmentMeta | Mapping[str, Any],
+        achievement_standards: Iterable[
+            AchievementStandard | Mapping[str, Any]
+        ],
+        level_cutoffs: Mapping[str, int],
+    ) -> None:
+        checked_assessment = AssessmentMeta.model_validate(assessment)
+        checked_standards = [
+            AchievementStandard.model_validate(standard)
+            for standard in achievement_standards
+        ]
+        checked_cutoffs = _LEVEL_CUTOFFS_ADAPTER.validate_python(level_cutoffs)
+        snapshot = {
+            "assessment": checked_assessment.model_dump(mode="json"),
+            "achievement_standards": [
+                standard.model_dump(mode="json") for standard in checked_standards
+            ],
+            "level_cutoffs": checked_cutoffs,
+        }
+        object.__setattr__(
+            self,
+            "_snapshot_json",
+            json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+
+    @classmethod
+    def from_assessment(cls, assessment: object) -> Self:
+        """평가 저장 행에서 뒤 컴파일 단계용 정본을 바로 만든다."""
+        checked_assessment = AssessmentMeta.model_validate(
+            assessment, from_attributes=True
+        )
+        return cls(
+            assessment=checked_assessment,
+            achievement_standards=getattr(assessment, "achievement_standards"),
+            level_cutoffs=getattr(assessment, "level_cutoffs"),
+        )
+
+    def _payload(self) -> dict[str, Any]:
+        return json.loads(self._snapshot_json)
+
+    @property
+    def assessment(self) -> AssessmentMeta:
+        return AssessmentMeta.model_validate(self._payload()["assessment"])
+
+    @property
+    def achievement_standards(self) -> list[AchievementStandard]:
+        return [
+            AchievementStandard.model_validate(standard)
+            for standard in self._payload()["achievement_standards"]
+        ]
+
+    @property
+    def level_cutoffs(self) -> dict[str, int]:
+        return _LEVEL_CUTOFFS_ADAPTER.validate_python(self._payload()["level_cutoffs"])
+
+    @property
+    def total_points(self) -> int:
+        return self.assessment.total_points
+
+    def prompt_json(self) -> str:
+        """모형에 명시할 정본 JSON의 새 문자열을 돌려준다."""
+        return json.dumps(self._payload(), ensure_ascii=False, indent=2, sort_keys=True)
+
+    def apply_to(self, rubric: Rubric) -> Rubric:
+        """모형 초안의 보호 대상 칸을 정본의 깊은 복사본으로 교체한다."""
+        authoritative = rubric.model_copy(deep=True)
+        authoritative.assessment = self.assessment
+        authoritative.achievement_standards = self.achievement_standards
+        authoritative.level_cutoffs = self.level_cutoffs
+        return authoritative
+
+    def overwrite_payload(self, payload: Any) -> Any:
+        """JSON 해석 직후 보호 대상 칸을 정본으로 깊은 복사 교체한다."""
+        if not isinstance(payload, dict):
+            return payload
+        authoritative = deepcopy(payload)
+        authoritative.update(deepcopy(self._payload()))
+        return authoritative
+
+
 @dataclass
 class CompileResult:
     rubric: Rubric | None
@@ -68,13 +171,18 @@ def _strip_code_fence(text: str) -> str:
     return match.group("body").strip() if match is not None else stripped
 
 
-def _build_user_text(extracts: list[PdfExtract], total_points: int) -> str:
+def _build_user_text(
+    extracts: list[PdfExtract], authority: RubricCompileAuthority
+) -> str:
     documents = "\n\n".join(
         f"=== 문서 {index} ===\n{extract.full_text()}"
         for index, extract in enumerate(extracts, start=1)
     )
     return (
-        f"다음은 교사가 올린 채점 자료입니다. 총점은 {total_points}점입니다.\n"
+        "아래 교사 정본의 assessment, achievement_standards, level_cutoffs는 "
+        "그대로 사용하고 바꾸지 마세요.\n"
+        f"{authority.prompt_json()}\n\n"
+        f"다음은 교사가 올린 채점 자료입니다. 총점은 {authority.total_points}점입니다.\n"
         "각 문서의 쪽 이미지도 함께 첨부했습니다. 표 구조는 이미지를 보고 판단하세요.\n\n"
         f"{documents}"
     )
@@ -93,7 +201,7 @@ def _schema_errors(error: PydanticValidationError) -> list[str]:
 
 
 def _parse_and_validate(
-    raw_text: str, total_points: int
+    raw_text: str, authority: RubricCompileAuthority
 ) -> tuple[Rubric | None, list[str]]:
     try:
         payload = json.loads(_strip_code_fence(raw_text))
@@ -103,23 +211,25 @@ def _parse_and_validate(
             f"{error.lineno}번째 줄 {error.colno}번째 칸을 확인하세요."
         ]
 
+    payload = authority.overwrite_payload(payload)
     try:
         rubric = Rubric.model_validate(payload)
     except PydanticValidationError as error:
         return None, _schema_errors(error)
 
-    # 교사가 입력한 총점이 언어 모형이 되돌린 값보다 우선한다.
-    rubric.assessment.total_points = total_points
+    rubric = authority.apply_to(rubric)
     errors = [error.message for error in validate_rubric(rubric)]
     return rubric, errors
 
 
 def _retry_user_text(
-    extracts: list[PdfExtract], total_points: int, errors: list[str]
+    extracts: list[PdfExtract],
+    authority: RubricCompileAuthority,
+    errors: list[str],
 ) -> str:
     feedback = "\n".join(f"- {error}" for error in errors)
     return (
-        f"{_build_user_text(extracts, total_points)}\n\n"
+        f"{_build_user_text(extracts, authority)}\n\n"
         "직전 결과에 다음 구조 문제가 있었습니다. 각 문제를 고쳐 다시 출력하세요.\n"
         f"{feedback}"
     )
@@ -128,22 +238,25 @@ def _retry_user_text(
 def compile_rubric(
     provider: LLMProvider,
     extracts: list[PdfExtract],
-    total_points: int,
+    authority: RubricCompileAuthority,
 ) -> CompileResult:
     """글과 쪽 이미지를 보내 루브릭을 만들고 구조 실패만 한 번 재시도한다.
 
     실제 외부 전송 경계는 제공자가 소유한다. 운영 제미나이 제공자는 주입된
     전송 게이트웨이로 요청을 검사하고 감사한 뒤에만 도구를 호출한다.
     """
+    if not isinstance(provider, LLMProvider):
+        raise TypeError("루브릭 컴파일 제공자는 전송 게이트웨이를 소유해야 합니다.")
+
     images = _collect_images(extracts)
     last_rubric: Rubric | None = None
     last_errors: list[str] = []
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         user_text = (
-            _build_user_text(extracts, total_points)
+            _build_user_text(extracts, authority)
             if attempt == 1
-            else _retry_user_text(extracts, total_points, last_errors)
+            else _retry_user_text(extracts, authority, last_errors)
         )
         request = LLMRequest(
             system=SYSTEM_PROMPT,
@@ -165,7 +278,7 @@ def compile_rubric(
                 attempts=attempt,
             )
 
-        parsed_rubric, last_errors = _parse_and_validate(raw_text, total_points)
+        parsed_rubric, last_errors = _parse_and_validate(raw_text, authority)
         if parsed_rubric is not None:
             last_rubric = parsed_rubric
         if not last_errors:

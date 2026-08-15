@@ -1,4 +1,8 @@
-from app.providers.base import LLMRequest, LLMResponse
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from app.providers.base import LLMProvider, LLMRequest, LLMResponse
+from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 
 class FakeKeyring:
@@ -24,19 +28,51 @@ class FakeKeyring:
         self._store.pop((service, name), None)
 
 
-class FakeLLMProvider:
+class FakeLLMProvider(LLMProvider):
     """미리 준비한 응답을 돌려주며 받은 요청을 기록하는 시험 제공자."""
 
-    def __init__(self, responses: list[str], models: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str | Exception],
+        models: list[str] | None = None,
+        gateway: TransmissionGateway | None = None,
+    ) -> None:
+        self._audit_directory: TemporaryDirectory[str] | None = None
+        if gateway is None:
+            self._audit_directory = TemporaryDirectory(prefix="essay-grader-fake-llm-")
+            gateway = TransmissionGateway(
+                Path(self._audit_directory.name) / "audit.log",
+                pii_terms_provider=set,
+                provider="test-provider",
+            )
+        super().__init__(gateway)
         self._responses = list(responses)
         self._models = list(models) if models is not None else ["fake-model"]
         self.requests: list[LLMRequest] = []
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
+    def _complete(
+        self,
+        request: OutboundRequest,
+        max_output_tokens: int,
+        json_output: bool,
+    ) -> LLMResponse:
+        system, user_text = request.text_parts
+        self.requests.append(
+            LLMRequest(
+                system=system,
+                user_text=user_text,
+                images=list(request.image_parts),
+                max_output_tokens=max_output_tokens,
+                json_output=json_output,
+                purpose=request.purpose,
+            )
+        )
         if not self._responses:
             raise AssertionError("시험 제공자에 남은 응답이 없습니다.")
-        return LLMResponse(text=self._responses.pop(0))
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return LLMResponse(text=response)
 
-    def list_models(self) -> list[str]:
+    def _list_models(self, _request: OutboundRequest) -> list[str]:
         return list(self._models)

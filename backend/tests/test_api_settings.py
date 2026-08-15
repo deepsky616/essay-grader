@@ -81,12 +81,14 @@ def test_model_list_returns_available_models_before_model_selection(client):
 
 
 def test_model_list_failure_does_not_expose_provider_error_or_key(client, monkeypatch):
-    class FailedProvider:
-        def list_models(self):
+    class FailedProvider(FakeLLMProvider):
+        def _list_models(self, request):
             raise RuntimeError("request failed for api-key-secret")
 
     monkeypatch.setattr(
-        settings_api, "build_provider", lambda api_key, model: FailedProvider()
+        settings_api,
+        "build_provider",
+        lambda api_key, model: FailedProvider(responses=[]),
     )
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
 
@@ -135,13 +137,15 @@ def test_model_not_in_current_provider_list_is_rejected(client):
 
 
 def test_model_selection_hides_provider_failure(client, monkeypatch):
-    class FailedProvider:
-        def list_models(self):
+    class FailedProvider(FakeLLMProvider):
+        def _list_models(self, request):
             raise RuntimeError("provider exposed api-key-secret")
 
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
     monkeypatch.setattr(
-        settings_api, "build_provider", lambda api_key, model: FailedProvider()
+        settings_api,
+        "build_provider",
+        lambda api_key, model: FailedProvider(responses=[]),
     )
 
     response = client.put(
@@ -332,14 +336,16 @@ def test_key_change_waits_for_model_binding_and_then_invalidates_it(
     client.app.dependency_overrides[settings_api.get_credential_store] = lambda: store
     client.put("/api/settings/api-key", json={"api_key": "first-secret"})
 
-    class BlockingProvider:
-        def list_models(self):
+    class BlockingProvider(FakeLLMProvider):
+        def _list_models(self, request):
             model_list_started.set()
             assert release_model_list.wait(timeout=5)
             return ["models/gemini-pro"]
 
     monkeypatch.setattr(
-        settings_api, "build_provider", lambda api_key, model: BlockingProvider()
+        settings_api,
+        "build_provider",
+        lambda api_key, model: BlockingProvider(responses=[]),
     )
 
     with ThreadPoolExecutor(max_workers=2) as executor:

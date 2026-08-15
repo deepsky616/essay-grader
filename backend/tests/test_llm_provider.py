@@ -1,13 +1,90 @@
 import json
 from types import SimpleNamespace
 
-from app.providers.base import LLMRequest, LLMResponse
+import pytest
+
+from app.providers.base import LLMProvider, LLMRequest, LLMResponse
 from app.api.settings import build_provider
 from app.config import settings
 from app.providers import gemini_llm
-from app.providers.gateway import TransmissionGateway
+from app.providers.gateway import PIIViolation, TransmissionGateway
 from app.providers.gemini_llm import GeminiLLMProvider
 from tests.fakes import FakeLLMProvider
+
+
+def test_provider_subclass_cannot_override_guarded_public_completion():
+    with pytest.raises(TypeError, match="complete"):
+
+        class BypassProvider(LLMProvider):
+            def complete(self, request):
+                return LLMResponse(text="unguarded")
+
+            def _complete(self, request, max_output_tokens, json_output):
+                return LLMResponse(text="unused")
+
+            def _list_models(self, request):
+                return []
+
+
+def test_provider_subclass_cannot_override_guarded_public_model_listing():
+    with pytest.raises(TypeError, match="list_models"):
+
+        class BypassProvider(LLMProvider):
+            def list_models(self):
+                return ["unguarded"]
+
+            def _complete(self, request, max_output_tokens, json_output):
+                return LLMResponse(text="unused")
+
+            def _list_models(self, request):
+                return []
+
+
+def test_provider_cannot_replace_gateway_with_an_unchecked_sender():
+    calls = []
+
+    class UncheckedSender:
+        def send(self, request, callback):
+            calls.append(request)
+            return callback(request)
+
+    class BypassProvider(LLMProvider):
+        def __init__(self):
+            self._gateway = UncheckedSender()
+
+        def _complete(self, request, max_output_tokens, json_output):
+            return LLMResponse(text="unguarded")
+
+        def _list_models(self, request):
+            return []
+
+    provider = BypassProvider()
+
+    with pytest.raises(TypeError, match="전송 게이트웨이"):
+        provider.complete(LLMRequest(system="s", user_text="김미래"))
+
+    assert calls == []
+
+
+def test_fake_provider_completion_is_blocked_by_its_gateway(tmp_path):
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(
+        audit_path,
+        pii_terms_provider=lambda: {"김미래"},
+        provider="test-provider",
+    )
+    provider = FakeLLMProvider(responses=["should not be returned"], gateway=gateway)
+
+    with pytest.raises(PIIViolation):
+        provider.complete(
+            LLMRequest(system="안전한 지시", user_text="김미래", images=[])
+        )
+
+    assert provider.requests == []
+    entry = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert entry["provider"] == "test-provider"
+    assert entry["purpose"] == "rubric_compile"
+    assert entry["pii_check"] == "blocked"
 
 
 def test_fake_provider_returns_queued_response():
@@ -81,7 +158,12 @@ def test_application_provider_factory_audits_as_gemini(monkeypatch):
 
 
 def test_gemini_completion_sends_the_immutable_checked_copy(tmp_path):
-    source_request = LLMRequest(system="safe system", user_text="safe user")
+    source_request = LLMRequest(
+        system="safe system",
+        user_text="safe user",
+        max_output_tokens=123,
+        json_output=True,
+    )
     captured = {}
 
     class FakeModels:
@@ -93,6 +175,8 @@ def test_gemini_completion_sends_the_immutable_checked_copy(tmp_path):
         def send(self, outbound, call):
             def mutate_source_then_call(checked):
                 source_request.user_text = "unchecked secret"
+                source_request.max_output_tokens = 999
+                source_request.json_output = False
                 return call(checked)
 
             return super().send(outbound, mutate_source_then_call)
@@ -109,3 +193,5 @@ def test_gemini_completion_sends_the_immutable_checked_copy(tmp_path):
 
     sent_part = captured["contents"][0].parts[-1]
     assert sent_part.text == "safe user"
+    assert captured["config"].max_output_tokens == 123
+    assert captured["config"].response_mime_type == "application/json"
