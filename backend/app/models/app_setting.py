@@ -1,4 +1,6 @@
-from sqlalchemy import Integer, String, Text
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -14,5 +16,21 @@ class AppSetting(Base, TimestampMixin):
     value: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class DataPolicyAcknowledgement(Base):
+    """자료 정책 확인을 덮어쓰지 않고 남기는 사건 기록."""
+
+    __tablename__ = "data_policy_acknowledgements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    wording_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 KEY_LLM_MODEL = "llm_model"
 KEY_DATA_POLICY_ACK = "data_policy_acknowledged"
+DATA_POLICY_WORDING_VERSION = "paid-tier-no-training-v1"

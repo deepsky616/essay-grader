@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     data_dir: Path = Path.home() / "essay-grader-data"
     db_path: Path | None = None
+    credential_encryption_key: SecretStr | None = None
 
     model_config = {"env_prefix": "EG_"}
 
