@@ -5,35 +5,68 @@
 """
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
+from unicodedata import category, normalize
 
 T = TypeVar("T")
+
+_SAFE_SLUG = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", re.ASCII)
+_ANONYMOUS_TOKEN = re.compile(r"S-[A-Za-z0-9]{8}", re.ASCII)
 
 
 class PIIViolation(Exception):
     """외부 전송 페이로드에 식별정보가 포함됐을 때 발생한다."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class OutboundRequest:
     """외부 제공자에 전달할 비식별 요청이다."""
 
     purpose: str
-    text_parts: list[str] = field(default_factory=list)
-    image_parts: list[bytes] = field(default_factory=list)
+    provider: str
+    text_parts: tuple[str, ...] | list[str] = field(default_factory=tuple)
+    image_parts: tuple[bytes, ...] | list[bytes] = field(default_factory=tuple)
     anonymous_token: str | None = None
-    provider: str = "unspecified"
+
+    def __post_init__(self) -> None:
+        """입력을 안전한 불변 값으로 복사하고 감사 메타자료를 검증한다."""
+        self._validate_metadata()
+        if not all(isinstance(part, str) for part in self.text_parts):
+            raise ValueError("텍스트 부분은 문자열이어야 합니다.")
+        try:
+            image_parts = tuple(bytes(image) for image in self.image_parts)
+        except (TypeError, ValueError) as error:
+            raise ValueError("이미지 부분은 바이트열이어야 합니다.") from error
+
+        object.__setattr__(self, "text_parts", tuple(self.text_parts))
+        object.__setattr__(self, "image_parts", image_parts)
+
+    def _validate_metadata(self) -> None:
+        if not isinstance(self.provider, str) or not _SAFE_SLUG.fullmatch(self.provider):
+            raise ValueError("제공자는 비어 있지 않은 안전한 슬러그여야 합니다.")
+        if not isinstance(self.purpose, str) or not _SAFE_SLUG.fullmatch(self.purpose):
+            raise ValueError("요청 종류는 비어 있지 않은 안전한 슬러그여야 합니다.")
+        if self.anonymous_token is not None and (
+            not isinstance(self.anonymous_token, str)
+            or not _ANONYMOUS_TOKEN.fullmatch(self.anonymous_token)
+        ):
+            raise ValueError("익명 토큰 형식이 올바르지 않습니다.")
 
     def combined_text(self) -> str:
         """검사와 크기 산정에만 쓸 텍스트를 결합한다."""
         return "\n".join(self.text_parts)
 
-    def payload_bytes(self) -> int:
-        """감사용 전송 크기를 계산한다. 내용은 반환하거나 기록하지 않는다."""
+    def logical_payload_bytes(self) -> int:
+        """검사한 논리 본문과 원본 그림의 바이트 수만 계산한다.
+
+        제공자 도구가 내부적으로 덧붙이는 통신 포장 크기는 추정하거나 기록하지
+        않는다. 내용 자체는 반환하거나 감사 기록에 넣지 않는다.
+        """
         return len(self.combined_text().encode("utf-8")) + sum(
             len(image) for image in self.image_parts
         )
@@ -56,9 +89,8 @@ class TransmissionGateway:
         found_terms = self._find_pii(request)
         if found_terms:
             self._write_audit(request, "blocked")
-            terms = ", ".join(sorted(found_terms))
             raise PIIViolation(
-                f"외부 전송 페이로드에 식별정보가 포함되어 있습니다: {terms}. "
+                f"외부 전송에서 식별정보 {len(found_terms)}건이 발견되었습니다. "
                 "전송을 중단했습니다."
             )
 
@@ -66,12 +98,13 @@ class TransmissionGateway:
         return call(request)
 
     def _find_pii(self, request: OutboundRequest) -> set[str]:
-        text = request.combined_text()
-        return {
-            term
-            for term in self._pii_terms_provider()
-            if term and term in text
-        }
+        text = _comparison_text(request.combined_text())
+        found_terms: set[str] = set()
+        for term in self._pii_terms_provider():
+            normalized_term = _comparison_text(term)
+            if normalized_term and normalized_term in text:
+                found_terms.add(term)
+        return found_terms
 
     def _write_audit(self, request: OutboundRequest, pii_check: str) -> None:
         """허용된 메타데이터만 줄 단위로 추가한다."""
@@ -80,8 +113,17 @@ class TransmissionGateway:
             "provider": request.provider,
             "purpose": request.purpose,
             "anonymous_token": request.anonymous_token,
-            "payload_bytes": request.payload_bytes(),
+            "payload_bytes": request.logical_payload_bytes(),
             "pii_check": pii_check,
         }
         with self._audit_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _comparison_text(value: str) -> str:
+    """비교 전 유니코드 조합 차이와 보이지 않는 형식 글자를 제거한다."""
+    return "".join(
+        character
+        for character in normalize("NFC", value)
+        if category(character) != "Cf"
+    )
