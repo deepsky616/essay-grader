@@ -1,12 +1,13 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.api import settings as settings_api
+from app.db import get_session
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.providers.credentials import CredentialStore
@@ -26,7 +27,7 @@ def stub_external_dependencies(client, tmp_path, monkeypatch):
             models=["models/gemini-pro", "models/gemini-flash"],
         ),
     )
-    yield
+    yield store
     client.app.dependency_overrides.clear()
 
 
@@ -184,7 +185,19 @@ def test_repeated_data_policy_acknowledgement_creates_new_timestamped_events(
     )
     assert len(events) == 2
     assert [entry.acknowledged for entry in events] == [True, True]
-    assert len({entry.wording_version for entry in events}) == 1
+    expected_wording = (
+        "유료 등급 키를 사용 중이며 제출 내용이 모델 학습에 사용되지 않음을 "
+        "확인했다"
+    )
+    assert settings_api.DATA_POLICY_WORDING_TEXT == expected_wording
+    assert [entry.wording_text for entry in events] == [
+        expected_wording,
+        expected_wording,
+    ]
+    assert [entry.wording_version for entry in events] == [
+        "paid-tier-no-training-v1",
+        "paid-tier-no-training-v1",
+    ]
     assert events[0].confirmed_at != events[1].confirmed_at
     assert first["data_policy_acknowledged_at"] != second[
         "data_policy_acknowledged_at"
@@ -202,7 +215,9 @@ def test_clear_api_key(client):
     assert body["llm_model"] is None
 
 
-def test_failed_keyring_delete_returns_error_and_preserves_model(client, tmp_path):
+def test_failed_keyring_delete_returns_error_and_invalidates_model(
+    client, tmp_path, db_session
+):
     keyring = FakeKeyring()
     store = CredentialStore(tmp_path / "delete-failure", keyring)
     client.app.dependency_overrides[settings_api.get_credential_store] = lambda: store
@@ -217,7 +232,136 @@ def test_failed_keyring_delete_returns_error_and_preserves_model(client, tmp_pat
     keyring._working = True
     body = client.get("/api/settings").json()
     assert body["api_key_set"] is True
-    assert body["llm_model"] == "models/gemini-pro"
+    assert body["llm_model"] is None
+    assert settings_api.read_setting(
+        db_session, "llm_model_key_fingerprint"
+    ) is None
+
+
+def test_model_binding_stores_fingerprint_not_key(
+    client, db_session, stub_external_dependencies
+):
+    client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
+    response = client.put(
+        "/api/settings/model", json={"llm_model": "models/gemini-pro"}
+    )
+
+    fingerprint = settings_api.read_setting(
+        db_session, "llm_model_key_fingerprint"
+    )
+    assert response.status_code == 200
+    assert fingerprint is not None
+    assert len(fingerprint) == 64
+    assert fingerprint != "api-key-secret"
+
+
+def test_model_is_hidden_when_current_key_does_not_match_binding(
+    client, stub_external_dependencies
+):
+    store = stub_external_dependencies
+    client.put("/api/settings/api-key", json={"api_key": "first-secret"})
+    client.put("/api/settings/model", json={"llm_model": "models/gemini-pro"})
+
+    store.set_api_key("changed-outside-api")
+
+    assert client.get("/api/settings").json()["llm_model"] is None
+
+
+def test_pipeline_model_reader_rejects_binding_for_a_different_key(
+    client, db_session, stub_external_dependencies
+):
+    store = stub_external_dependencies
+    client.put("/api/settings/api-key", json={"api_key": "first-secret"})
+    client.put("/api/settings/model", json={"llm_model": "models/gemini-pro"})
+
+    assert (
+        settings_api.read_valid_llm_model(db_session, store)
+        == "models/gemini-pro"
+    )
+    store.set_api_key("changed-outside-api")
+    assert settings_api.read_valid_llm_model(db_session, store) is None
+
+
+def test_key_save_partial_failure_invalidates_model_and_fingerprint(
+    client, db_session, tmp_path
+):
+    fallback = tmp_path / "partial-save"
+    keyring = FakeKeyring()
+    store = CredentialStore(fallback, keyring)
+    client.app.dependency_overrides[settings_api.get_credential_store] = lambda: store
+    client.put("/api/settings/api-key", json={"api_key": "first-secret"})
+    client.put("/api/settings/model", json={"llm_model": "models/gemini-pro"})
+    fallback.mkdir()
+
+    response = client.put(
+        "/api/settings/api-key", json={"api_key": "second-secret"}
+    )
+
+    assert response.status_code == 503
+    assert "second-secret" not in response.text
+    assert settings_api.read_setting(db_session, "llm_model") is None
+    assert settings_api.read_setting(
+        db_session, "llm_model_key_fingerprint"
+    ) is None
+    body = client.get("/api/settings").json()
+    assert body["api_key_set"] is True
+    assert body["llm_model"] is None
+
+
+def test_key_change_waits_for_model_binding_and_then_invalidates_it(
+    client, engine, monkeypatch, tmp_path
+):
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def session_dependency():
+        with sessions() as session:
+            yield session
+
+    client.app.dependency_overrides[get_session] = session_dependency
+    model_list_started = Event()
+    release_model_list = Event()
+    new_key_store_started = Event()
+
+    class SignallingKeyring(FakeKeyring):
+        def set_password(self, service, name, value):
+            if value == "second-secret":
+                new_key_store_started.set()
+            super().set_password(service, name, value)
+
+    store = CredentialStore(tmp_path / "concurrent-key", SignallingKeyring())
+    client.app.dependency_overrides[settings_api.get_credential_store] = lambda: store
+    client.put("/api/settings/api-key", json={"api_key": "first-secret"})
+
+    class BlockingProvider:
+        def list_models(self):
+            model_list_started.set()
+            assert release_model_list.wait(timeout=5)
+            return ["models/gemini-pro"]
+
+    monkeypatch.setattr(
+        settings_api, "build_provider", lambda api_key, model: BlockingProvider()
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        model_future = executor.submit(
+            client.put,
+            "/api/settings/model",
+            json={"llm_model": "models/gemini-pro"},
+        )
+        assert model_list_started.wait(timeout=5)
+        key_future = executor.submit(
+            client.put,
+            "/api/settings/api-key",
+            json={"api_key": "second-secret"},
+        )
+        assert not new_key_store_started.wait(timeout=0.2)
+        release_model_list.set()
+        assert model_future.result(timeout=5).status_code == 200
+        assert key_future.result(timeout=5).status_code == 200
+
+    body = client.get("/api/settings").json()
+    assert body["api_key_set"] is True
+    assert body["llm_model"] is None
 
 
 def test_api_key_is_not_stored_in_database(client, db_session):
