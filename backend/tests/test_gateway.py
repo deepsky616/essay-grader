@@ -350,6 +350,16 @@ def test_gateway_provider_is_fixed_when_writing_audit(tmp_path):
     assert entry["provider"] == "gemini"
 
 
+def test_model_listing_is_an_allowed_audited_purpose(gateway, tmp_path):
+    request = OutboundRequest(purpose="list_models")
+
+    assert gateway.send(request, lambda checked: ["models/gemini"]) == [
+        "models/gemini"
+    ]
+    entry = json.loads((tmp_path / "audit.log").read_text(encoding="utf-8"))
+    assert entry["purpose"] == "list_models"
+
+
 @pytest.mark.parametrize(
     ("provider", "purpose", "anonymous_token"),
     [

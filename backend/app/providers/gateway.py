@@ -23,6 +23,7 @@ _ALLOWED_PURPOSES = frozenset(
         "recognize_classify",
         "recognize_transcribe",
         "generate_feedback",
+        "list_models",
     }
 )
 _ANONYMOUS_TOKEN = re.compile(r"S-[0-9a-f]{8}", re.ASCII)
