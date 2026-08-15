@@ -24,7 +24,7 @@ from app.models.app_setting import (
 from app.providers.base import LLMProvider
 from app.providers.credentials import CredentialStore, CredentialStoreError
 from app.providers.gateway import TransmissionGateway
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gemini_llm import create_gemini_provider
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 _SETTINGS_LOCK = RLock()
@@ -37,7 +37,13 @@ def build_provider(api_key: str, model: str | None) -> LLMProvider:
         pii_terms_provider=set,
         provider="gemini",
     )
-    return GeminiLLMProvider(api_key=api_key, model=model, gateway=gateway)
+    return create_gemini_provider(api_key=api_key, model=model, gateway=gateway)
+
+
+def _list_provider_models(provider: object) -> list[str]:
+    if type(provider) is not LLMProvider:
+        raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+    return LLMProvider.list_models(provider)
 
 
 def get_credential_store() -> CredentialStore:
@@ -227,7 +233,7 @@ def list_models(
 
         provider = build_provider(api_key, read_setting(session, KEY_LLM_MODEL))
         try:
-            return {"models": LLMProvider.list_models(provider)}
+            return {"models": _list_provider_models(provider)}
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -257,7 +263,7 @@ def set_model(
         fingerprint_before = _key_fingerprint(api_key)
         try:
             provider = build_provider(api_key, None)
-            available_models = LLMProvider.list_models(provider)
+            available_models = _list_provider_models(provider)
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

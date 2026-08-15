@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.providers.base import LLMProvider, LLMRequest, LLMResponse
+from app.providers.base import LLMOutboundRequest, LLMProvider, LLMRequest, LLMResponse
 from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 
@@ -28,33 +28,22 @@ class FakeKeyring:
         self._store.pop((service, name), None)
 
 
-class FakeLLMProvider(LLMProvider):
-    """미리 준비한 응답을 돌려주며 받은 요청을 기록하는 시험 제공자."""
+class FakeLLMAdapter:
+    """미리 준비한 응답을 돌려주며 검사된 요청을 기록하는 시험 어댑터."""
 
     def __init__(
         self,
         responses: list[str | Exception],
         models: list[str] | None = None,
-        gateway: TransmissionGateway | None = None,
     ) -> None:
-        self._audit_directory: TemporaryDirectory[str] | None = None
-        if gateway is None:
-            self._audit_directory = TemporaryDirectory(prefix="essay-grader-fake-llm-")
-            gateway = TransmissionGateway(
-                Path(self._audit_directory.name) / "audit.log",
-                pii_terms_provider=set,
-                provider="test-provider",
-            )
-        super().__init__(gateway)
         self._responses = list(responses)
         self._models = list(models) if models is not None else ["fake-model"]
+        self._audit_directory: TemporaryDirectory[str] | None = None
         self.requests: list[LLMRequest] = []
 
-    def _complete(
+    def complete(
         self,
-        request: OutboundRequest,
-        max_output_tokens: int,
-        json_output: bool,
+        request: LLMOutboundRequest,
     ) -> LLMResponse:
         system, user_text = request.text_parts
         self.requests.append(
@@ -62,8 +51,8 @@ class FakeLLMProvider(LLMProvider):
                 system=system,
                 user_text=user_text,
                 images=list(request.image_parts),
-                max_output_tokens=max_output_tokens,
-                json_output=json_output,
+                max_output_tokens=request.max_output_tokens,
+                json_output=request.json_output,
                 purpose=request.purpose,
             )
         )
@@ -74,5 +63,35 @@ class FakeLLMProvider(LLMProvider):
             raise response
         return LLMResponse(text=response)
 
-    def _list_models(self, _request: OutboundRequest) -> list[str]:
+    def list_models(self, _request: OutboundRequest) -> list[str]:
         return list(self._models)
+
+
+def make_fake_llm_provider(
+    responses: list[str | Exception],
+    models: list[str] | None = None,
+    gateway: TransmissionGateway | None = None,
+) -> tuple[LLMProvider, FakeLLMAdapter]:
+    """시험 어댑터와 정확한 제품 실행 손잡이를 따로 돌려준다."""
+    adapter = FakeLLMAdapter(responses=responses, models=models)
+    return make_llm_provider(adapter, gateway), adapter
+
+
+def make_llm_provider(
+    adapter: FakeLLMAdapter,
+    gateway: TransmissionGateway | None = None,
+) -> LLMProvider:
+    """주어진 시험 어댑터를 정확한 제품 실행 손잡이에 합성한다."""
+    if gateway is None:
+        adapter._audit_directory = TemporaryDirectory(prefix="essay-grader-fake-llm-")
+        gateway = TransmissionGateway(
+            Path(adapter._audit_directory.name) / "audit.log",
+            pii_terms_provider=set,
+            provider="test-provider",
+        )
+    provider = LLMProvider(
+        gateway=gateway,
+        complete_adapter=adapter.complete,
+        list_models_adapter=adapter.list_models,
+    )
+    return provider

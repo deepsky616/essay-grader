@@ -249,11 +249,11 @@ def compile_rubric(
 ) -> CompileResult:
     """글과 쪽 이미지를 보내 루브릭을 만들고 구조 실패만 한 번 재시도한다.
 
-    실제 외부 전송 경계는 제공자가 소유한다. 운영 제미나이 제공자는 주입된
-    전송 게이트웨이로 요청을 검사하고 감사한 뒤에만 도구를 호출한다.
+    실제 외부 전송 경계는 정확한 제공자 실행 손잡이가 소유한다. 공급자별
+    원시 어댑터는 전송 게이트웨이가 검사한 요청만 받는다.
     """
-    if not isinstance(provider, LLMProvider):
-        raise TypeError("루브릭 컴파일 제공자는 전송 게이트웨이를 소유해야 합니다.")
+    if type(provider) is not LLMProvider:
+        raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
 
     images = _collect_images(extracts)
     last_rubric: Rubric | None = None

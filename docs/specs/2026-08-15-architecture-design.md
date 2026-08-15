@@ -145,8 +145,10 @@ OCR 엔진과 LLM 제공자를 인터페이스 뒤에 둔다. 제공자 교체�
 │ 전송 게이트웨이  ← 모든 외부 호출의 단일 통로       │
 │  PII 마스킹 검증 · 실명 스캔 · 익명 토큰 · 감사로그 │
 ├─────────────────────────────────────────────────┤
+│ LLMProvider  ← 정확한 하나의 구체 전송 실행 손잡이  │
+├─────────────────────────────────────────────────┤
 │ 어댑터 계층 (클라우드)                            │
-│  OCRProvider  │  MathOCRProvider  │  LLMProvider │
+│  OCRProvider  │  MathOCRProvider  │  LLM 원시 어댑터 │
 └─────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
@@ -587,17 +589,28 @@ Feedback            학생별 피드백 (문항별 + 총평 + 성취수준)
 | 모델 선택 | 하드코딩하지 않고 **API로 목록 조회 후 교사가 선택** | 모델 이름은 자주 바뀐다. 고정하면 앱이 먼저 낡는다 |
 | 전송 게이트웨이 | 자체 구현 모듈 | 모든 외부 호출의 단일 통로, PII 검사 강제 |
 
-**어댑터 인터페이스**
+**어댑터와 전송 실행 손잡이**
 
 ```python
 class OCRProvider(Protocol):
     def recognize(self, image: bytes, hint: RecognitionHint) -> OCRResult: ...
 
-class LLMProvider(Protocol):
-    def compile_rubric(self, docs: list[Document]) -> Rubric: ...
-    def grade_open_text(self, item: RubricItem, resp: str) -> LLMGrade: ...
-    def generate_feedback(self, ctx: FeedbackContext) -> str: ...
+class RawLLMAdapter(Protocol):
+    def complete(self, request: LLMOutboundRequest) -> LLMResponse: ...
+    def list_models(self, request: OutboundRequest) -> list[str]: ...
+
+provider = LLMProvider(
+    gateway=transmission_gateway,
+    complete_adapter=raw_adapter.complete,
+    list_models_adapter=raw_adapter.list_models,
+)
 ```
+
+`LLMProvider`는 공급자별 상속 기반이 아니라 정확한 하나의 구체 자료형이다.
+`TransmissionGateway`와 원시 어댑터 콜백을 합성해 `complete`와 `list_models`의
+공개 전송 흐름을 소유한다. 제미나이는 `create_gemini_provider` 생성 함수로 이
+손잡이를 만들며, 다른 공급자로 바꿀 때도 원시 어댑터만 갈아 끼운다. 제품
+진입점은 정확한 `LLMProvider`만 받고 하위 자료형과 흉내 객체를 거절한다.
 
 ---
 

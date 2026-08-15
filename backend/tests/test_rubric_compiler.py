@@ -5,16 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.providers.base import LLMResponse
+from app.providers.base import LLMProvider, LLMResponse
 from app.providers.gateway import TransmissionGateway
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gemini_llm import create_gemini_provider
 from app.services.pdf_extract import PdfExtract, PdfPage
 from app.services.rubric_compiler import (
     CompileResult,
     RubricCompileAuthority,
     compile_rubric,
 )
-from tests.fakes import FakeLLMProvider
+from tests.fakes import make_fake_llm_provider
 
 
 VALID_RUBRIC = {
@@ -172,7 +172,9 @@ def test_invalid_authority_cutoffs_are_rejected_before_audit_or_provider_call(
 ):
     audit_path = tmp_path / "audit.log"
     gateway = TransmissionGateway(audit_path, set, "test-provider")
-    provider = FakeLLMProvider(responses=[_payload()], gateway=gateway)
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload()], gateway=gateway
+    )
 
     with pytest.raises(ValueError, match="총점 범위를 벗어납니다"):
         RubricCompileAuthority(
@@ -186,7 +188,7 @@ def test_invalid_authority_cutoffs_are_rejected_before_audit_or_provider_call(
             level_cutoffs={"3": 5, "1": 0},
         )
 
-    assert provider.requests == []
+    assert adapter.requests == []
     assert not audit_path.exists()
 
 
@@ -207,13 +209,13 @@ def test_all_teacher_authority_fields_override_model_without_retry(extracts, aut
         }
     ]
     changed["level_cutoffs"] = {"3": 999, "1": 998}
-    provider = FakeLLMProvider(responses=[_payload(changed)])
+    provider, adapter = make_fake_llm_provider(responses=[_payload(changed)])
 
     result = compile_rubric(provider, extracts, authority)
 
     assert result.succeeded
     assert result.attempts == 1
-    assert len(provider.requests) == 1
+    assert len(adapter.requests) == 1
     assert result.rubric is not None
     assert result.rubric.assessment.model_dump() == {
         "title": "교사 평가명",
@@ -230,9 +232,9 @@ def test_all_teacher_authority_fields_override_model_without_retry(extracts, aut
         }
     ]
     assert result.rubric.level_cutoffs == {"3": 4, "2": 2, "1": 0}
-    assert "교사 평가명" in provider.requests[0].user_text
-    assert "교사 성취기준" in provider.requests[0].user_text
-    assert '"3": 4' in provider.requests[0].user_text
+    assert "교사 평가명" in adapter.requests[0].user_text
+    assert "교사 성취기준" in adapter.requests[0].user_text
+    assert '"3": 4' in adapter.requests[0].user_text
 
 
 def test_malformed_model_values_in_protected_fields_do_not_trigger_retry(
@@ -242,13 +244,13 @@ def test_malformed_model_values_in_protected_fields_do_not_trigger_retry(
     changed["assessment"] = {"title": ["잘못된 모양"]}
     changed["achievement_standards"] = "잘못된 모양"
     changed["level_cutoffs"] = {"3": "잘못된 값"}
-    provider = FakeLLMProvider(responses=[_payload(changed)])
+    provider, adapter = make_fake_llm_provider(responses=[_payload(changed)])
 
     result = compile_rubric(provider, extracts, authority)
 
     assert result.succeeded
     assert result.attempts == 1
-    assert len(provider.requests) == 1
+    assert len(adapter.requests) == 1
     assert result.rubric is not None
     assert result.rubric.assessment.title == "교사 평가명"
     assert result.rubric.achievement_standards[0].core_standard == "교사 성취기준"
@@ -262,11 +264,52 @@ def test_rejects_provider_that_does_not_own_a_transmission_gateway(
         def complete(self, _request):
             return LLMResponse(text=_payload())
 
-    with pytest.raises(TypeError, match="전송 게이트웨이"):
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
         compile_rubric(BypassProvider(), extracts, authority)
 
 
-def test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks(
+def test_compile_rejects_subclass_that_escaped_failed_class_creation_before_audit(
+    tmp_path, extracts, authority
+):
+    escaped_types = []
+
+    class CaptureOwner:
+        def __set_name__(self, owner, name):
+            escaped_types.append(owner)
+
+    with pytest.raises(TypeError, match="complete"):
+
+        class EscapedProvider(LLMProvider):
+            capture = CaptureOwner()
+
+            def complete(self, request):
+                return LLMResponse(text=_payload())
+
+            def _complete(self, request, max_output_tokens, json_output):
+                return LLMResponse(text=_payload())
+
+            def _list_models(self, request):
+                return []
+
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(audit_path, set, "test-provider")
+    adapter_calls = []
+    provider = escaped_types[0](
+        gateway,
+        lambda request: (
+            adapter_calls.append(request) or LLMResponse(text=_payload())
+        ),
+        lambda request: [],
+    )
+
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
+        compile_rubric(provider, extracts, authority)
+
+    assert adapter_calls == []
+    assert not audit_path.exists()
+
+
+def test_compile_handle_prevents_completion_shadow_and_keeps_gateway_checks(
     tmp_path, authority
 ):
     audit_path = tmp_path / "audit.log"
@@ -275,11 +318,11 @@ def test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks(
         pii_terms_provider=lambda: {"김미래"},
         provider="test-provider",
     )
-    provider = FakeLLMProvider(responses=[_payload()], gateway=gateway)
-    bypass_calls = []
-    provider.__dict__["complete"] = lambda request: (
-        bypass_calls.append(request) or LLMResponse(text=_payload())
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload()], gateway=gateway
     )
+    with pytest.raises(AttributeError, match="complete"):
+        provider.complete = lambda request: LLMResponse(text=_payload())
     extracts = [
         PdfExtract(
             source_path=Path("rubric.pdf"),
@@ -292,8 +335,7 @@ def test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks(
     assert not result.succeeded
     assert result.attempts == 1
     assert result.errors == ["언어 모형 제공자 호출에 실패했습니다."]
-    assert bypass_calls == []
-    assert provider.requests == []
+    assert adapter.requests == []
     entry = json.loads(audit_path.read_text(encoding="utf-8"))
     assert entry["provider"] == "test-provider"
     assert entry["purpose"] == "rubric_compile"
@@ -301,7 +343,7 @@ def test_compile_ignores_instance_completion_shadow_and_keeps_gateway_checks(
 
 
 def test_compiles_valid_rubric(extracts, authority):
-    provider = FakeLLMProvider(responses=[_payload()])
+    provider, adapter = make_fake_llm_provider(responses=[_payload()])
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -316,7 +358,7 @@ def test_compiles_valid_rubric(extracts, authority):
 
 def test_strips_one_outer_markdown_code_fence(extracts, authority):
     fenced = "```json\n" + _payload() + "\n```"
-    provider = FakeLLMProvider(responses=[fenced])
+    provider, adapter = make_fake_llm_provider(responses=[fenced])
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -327,7 +369,9 @@ def test_strips_one_outer_markdown_code_fence(extracts, authority):
 def test_teacher_total_points_overrides_model_value(extracts, authority):
     wrong_model_total = json.loads(_payload())
     wrong_model_total["assessment"]["total_points"] = 999
-    provider = FakeLLMProvider(responses=[_payload(wrong_model_total)])
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload(wrong_model_total)]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -338,48 +382,56 @@ def test_teacher_total_points_overrides_model_value(extracts, authority):
 
 
 def test_retries_once_with_business_validation_feedback(extracts, authority):
-    provider = FakeLLMProvider(responses=[_payload(_with_wrong_points()), _payload()])
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload(_with_wrong_points()), _payload()]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
     assert result.succeeded
     assert result.attempts == 2
-    assert len(provider.requests) == 2
-    assert "배점 합계" not in provider.requests[0].user_text
-    assert "배점 합계" in provider.requests[1].user_text
-    assert "채점기준표 내용" in provider.requests[1].user_text
-    assert provider.requests[0].images == [b"\x89PNG fake"]
-    assert provider.requests[1].images == [b"\x89PNG fake"]
-    assert all(request.purpose == "rubric_compile" for request in provider.requests)
+    assert len(adapter.requests) == 2
+    assert "배점 합계" not in adapter.requests[0].user_text
+    assert "배점 합계" in adapter.requests[1].user_text
+    assert "채점기준표 내용" in adapter.requests[1].user_text
+    assert adapter.requests[0].images == [b"\x89PNG fake"]
+    assert adapter.requests[1].images == [b"\x89PNG fake"]
+    assert all(request.purpose == "rubric_compile" for request in adapter.requests)
 
 
 def test_retries_once_with_schema_validation_feedback(extracts, authority):
     broken = json.loads(_payload())
     del broken["items"][0]["title"]
-    provider = FakeLLMProvider(responses=[_payload(broken), _payload()])
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload(broken), _payload()]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
     assert result.succeeded
     assert result.attempts == 2
-    assert "items.0.title" in provider.requests[1].user_text
+    assert "items.0.title" in adapter.requests[1].user_text
 
 
 def test_gives_up_after_second_validation_failure(extracts, authority):
     payload = _payload(_with_wrong_points())
-    provider = FakeLLMProvider(responses=[payload, payload, _payload()])
+    provider, adapter = make_fake_llm_provider(
+        responses=[payload, payload, _payload()]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
     assert not result.succeeded
     assert result.attempts == 2
     assert any("배점 합계" in error for error in result.errors)
-    assert len(provider.requests) == 2
+    assert len(adapter.requests) == 2
 
 
 def test_malformed_json_is_reported_without_response_body(extracts, authority):
     secret_response = "원문-비밀-응답"
-    provider = FakeLLMProvider(responses=[secret_response, secret_response])
+    provider, adapter = make_fake_llm_provider(
+        responses=[secret_response, secret_response]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -390,7 +442,7 @@ def test_malformed_json_is_reported_without_response_body(extracts, authority):
 
 
 def test_warnings_are_returned_alongside_rubric(extracts, authority):
-    provider = FakeLLMProvider(responses=[_payload()])
+    provider, adapter = make_fake_llm_provider(responses=[_payload()])
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -401,7 +453,7 @@ def test_warnings_from_last_structured_failure_are_preserved(extracts, authority
     broken = _with_wrong_points()
     broken["items"][0]["title"] = "㉠을 고르기"
     payload = _payload(broken)
-    provider = FakeLLMProvider(responses=[payload, payload])
+    provider, adapter = make_fake_llm_provider(responses=[payload, payload])
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -416,7 +468,9 @@ def test_last_structured_rubric_survives_malformed_second_response(
 ):
     broken = _with_wrong_points()
     broken["items"][0]["title"] = "㉠을 고르기"
-    provider = FakeLLMProvider(responses=[_payload(broken), "읽을 수 없는 둘째 응답"])
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload(broken), "읽을 수 없는 둘째 응답"]
+    )
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -432,7 +486,7 @@ def test_last_structured_rubric_survives_second_provider_failure(
 ):
     broken = _with_wrong_points()
     broken["items"][0]["title"] = "㉠을 고르기"
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[_payload(broken), RuntimeError("provider-secret")]
     )
 
@@ -449,7 +503,7 @@ def test_last_structured_rubric_survives_second_provider_failure(
 def test_symbol_family_mismatch_is_not_corrected(extracts, authority):
     mismatched = json.loads(_payload())
     mismatched["items"][0]["title"] = "㉠을 고르기"
-    provider = FakeLLMProvider(responses=[_payload(mismatched)])
+    provider, adapter = make_fake_llm_provider(responses=[_payload(mismatched)])
 
     result = compile_rubric(provider, extracts, authority)
 
@@ -474,15 +528,15 @@ def test_all_page_images_are_sent_in_document_and_page_order(authority):
             pages=[PdfPage(page_no=1, text="셋째 쪽", image_png=b"second-1")],
         ),
     ]
-    provider = FakeLLMProvider(responses=[_payload()])
+    provider, adapter = make_fake_llm_provider(responses=[_payload()])
 
     compile_rubric(provider, extracts, authority)
 
-    assert provider.requests[0].images == [b"first-1", b"first-2", b"second-1"]
-    assert "첫 쪽" in provider.requests[0].user_text
-    assert "둘째 쪽" in provider.requests[0].user_text
-    assert "셋째 쪽" in provider.requests[0].user_text
-    assert "first.pdf" not in provider.requests[0].user_text
+    assert adapter.requests[0].images == [b"first-1", b"first-2", b"second-1"]
+    assert "첫 쪽" in adapter.requests[0].user_text
+    assert "둘째 쪽" in adapter.requests[0].user_text
+    assert "셋째 쪽" in adapter.requests[0].user_text
+    assert "first.pdf" not in adapter.requests[0].user_text
 
 
 def test_gemini_completion_uses_provider_gateway_and_safe_audit(
@@ -497,7 +551,7 @@ def test_gemini_completion_uses_provider_gateway_and_safe_audit(
             return SimpleNamespace(text=_payload())
 
     gateway = TransmissionGateway(audit_path, set, provider="gemini")
-    provider = GeminiLLMProvider(
+    provider = create_gemini_provider(
         api_key="api-key-secret",
         model="models/gemini-test",
         gateway=gateway,
@@ -529,7 +583,7 @@ def test_provider_error_is_sanitized_and_not_retried(
             raise RuntimeError("provider-secret api-key-secret")
 
     gateway = TransmissionGateway(audit_path, set, provider="gemini")
-    provider = GeminiLLMProvider(
+    provider = create_gemini_provider(
         api_key="api-key-secret",
         model="models/gemini-test",
         gateway=gateway,

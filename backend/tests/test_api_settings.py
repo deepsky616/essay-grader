@@ -11,8 +11,14 @@ from app.db import get_session
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.providers.credentials import CredentialStore
+from app.providers.base import LLMProvider, LLMResponse
 from app.providers.gateway import TransmissionGateway
-from tests.fakes import FakeKeyring, FakeLLMProvider
+from tests.fakes import (
+    FakeKeyring,
+    FakeLLMAdapter,
+    make_fake_llm_provider,
+    make_llm_provider,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,10 +29,9 @@ def stub_external_dependencies(client, tmp_path, monkeypatch):
     monkeypatch.setattr(
         settings_api,
         "build_provider",
-        lambda api_key, model: FakeLLMProvider(
-            responses=[],
-            models=["models/gemini-pro", "models/gemini-flash"],
-        ),
+        lambda api_key, model: make_fake_llm_provider(
+            responses=[], models=["models/gemini-pro", "models/gemini-flash"]
+        )[0],
     )
     yield store
     client.app.dependency_overrides.clear()
@@ -81,19 +86,64 @@ def test_model_list_returns_available_models_before_model_selection(client):
     assert body["models"] == ["models/gemini-pro", "models/gemini-flash"]
 
 
-def test_model_list_ignores_instance_shadow_and_keeps_audit(
+@pytest.mark.parametrize("operation", ["list", "select"])
+def test_settings_reject_provider_from_seal_bypassing_derived_metaclass(
+    client, monkeypatch, tmp_path, operation
+):
+    adapter_calls = []
+
+    class NonCooperativeMixin:
+        def __init_subclass__(cls, **kwargs):
+            pass
+
+    class BypassMeta(type(LLMProvider)):
+        def __new__(mcls, name, bases, namespace, **kwargs):
+            return type.__new__(mcls, name, bases, namespace, **kwargs)
+
+    class BypassProvider(
+        NonCooperativeMixin, LLMProvider, metaclass=BypassMeta
+    ):
+        def complete(self, request):
+            return LLMResponse(text="unguarded")
+
+        def list_models(self):
+            return ["models/unguarded"]
+
+    audit_path = tmp_path / "audit.log"
+    provider = BypassProvider(
+        TransmissionGateway(audit_path, set, "test-provider"),
+        lambda request: LLMResponse(text="unused"),
+        lambda request: adapter_calls.append(request) or ["models/unguarded"],
+    )
+    assert isinstance(provider, LLMProvider)
+    assert type(provider) is not LLMProvider
+    monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)
+    client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
+
+    if operation == "list":
+        response = client.get("/api/settings/models")
+    else:
+        response = client.put(
+            "/api/settings/model",
+            json={"llm_model": "models/unguarded"},
+        )
+
+    assert response.status_code == 400
+    assert adapter_calls == []
+    assert not audit_path.exists()
+
+
+def test_model_list_handle_prevents_instance_shadow_and_keeps_audit(
     client, monkeypatch, tmp_path
 ):
     audit_path = tmp_path / "audit.log"
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[],
         models=["models/guarded"],
         gateway=TransmissionGateway(audit_path, set, "test-provider"),
     )
-    bypass_calls = []
-    provider.__dict__["list_models"] = lambda: (
-        bypass_calls.append(True) or ["models/bypass"]
-    )
+    with pytest.raises(AttributeError, match="list_models"):
+        provider.list_models = lambda: ["models/bypass"]
     monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
 
@@ -101,7 +151,6 @@ def test_model_list_ignores_instance_shadow_and_keeps_audit(
 
     assert response.status_code == 200
     assert response.json()["models"] == ["models/guarded"]
-    assert bypass_calls == []
     entry = json.loads(audit_path.read_text(encoding="utf-8"))
     assert entry["provider"] == "test-provider"
     assert entry["purpose"] == "list_models"
@@ -109,14 +158,14 @@ def test_model_list_ignores_instance_shadow_and_keeps_audit(
 
 
 def test_model_list_failure_does_not_expose_provider_error_or_key(client, monkeypatch):
-    class FailedProvider(FakeLLMProvider):
-        def _list_models(self, request):
+    class FailedAdapter(FakeLLMAdapter):
+        def list_models(self, request):
             raise RuntimeError("request failed for api-key-secret")
 
     monkeypatch.setattr(
         settings_api,
         "build_provider",
-        lambda api_key, model: FailedProvider(responses=[]),
+        lambda api_key, model: make_llm_provider(FailedAdapter(responses=[])),
     )
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
 
@@ -137,19 +186,17 @@ def test_select_model_persists(client):
     assert client.get("/api/settings").json()["llm_model"] == "models/gemini-pro"
 
 
-def test_model_selection_ignores_instance_model_list_shadow(
+def test_model_selection_handle_prevents_instance_shadow(
     client, monkeypatch, tmp_path
 ):
     audit_path = tmp_path / "audit.log"
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[],
         models=["models/guarded"],
         gateway=TransmissionGateway(audit_path, set, "test-provider"),
     )
-    bypass_calls = []
-    provider.__dict__["list_models"] = lambda: (
-        bypass_calls.append(True) or ["models/bypass"]
-    )
+    with pytest.raises(AttributeError, match="list_models"):
+        provider.list_models = lambda: ["models/bypass"]
     monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
 
@@ -159,7 +206,6 @@ def test_model_selection_ignores_instance_model_list_shadow(
 
     assert response.status_code == 200
     assert response.json()["llm_model"] == "models/guarded"
-    assert bypass_calls == []
     entry = json.loads(audit_path.read_text(encoding="utf-8"))
     assert entry["provider"] == "test-provider"
     assert entry["purpose"] == "list_models"
@@ -194,15 +240,15 @@ def test_model_not_in_current_provider_list_is_rejected(client):
 
 
 def test_model_selection_hides_provider_failure(client, monkeypatch):
-    class FailedProvider(FakeLLMProvider):
-        def _list_models(self, request):
+    class FailedAdapter(FakeLLMAdapter):
+        def list_models(self, request):
             raise RuntimeError("provider exposed api-key-secret")
 
     client.put("/api/settings/api-key", json={"api_key": "api-key-secret"})
     monkeypatch.setattr(
         settings_api,
         "build_provider",
-        lambda api_key, model: FailedProvider(responses=[]),
+        lambda api_key, model: make_llm_provider(FailedAdapter(responses=[])),
     )
 
     response = client.put(
@@ -393,8 +439,8 @@ def test_key_change_waits_for_model_binding_and_then_invalidates_it(
     client.app.dependency_overrides[settings_api.get_credential_store] = lambda: store
     client.put("/api/settings/api-key", json={"api_key": "first-secret"})
 
-    class BlockingProvider(FakeLLMProvider):
-        def _list_models(self, request):
+    class BlockingAdapter(FakeLLMAdapter):
+        def list_models(self, request):
             model_list_started.set()
             assert release_model_list.wait(timeout=5)
             return ["models/gemini-pro"]
@@ -402,7 +448,7 @@ def test_key_change_waits_for_model_binding_and_then_invalidates_it(
     monkeypatch.setattr(
         settings_api,
         "build_provider",
-        lambda api_key, model: BlockingProvider(responses=[]),
+        lambda api_key, model: make_llm_provider(BlockingAdapter(responses=[])),
     )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
