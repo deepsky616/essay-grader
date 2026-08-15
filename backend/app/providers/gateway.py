@@ -15,8 +15,24 @@ from unicodedata import category, normalize
 
 T = TypeVar("T")
 
-_SAFE_SLUG = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", re.ASCII)
-_ANONYMOUS_TOKEN = re.compile(r"S-[A-Za-z0-9]{8}", re.ASCII)
+_ALLOWED_PROVIDERS = frozenset({"gemini", "test-provider"})
+_ALLOWED_PURPOSES = frozenset(
+    {
+        "rubric_compile",
+        "grade_open_text",
+        "recognize_classify",
+        "recognize_transcribe",
+        "generate_feedback",
+    }
+)
+_ANONYMOUS_TOKEN = re.compile(r"S-[0-9a-f]{8}", re.ASCII)
+_BASIC_IGNORABLE_CODEPOINTS = frozenset({0x034F})
+_VARIATION_SELECTOR_RANGES = (
+    (0x180B, 0x180D),
+    (0x180F, 0x180F),
+    (0xFE00, 0xFE0F),
+    (0xE0100, 0xE01EF),
+)
 
 
 class PIIViolation(Exception):
@@ -28,7 +44,6 @@ class OutboundRequest:
     """외부 제공자에 전달할 비식별 요청이다."""
 
     purpose: str
-    provider: str
     text_parts: tuple[str, ...] | list[str] = field(default_factory=tuple)
     image_parts: tuple[bytes, ...] | list[bytes] = field(default_factory=tuple)
     anonymous_token: str | None = None
@@ -47,10 +62,8 @@ class OutboundRequest:
         object.__setattr__(self, "image_parts", image_parts)
 
     def _validate_metadata(self) -> None:
-        if not isinstance(self.provider, str) or not _SAFE_SLUG.fullmatch(self.provider):
-            raise ValueError("제공자는 비어 있지 않은 안전한 슬러그여야 합니다.")
-        if not isinstance(self.purpose, str) or not _SAFE_SLUG.fullmatch(self.purpose):
-            raise ValueError("요청 종류는 비어 있지 않은 안전한 슬러그여야 합니다.")
+        if self.purpose not in _ALLOWED_PURPOSES:
+            raise ValueError("허용되지 않은 요청 종류입니다.")
         if self.anonymous_token is not None and (
             not isinstance(self.anonymous_token, str)
             or not _ANONYMOUS_TOKEN.fullmatch(self.anonymous_token)
@@ -79,9 +92,13 @@ class TransmissionGateway:
         self,
         audit_log_path: Path,
         pii_terms_provider: Callable[[], set[str]],
+        provider: str,
     ) -> None:
+        if provider not in _ALLOWED_PROVIDERS:
+            raise ValueError("허용되지 않은 제공자입니다.")
         self._audit_log_path = audit_log_path
         self._pii_terms_provider = pii_terms_provider
+        self._provider = provider
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def send(self, request: OutboundRequest, call: Callable[[OutboundRequest], T]) -> T:
@@ -110,7 +127,7 @@ class TransmissionGateway:
         """허용된 메타데이터만 줄 단위로 추가한다."""
         entry: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "provider": request.provider,
+            "provider": self._provider,
             "purpose": request.purpose,
             "anonymous_token": request.anonymous_token,
             "payload_bytes": request.logical_payload_bytes(),
@@ -121,9 +138,22 @@ class TransmissionGateway:
 
 
 def _comparison_text(value: str) -> str:
-    """비교 전 유니코드 조합 차이와 보이지 않는 형식 글자를 제거한다."""
+    """비교 전 우회에 쓰일 수 있는 기본 무시 글자를 제거한다.
+
+    한글을 포함한 일반 문자를 보존하기 위해 결합 문자 범주 전체를 지우지
+    않는다. 형식 글자와 결합 그래핌 결합자, 명시한 변형 선택자 범위만 제거한다.
+    """
     return "".join(
         character
         for character in normalize("NFC", value)
-        if category(character) != "Cf"
+        if not _is_basic_ignorable(character)
+    )
+
+
+def _is_basic_ignorable(character: str) -> bool:
+    if category(character) == "Cf" or ord(character) in _BASIC_IGNORABLE_CODEPOINTS:
+        return True
+    codepoint = ord(character)
+    return any(
+        start <= codepoint <= end for start, end in _VARIATION_SELECTOR_RANGES
     )
