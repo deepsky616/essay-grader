@@ -167,6 +167,29 @@ def test_authority_can_be_built_directly_from_assessment_record():
     assert authority.level_cutoffs == {"3": 4, "1": 0}
 
 
+def test_invalid_authority_cutoffs_are_rejected_before_audit_or_provider_call(
+    tmp_path,
+):
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(audit_path, set, "test-provider")
+    provider = FakeLLMProvider(responses=[_payload()], gateway=gateway)
+
+    with pytest.raises(ValueError, match="총점 범위를 벗어납니다"):
+        RubricCompileAuthority(
+            assessment={
+                "title": "교사 평가명",
+                "subject": "수학",
+                "grade": 6,
+                "total_points": 4,
+            },
+            achievement_standards=[],
+            level_cutoffs={"3": 5, "1": 0},
+        )
+
+    assert provider.requests == []
+    assert not audit_path.exists()
+
+
 def test_all_teacher_authority_fields_override_model_without_retry(extracts, authority):
     changed = json.loads(_payload())
     changed["assessment"] = {

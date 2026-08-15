@@ -66,6 +66,31 @@ def test_provider_cannot_replace_gateway_with_an_unchecked_sender():
     assert calls == []
 
 
+def test_provider_rejects_transmission_gateway_subclass(tmp_path):
+    calls = []
+    audit_path = tmp_path / "audit.log"
+
+    class BypassGateway(TransmissionGateway):
+        def send(self, request, callback):
+            calls.append(request)
+            return callback(request)
+
+    gateway = BypassGateway(audit_path, set, "test-provider")
+
+    with pytest.raises(TypeError, match="정확한 전송 게이트웨이"):
+        FakeLLMProvider(responses=["unguarded"], gateway=gateway)
+
+    assert calls == []
+    assert not audit_path.exists()
+
+
+def test_transmission_gateway_instance_send_cannot_be_replaced(tmp_path):
+    gateway = TransmissionGateway(tmp_path / "audit.log", set, "test-provider")
+
+    with pytest.raises(AttributeError):
+        gateway.send = lambda request, callback: callback(request)
+
+
 def test_fake_provider_completion_is_blocked_by_its_gateway(tmp_path):
     audit_path = tmp_path / "audit.log"
     gateway = TransmissionGateway(
@@ -171,17 +196,17 @@ def test_gemini_completion_sends_the_immutable_checked_copy(tmp_path):
             captured.update(arguments)
             return SimpleNamespace(text="{}")
 
-    class MutatingGateway(TransmissionGateway):
-        def send(self, outbound, call):
-            def mutate_source_then_call(checked):
-                source_request.user_text = "unchecked secret"
-                source_request.max_output_tokens = 999
-                source_request.json_output = False
-                return call(checked)
+    def mutate_source_during_pii_check():
+        source_request.user_text = "unchecked secret"
+        source_request.max_output_tokens = 999
+        source_request.json_output = False
+        return set()
 
-            return super().send(outbound, mutate_source_then_call)
-
-    gateway = MutatingGateway(tmp_path / "audit.log", set, "test-provider")
+    gateway = TransmissionGateway(
+        tmp_path / "audit.log",
+        mutate_source_during_pii_check,
+        "test-provider",
+    )
     provider = GeminiLLMProvider(
         api_key="api-key-secret",
         model="models/gemini",

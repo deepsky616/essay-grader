@@ -4,6 +4,7 @@
 문제다. 확인이 필요하지만 진행은 가능한 문제는 별도 경고 검증기가 다룬다.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.schemas.rubric import AnswerSpec, ItemType, Rubric, RubricItem
@@ -151,23 +152,25 @@ def _validate_item(
     return errors
 
 
-def _validate_cutoffs(rubric: Rubric) -> list[ValidationError]:
-    if not rubric.level_cutoffs:
+def validate_level_cutoffs(
+    total_points: int, level_cutoffs: Mapping[str, int]
+) -> list[ValidationError]:
+    """총점과 수준 경계값만으로 판정할 수 있는 공용 규칙을 검사한다."""
+    if not level_cutoffs:
         return []
 
     try:
         pairs = sorted(
-            ((int(level), cut) for level, cut in rubric.level_cutoffs.items()),
+            ((int(level), cut) for level, cut in level_cutoffs.items()),
             reverse=True,
         )
     except ValueError:
         return [ValidationError("level_cutoffs", "성취수준 키는 정수 문자열이어야 합니다.")]
 
     errors: list[ValidationError] = []
-    total = rubric.assessment.total_points
     previous_cut: int | None = None
     for level, cut in pairs:
-        if cut < 0 or cut > total:
+        if cut < 0 or cut > total_points:
             errors.append(
                 ValidationError(
                     "level_cutoffs", f"{level}수준 컷오프 {cut}점이 총점 범위를 벗어납니다."
@@ -211,5 +214,10 @@ def validate_rubric(rubric: Rubric) -> list[ValidationError]:
     for item in rubric.items:
         errors.extend(_validate_item(item, standard_ranges))
 
-    errors.extend(_validate_cutoffs(rubric))
+    errors.extend(
+        validate_level_cutoffs(
+            rubric.assessment.total_points,
+            rubric.level_cutoffs,
+        )
+    )
     return errors

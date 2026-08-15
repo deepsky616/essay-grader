@@ -210,16 +210,14 @@ def test_pii_terms_provider_failure_stops_before_provider_call(tmp_path):
     assert calls == []
 
 
-def test_audit_write_failure_stops_before_provider_call(gateway, monkeypatch):
+def test_audit_write_failure_stops_before_provider_call(tmp_path):
+    audit_path = tmp_path / "audit-as-directory"
+    audit_path.mkdir()
+    gateway = TransmissionGateway(audit_path, set, "test-provider")
     request = OutboundRequest(purpose="rubric_compile")
     calls = []
 
-    def failed_audit(*args):
-        raise OSError("audit unavailable")
-
-    monkeypatch.setattr(gateway, "_write_audit", failed_audit)
-
-    with pytest.raises(OSError, match="audit unavailable"):
+    with pytest.raises(IsADirectoryError):
         gateway.send(request, lambda req: calls.append(req))
 
     assert calls == []

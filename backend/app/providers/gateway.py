@@ -104,6 +104,8 @@ class OutboundRequest:
 class TransmissionGateway:
     """식별정보 검사를 통과한 요청만 제공자 호출로 전달한다."""
 
+    __slots__ = ("_audit_log_path", "_pii_terms_provider", "_provider")
+
     def __init__(
         self,
         audit_log_path: Path,

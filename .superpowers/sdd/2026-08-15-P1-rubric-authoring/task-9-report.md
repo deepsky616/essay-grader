@@ -99,3 +99,51 @@
 - 정본의 보호 대상은 모형 응답에서 빠지거나 잘못된 모양이어도 스키마 재시도를 만들지 않는다. 문항처럼 모형이 실제로 만들어야 하는 칸의 스키마 오류만 재시도된다.
 - 뒤 작업 13은 이전의 `total_points` 인자 대신 `RubricCompileAuthority`를 만들어 전달해야 한다.
 - 큰 피디에프 요청 크기 정책과 기존 외부 도구 경고 7개는 이번 범위 밖으로 남는다.
+
+---
+
+## 고침 2차
+
+### 상태
+
+관문 하위 클래스와 인스턴스 메서드 바꿔치기 우회를 봉인하고, 교사 정본의 수준 경계 오류를 외부 호출 전에 같은 검증 원천으로 거절했다.
+
+### 실패 뒤 성공 근거
+
+- `send`를 재정의한 `TransmissionGateway` 하위 클래스를 시험 제공자에 넣는 검사는 우회 객체가 받아들여져 실패했다. 제공자 기반이 정확한 기본 자료형만 받도록 바꾼 뒤 생성 단계에서 거절됐다.
+- 실제 관문 인스턴스의 `send`를 람다로 바꾸는 검사는 대입이 성공해 실패했다. 관문 인스턴스에 고정 슬롯만 허용한 뒤 읽기 전용 메서드 대입이 속성 오류로 거절됐다.
+- 총점 4점에 3수준 경계를 5점으로 둔 정본 검사는 오류 없이 생성되어 실패했다. 기존 수준 경계 검증을 공용 함수로 분리하고 정본 생성에서 재사용한 뒤 총점 범위 오류로 거절됐다.
+- 관문 봉인 뒤 기존 감사 쓰기 실패 검사가 내부 메서드 덧씌우기 단계에서 멈췄다. 감사 경로에 실제 폴더를 놓아 운영과 같은 쓰기 실패를 내도록 바꿨고, 제공자 콜백이 실행되지 않는 계약은 유지됐다.
+
+### 구현 내용
+
+- `TransmissionGateway`는 감사 경로, 식별정보 용어 공급자, 제공자 이름 세 슬롯만 가진다. 인스턴스에 `send`나 내부 메서드를 덧씌울 수 없다.
+- `LLMProvider`는 생성과 매 호출에서 `type(gateway) is TransmissionGateway`를 확인한다. 하위 관문과 관문을 흉내 낸 객체는 모두 거절된다.
+- 공개 완성과 모델 목록 흐름은 주입 객체의 동적 `send`가 아니라 `TransmissionGateway.send` 원본 구현을 직접 호출한다.
+- 원래 요청의 불변 사본 검사는 관문 하위 클래스를 없애고, 실제 관문의 `pii_terms_provider`가 검사 시점에 원래 요청을 바꾸도록 구성했다. 도구에는 계속 검사 전 복사본과 원래 출력 설정만 전달된다.
+- `validate_level_cutoffs(total_points, level_cutoffs)`를 루브릭 검증기의 공용 원천으로 분리했다. 완성 루브릭 검증과 `RubricCompileAuthority` 생성이 같은 범위 및 내림차순 규칙을 쓴다.
+- 잘못된 교사 정본은 생성 시 `ValueError`로 닫히며 제공자 콜백과 감사 파일 추가는 한 번도 일어나지 않는다. 모형이 고칠 수 있는 문항 오류의 둘째 요청 계약은 기존 검사로 유지된다.
+
+### 검사 명령과 결과
+
+- `backend/.venv/bin/python -m pytest tests/test_gateway.py tests/test_llm_provider.py tests/test_rubric_validator.py tests/test_rubric_compiler.py tests/test_api_settings.py -q`: 113개 성공, 경고 7개.
+- `backend/.venv/bin/python -m pytest tests/ -q`: 153개 성공, 경고 7개.
+- `backend/.venv/bin/python -m compileall -q app tests`: 성공.
+- `git diff --check`: 성공.
+
+### 바뀐 파일
+
+- `backend/app/providers/base.py`
+- `backend/app/providers/gateway.py`
+- `backend/app/services/rubric_compiler.py`
+- `backend/app/services/rubric_validator.py`
+- `backend/tests/test_gateway.py`
+- `backend/tests/test_llm_provider.py`
+- `backend/tests/test_rubric_compiler.py`
+- 이 보고 파일
+
+### 자체 검토와 걱정거리
+
+- 관문 하위 클래스 확장점은 의도적으로 닫혔다. 검사 시점 동작이 필요한 시험과 뒤 구현은 생성자 손잡이를 사용해야 한다.
+- 클래스 자체를 실행 중에 바꾸는 악성 코드까지 막는 넓은 틀은 추가하지 않았다. 이번 경계는 주입 객체의 하위 자료형과 인스턴스 메서드 바꿔치기를 막는다.
+- 큰 피디에프 요청 크기 정책과 기존 외부 도구 경고 7개는 이번 범위 밖으로 남는다.

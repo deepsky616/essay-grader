@@ -16,7 +16,7 @@ from pydantic import TypeAdapter, ValidationError as PydanticValidationError
 from app.providers.base import LLMProvider, LLMRequest
 from app.schemas.rubric import AchievementStandard, AssessmentMeta, Rubric
 from app.services.pdf_extract import PdfExtract
-from app.services.rubric_validator import validate_rubric
+from app.services.rubric_validator import validate_level_cutoffs, validate_rubric
 from app.services.rubric_warnings import Warning, detect_warnings
 
 
@@ -80,6 +80,13 @@ class RubricCompileAuthority:
             for standard in achievement_standards
         ]
         checked_cutoffs = _LEVEL_CUTOFFS_ADAPTER.validate_python(level_cutoffs)
+        cutoff_errors = validate_level_cutoffs(
+            checked_assessment.total_points,
+            checked_cutoffs,
+        )
+        if cutoff_errors:
+            messages = "; ".join(error.message for error in cutoff_errors)
+            raise ValueError(f"교사 정본 수준 경계값이 올바르지 않습니다. {messages}")
         snapshot = {
             "assessment": checked_assessment.model_dump(mode="json"),
             "achievement_standards": [

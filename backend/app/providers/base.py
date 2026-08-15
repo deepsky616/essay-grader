@@ -22,8 +22,8 @@ class LLMResponse:
 
 def _require_transmission_gateway(provider: object) -> TransmissionGateway:
     gateway = getattr(provider, "_gateway", None)
-    if not isinstance(gateway, TransmissionGateway):
-        raise TypeError("언어 모형 제공자는 전송 게이트웨이를 사용해야 합니다.")
+    if type(gateway) is not TransmissionGateway:
+        raise TypeError("언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다.")
     return gateway
 
 
@@ -47,8 +47,8 @@ class LLMProvider(ABC):
             )
 
     def __init__(self, gateway: TransmissionGateway) -> None:
-        if not isinstance(gateway, TransmissionGateway):
-            raise TypeError("언어 모형 제공자는 전송 게이트웨이를 사용해야 합니다.")
+        if type(gateway) is not TransmissionGateway:
+            raise TypeError("언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다.")
         self._gateway = gateway
 
     @final
@@ -61,7 +61,8 @@ class LLMProvider(ABC):
             text_parts=[request.system, request.user_text],
             image_parts=request.images,
         )
-        return gateway.send(
+        return TransmissionGateway.send(
+            gateway,
             outbound,
             lambda checked: self._complete(
                 checked,
@@ -74,7 +75,7 @@ class LLMProvider(ABC):
     def list_models(self) -> list[str]:
         gateway = _require_transmission_gateway(self)
         request = OutboundRequest(purpose="list_models")
-        return gateway.send(request, self._list_models)
+        return TransmissionGateway.send(gateway, request, self._list_models)
 
     @abstractmethod
     def _complete(
