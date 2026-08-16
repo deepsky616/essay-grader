@@ -71,6 +71,131 @@ a {
   min-width: 520px;
 }
 
+.region-editor-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.region-editor-heading h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.region-editor-heading p,
+.region-editor-help {
+  max-width: 720px;
+  margin: 0;
+  color: #475569;
+  font-size: 14px;
+}
+
+.region-editor-toolbar,
+.region-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 18px 0 12px;
+}
+
+.region-editor-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.region-editor-toolbar input[type="number"] {
+  width: 76px;
+}
+
+.region-board {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 12px;
+  border: 1px solid #cbd5e1;
+  cursor: crosshair;
+  line-height: 0;
+  touch-action: none;
+}
+
+.region-board img {
+  display: block;
+  width: auto;
+  max-width: min(760px, 100%);
+  height: auto;
+  user-select: none;
+}
+
+.region-overlay {
+  position: absolute;
+  pointer-events: none;
+  line-height: 1.4;
+}
+
+.region-overlay-response {
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.region-overlay-pii {
+  border: 2px solid #dc2626;
+  background: rgba(220, 38, 38, 0.14);
+}
+
+.region-overlay-draft {
+  border: 2px dashed #334155;
+  background: rgba(51, 65, 85, 0.08);
+}
+
+.region-overlay span {
+  display: inline-block;
+  padding: 1px 4px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.region-list {
+  max-width: 760px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.region-list h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.region-list ul {
+  margin-bottom: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.region-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.notice-message {
+  color: #166534;
+}
+
+.error-message {
+  color: #b91c1c;
+}
+
 @media (max-width: 520px) {
   .app-shell {
     padding: 16px;
@@ -78,5 +203,10 @@ a {
 
   .app-header {
     align-items: center;
+  }
+
+  .region-editor-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

@@ -114,3 +114,22 @@ export interface AppSettings {
   data_policy_acknowledged: boolean;
   data_policy_acknowledged_at: string | null;
 }
+
+export type RegionType = "response" | "pii";
+
+export interface Region {
+  region_type: RegionType;
+  item_no: number | null;
+  page_no: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface TemplateInfo {
+  id: number;
+  page_count: number;
+  dpi: number;
+  printable_ready: boolean;
+}

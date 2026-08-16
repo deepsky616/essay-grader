@@ -4,7 +4,9 @@ import type {
   AssessmentInput,
   Rubric,
   RubricResponse,
+  Region,
   SourceDocument,
+  TemplateInfo,
 } from "../types/rubric";
 
 const DEFAULT_ERROR = "요청을 처리하지 못했습니다.";
@@ -117,6 +119,38 @@ export const api = {
       `/api/assessments/${id}/rubric/unconfirm`,
       { method: "POST" },
     ),
+
+  createTemplate: (id: number) =>
+    request<TemplateInfo>(`/api/assessments/${id}/template`, {
+      method: "POST",
+    }),
+
+  getRegions: (id: number) =>
+    request<{ regions: Region[] }>(
+      `/api/assessments/${id}/template/regions`,
+    ),
+
+  saveRegions: (id: number, regions: Region[]) =>
+    request<{ saved: number }>(
+      `/api/assessments/${id}/template/regions`,
+      {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify({ regions }),
+      },
+    ),
+
+  generatePrintable: (id: number) =>
+    request<{ status: string }>(
+      `/api/assessments/${id}/template/printable`,
+      { method: "POST" },
+    ),
+
+  templatePageUrl: (id: number, pageNo: number) =>
+    `/api/assessments/${id}/template/pages/${pageNo}`,
+
+  printableUrl: (id: number) =>
+    `/api/assessments/${id}/template/printable`,
 
   getSettings: () => request<AppSettings>("/api/settings"),
 

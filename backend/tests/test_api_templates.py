@@ -299,7 +299,7 @@ def test_printable_sheet_is_generated_as_private_file(
 ) -> None:
     client.put(
         f"/api/assessments/{assessment_id}/template/regions",
-        json=_regions(pii=False),
+        json=_regions(),
     )
     response = client.post(f"/api/assessments/{assessment_id}/template/printable")
 
@@ -321,6 +321,24 @@ def test_printable_requires_response_region(client, assessment_id, template_id) 
         ).status_code
         == 400
     )
+
+
+def test_printable_requires_pii_region(
+    client, assessment_id, template_id
+) -> None:
+    client.put(
+        f"/api/assessments/{assessment_id}/template/regions",
+        json=_regions(pii=False),
+    )
+
+    response = client.post(
+        f"/api/assessments/{assessment_id}/template/printable"
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "식별정보 영역을 하나 지정하세요."
+    }
 
 
 def test_download_requires_generated_regular_file(

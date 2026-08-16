@@ -744,6 +744,9 @@ export default function RubricReview() {
           </>
         )}
         {confirmed && <button type="button" onClick={handleUnconfirm} disabled={busy}>확정 해제</button>}
+        {documents.some((document) => document.kind === "answer_sheet") && (
+          <Link to={`/assessments/${assessmentId}/regions`}>답안 영역 지정</Link>
+        )}
         <Link to="/">평가 목록으로</Link>
       </div>
 

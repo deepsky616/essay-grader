@@ -2,6 +2,7 @@ import { Link, Route, Routes } from "react-router-dom";
 
 import AssessmentList from "./pages/AssessmentList";
 import AssessmentNew from "./pages/AssessmentNew";
+import RegionEditor from "./pages/RegionEditor";
 import RubricReview from "./pages/RubricReview";
 import Settings from "./pages/Settings";
 
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/" element={<AssessmentList />} />
         <Route path="/assessments/new" element={<AssessmentNew />} />
         <Route path="/assessments/:id/rubric" element={<RubricReview />} />
+        <Route path="/assessments/:id/regions" element={<RegionEditor />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </div>

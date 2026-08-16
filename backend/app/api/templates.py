@@ -363,10 +363,18 @@ def generate_printable(
     response_regions = [
         region for region in template.regions if region.region_type == "response"
     ]
+    pii_regions = [
+        region for region in template.regions if region.region_type == "pii"
+    ]
     if not response_regions:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "응답 영역을 하나 이상 지정하세요.",
+        )
+    if len(pii_regions) != 1:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "식별정보 영역을 하나 지정하세요.",
         )
 
     scale = 72.0 / TEMPLATE_DPI
