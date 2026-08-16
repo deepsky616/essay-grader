@@ -3,6 +3,7 @@ from app.models.assessment import Assessment
 from app.models.base import Base
 from app.models.classroom import Classroom, Student
 from app.models.document import SourceDocument
+from app.models.feedback import Feedback
 from app.models.grading import GradingRun, ItemScore
 from app.models.job import Job
 from app.models.rubric import RubricDraft
@@ -29,4 +30,5 @@ __all__ = [
     "GradingRun",
     "ItemScore",
     "ScoreRevision",
+    "Feedback",
 ]
