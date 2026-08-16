@@ -8,19 +8,15 @@ import Settings from "./pages/Settings";
 export default function App() {
   return (
     <div
+      className="app-shell"
       style={{
-        maxWidth: 960,
-        margin: "0 auto",
-        padding: 24,
         fontFamily: "system-ui, sans-serif",
       }}
     >
       <header
+        className="app-header"
         style={{
           marginBottom: 24,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
         }}
       >
         <Link

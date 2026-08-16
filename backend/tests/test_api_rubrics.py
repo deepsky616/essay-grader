@@ -1,4 +1,3 @@
-import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -273,7 +272,7 @@ def test_changed_total_points_blocks_stale_rubric_confirmation(
     assert confirmed.status_code == 400
 
 
-def test_schema_error_is_safe_and_edit_remains_recoverable(
+def test_schema_error_is_safe_and_does_not_replace_valid_draft(
     client, assessment_id, stub_compile
 ):
     _compile(client, assessment_id)
@@ -285,12 +284,11 @@ def test_schema_error_is_safe_and_edit_remains_recoverable(
         json={"rubric": broken},
     )
 
-    assert response.status_code == 200
-    assert response.json()["errors"]
-    assert "private-marker" not in json.dumps(response.json()["errors"])
-    assert response.json()["rubric"]["items"][0]["scoring"][0][
-        "condition"
-    ] == "private-marker"
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_rubric_shape"
+    assert "private-marker" not in response.text
+    saved = client.get(f"/api/assessments/{assessment_id}/rubric").json()
+    assert saved["rubric"]["items"][0]["scoring"][0]["condition"] == "all_correct"
 
 
 def test_update_rejects_extra_envelope_fields(client, assessment_id, stub_compile):

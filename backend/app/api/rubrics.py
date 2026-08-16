@@ -310,12 +310,16 @@ def update_rubric(
 
     content = _authoritative_content(assessment, payload.rubric)
     rubric, errors = _validate_payload(content)
+    if rubric is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "invalid_rubric_shape",
+                "message": "루브릭 JSON 형태가 올바르지 않습니다.",
+            },
+        )
     draft.content = content
-    draft.warnings = (
-        [asdict(warning) for warning in detect_warnings(rubric)]
-        if rubric is not None
-        else []
-    )
+    draft.warnings = [asdict(warning) for warning in detect_warnings(rubric)]
     _commit_or_fail(session)
     return RubricOut(
         rubric=dict(draft.content),

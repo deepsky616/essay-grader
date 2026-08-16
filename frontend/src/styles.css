@@ -1,0 +1,82 @@
+:root {
+  color: #0f172a;
+  background: #ffffff;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  max-width: 100%;
+}
+
+fieldset,
+input,
+select,
+textarea {
+  min-width: 0;
+}
+
+button {
+  min-height: 36px;
+}
+
+a {
+  color: #1d4ed8;
+}
+
+.app-shell {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.app-header,
+.rubric-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.rubric-item-grid,
+.rubric-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 10px;
+}
+
+.rubric-table-scroll {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.rubric-table-scroll tbody,
+.rubric-table-scroll thead {
+  min-width: 520px;
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .app-header {
+    align-items: center;
+  }
+}
