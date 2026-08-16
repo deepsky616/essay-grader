@@ -30,3 +30,5 @@ Task 13: Ruling: 원본과 생성 PDF는 안전한 업로드 폴더의 일반 �
 Task 13: complete (local fallback review clean, focused 35 passed, backend 576 passed; implementation commit b0c713d)
 Task 14: Ruling: 스캔 PDF와 파이프라인 결과 전체를 먼저 검사하고, 학생 이미지는 배치 전용 임시 폴더에서 600 권한 PNG로 완성한 뒤 최종 폴더 이동과 데이터베이스 커밋을 연결한다. 작업 예약 전 실패만 배치와 원본 스캔을 되돌리고 예약 뒤에는 실행 중 작업의 입력을 보존한다 — 부분 제출이나 파일 없는 레코드와 예약 경쟁을 막기 위해서다 — 이 판단이 틀리면 운영체제 중단 순간의 파일과 데이터베이스 사이를 복구하는 시작 시 정리 작업이 추가로 필요하다.
 Task 14: complete (local fallback review clean, focused 13 passed, backend 589 passed; implementation commit 78dcd1e)
+Task 15: Ruling: 명렬표 이름은 전송 때마다 독립 세션으로 모든 학급과 결시자까지 읽고 두 글자 이상의 정리된 이름만 검사한다. 조회 오류는 빈 목록으로 바꾸지 않고 전송 관문까지 전파하며 세션은 성공과 실패 모두에서 닫는다 — 오래된 이름 목록이나 데이터베이스 장애가 식별정보 없는 요청으로 잘못 통과하는 일을 막기 위해서다 — 이 판단이 틀리면 학급 수가 매우 큰 환경에서 전송 전 조회 비용을 줄이면서도 누락 없는 범위 제한이 필요하다.
+Task 15: complete (local fallback review clean, focused 35 passed, backend 595 passed; implementation commit cbab679)
