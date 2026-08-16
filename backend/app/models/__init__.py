@@ -3,6 +3,7 @@ from app.models.assessment import Assessment
 from app.models.base import Base
 from app.models.classroom import Classroom, Student
 from app.models.document import SourceDocument
+from app.models.grading import GradingRun, ItemScore
 from app.models.job import Job
 from app.models.rubric import RubricDraft
 from app.models.scan import ItemResponse, PageImage, ScanBatch, Submission
@@ -24,4 +25,6 @@ __all__ = [
     "Submission",
     "PageImage",
     "ItemResponse",
+    "GradingRun",
+    "ItemScore",
 ]
