@@ -14,3 +14,5 @@ Task 5: Ruling: 조명 정규화 뒤 템플릿보다 어두워진 부분만 후�
 Task 5: complete (local fallback review clean, focused 15 passed, backend 428 passed; implementation commit 5576016)
 Task 6: Ruling: 마커 수열을 먼저 훑어 누락과 중복의 첫 어긋난 위치를 찾고, 끝까지 정상일 때만 총 쪽 수와 명렬표 예상 인원을 검사한다. 어떤 실패도 부분 분할 결과를 돌려주지 않는다 — 한 장의 급지 사고가 뒤 학생 전원의 배정으로 전파되는 일을 막기 위해서다 — 이 판단이 틀리면 마지막 구간 누락은 정확한 쪽 위치 대신 총수 오류로만 안내될 수 있다.
 Task 6: complete (local fallback review clean, focused 26 passed, backend 454 passed; implementation commit a271309)
+Task 7: Ruling: 유니코드와 공백을 정규화한 뒤 실제 편집 거리로 명렬표 후보를 매기고, 같은 최소 거리 후보가 둘 이상이면 정확 일치라도 배정하지 않는다 — 이름만으로 구분할 수 없는 학생을 임의로 선택하지 않기 위해서다 — 이 판단이 틀리면 같은 이름 학생이 있는 반은 번호를 함께 읽는 뒤 단계가 반드시 필요하다.
+Task 7: complete (local fallback review clean, focused 17 passed, backend 471 passed; implementation commit 6073e40)
