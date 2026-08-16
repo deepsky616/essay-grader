@@ -40,6 +40,7 @@ def _answer_symbols_text(spec: AnswerSpec) -> str:
         parts.extend(blank.all_accepted())
         parts.append(blank.key)
     for column in spec.columns:
+        parts.append(column.header)
         parts.extend(column.answers)
     parts.extend(spec.numeric_answers)
     parts.extend(spec.choices)
@@ -50,7 +51,9 @@ def _answer_symbols_text(spec: AnswerSpec) -> str:
 
 def _item_symbols_text(item: RubricItem) -> str:
     parts = [item.title, item.example_answer, _answer_symbols_text(item)]
-    parts.extend(_answer_symbols_text(part) for part in item.parts)
+    parts.extend(rule.criterion for rule in item.scoring)
+    for part in item.parts:
+        parts.extend((part.part_id, _answer_symbols_text(part)))
     return " ".join(parts)
 
 

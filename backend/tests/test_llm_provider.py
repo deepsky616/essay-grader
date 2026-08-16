@@ -2,9 +2,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from google.genai import types as genai_types
 
 from app.api.settings import build_provider
 from app.config import settings
+from app.providers import base as provider_base
 from app.providers import gemini_llm
 from app.providers.base import LLMOutboundRequest, LLMProvider, LLMRequest, LLMResponse
 from app.providers.gateway import (
@@ -57,6 +59,117 @@ def test_provider_is_one_exact_concrete_handle_composed_with_adapter(tmp_path):
     assert complete_request.max_output_tokens == 123
     assert complete_request.json_output is True
     assert checked_requests[1].purpose == "list_models"
+
+
+def test_provider_rejects_reinitialization_and_keeps_original_composition(tmp_path):
+    original_adapter = FakeLLMAdapter(responses=["original"])
+    replacement_adapter = FakeLLMAdapter(responses=["replacement"])
+    original_audit = tmp_path / "original-audit.log"
+    replacement_audit = tmp_path / "replacement-audit.log"
+    provider = LLMProvider(
+        TransmissionGateway(original_audit, set, "test-provider"),
+        original_adapter.complete,
+        original_adapter.list_models,
+    )
+
+    with pytest.raises(TypeError, match="이미 초기화"):
+        LLMProvider.__init__(provider, object(), object(), object())
+
+    with pytest.raises(TypeError, match="이미 초기화"):
+        LLMProvider.__init__(
+            provider,
+            TransmissionGateway(
+                replacement_audit, set, "test-provider"
+            ),
+            replacement_adapter.complete,
+            replacement_adapter.list_models,
+        )
+
+    response = provider.complete(LLMRequest(system="safe", user_text="safe"))
+    assert response.text == "original"
+    assert len(original_adapter.requests) == 1
+    assert replacement_adapter.requests == []
+    assert original_audit.exists()
+    assert not replacement_audit.exists()
+
+
+def test_provider_init_rejects_equal_hash_foreign_object_without_pollution(
+    tmp_path,
+):
+    original_adapter = FakeLLMAdapter(responses=["original"])
+    replacement_adapter = FakeLLMAdapter(responses=["replacement"])
+    provider = LLMProvider(
+        TransmissionGateway(tmp_path / "original.log", set, "test-provider"),
+        original_adapter.complete,
+        original_adapter.list_models,
+    )
+
+    class EqualHashForeign:
+        __slots__ = ("__weakref__",)
+
+        def __hash__(self):
+            return hash(provider)
+
+        def __eq__(self, _other):
+            return True
+
+    foreign = EqualHashForeign()
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
+        LLMProvider.__init__(foreign, object(), object(), object())
+
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
+        LLMProvider.__init__(
+            foreign,
+            TransmissionGateway(
+                tmp_path / "replacement.log", set, "test-provider"
+            ),
+            replacement_adapter.complete,
+            replacement_adapter.list_models,
+        )
+
+    response = provider.complete(LLMRequest(system="safe", user_text="safe"))
+    assert response.text == "original"
+    assert replacement_adapter.requests == []
+
+
+def test_provider_states_are_isolated_from_equal_hash_semantics(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(LLMProvider, "__hash__", lambda _self: 1)
+    monkeypatch.setattr(LLMProvider, "__eq__", lambda _self, _other: True)
+    first_adapter = FakeLLMAdapter(responses=["first"])
+    second_adapter = FakeLLMAdapter(responses=["second"])
+    first = LLMProvider(
+        TransmissionGateway(tmp_path / "first.log", set, "test-provider"),
+        first_adapter.complete,
+        first_adapter.list_models,
+    )
+    second = LLMProvider(
+        TransmissionGateway(tmp_path / "second.log", set, "test-provider"),
+        second_adapter.complete,
+        second_adapter.list_models,
+    )
+
+    assert first.complete(LLMRequest(system="safe", user_text="first")).text == "first"
+    assert second.complete(LLMRequest(system="safe", user_text="second")).text == "second"
+
+
+def test_stale_weakref_cleanup_does_not_remove_reused_identity_entry():
+    first, _first_adapter = make_fake_llm_provider(responses=[])
+    second, _second_adapter = make_fake_llm_provider(responses=[])
+
+    assert all(type(key) is int for key in provider_base._PROVIDER_STATES)
+    first_identity = id(first)
+    first_entry = provider_base._PROVIDER_STATES[first_identity]
+    second_entry = provider_base._PROVIDER_STATES[id(second)]
+    provider_base._PROVIDER_STATES[first_identity] = second_entry
+    try:
+        cleanup = first_entry.handle_ref.__callback__
+        assert cleanup is not None
+        cleanup(first_entry.handle_ref)
+        assert provider_base._PROVIDER_STATES[first_identity] is second_entry
+    finally:
+        provider_base._PROVIDER_STATES[first_identity] = first_entry
 
 
 @pytest.mark.parametrize("method_name", ["complete", "list_models"])
@@ -127,11 +240,15 @@ def test_provider_subclass_is_unsupported_but_escaped_class_still_fails_exact_gu
             capture = CaptureOwner()
 
     adapter = FakeLLMAdapter(responses=["unguarded"])
-    provider = escaped_types[0](
-        TransmissionGateway(tmp_path / "audit.log", set, "test-provider"),
-        adapter.complete,
-        adapter.list_models,
-    )
+    provider = object.__new__(escaped_types[0])
+
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
+        LLMProvider.__init__(
+            provider,
+            TransmissionGateway(tmp_path / "audit.log", set, "test-provider"),
+            adapter.complete,
+            adapter.list_models,
+        )
 
     with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
         LLMProvider.complete(
@@ -225,12 +342,38 @@ def test_gemini_model_list_uses_gateway_and_safe_audit(tmp_path):
     gateway = TransmissionGateway(audit_path, set, "test-provider")
     models = SimpleNamespace(
         list=lambda: [
-            SimpleNamespace(name="models/gemini-b", supported_actions=[]),
-            SimpleNamespace(
-                name="models/not-for-generation", supported_actions=["embedContent"]
+            genai_types.Model(
+                name="models/gemini-b",
+                supported_actions=["generateContent"],
+                output_token_limit=64000,
             ),
-            SimpleNamespace(
-                name="models/gemini-a", supported_actions=["generateContent"]
+            genai_types.Model(
+                name="models/actions-unknown",
+                supported_actions=[],
+                output_token_limit=64000,
+            ),
+            genai_types.Model(
+                name="models/actions-absent",
+                output_token_limit=64000,
+            ),
+            genai_types.Model(
+                name="models/not-for-generation",
+                supported_actions=["embedContent"],
+                output_token_limit=64000,
+            ),
+            genai_types.Model(
+                name="models/output-limit-unknown",
+                supported_actions=["generateContent"],
+            ),
+            genai_types.Model(
+                name="models/output-limit-too-small",
+                supported_actions=["generateContent"],
+                output_token_limit=31999,
+            ),
+            genai_types.Model(
+                name="models/gemini-a",
+                supported_actions=["generateContent"],
+                output_token_limit=32000,
             ),
         ]
     )

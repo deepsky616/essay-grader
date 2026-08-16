@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from weakref import WeakKeyDictionary
+from threading import RLock
+from weakref import ReferenceType, ref
 
 from app.providers.gateway import OutboundRequest, TransmissionGateway
 
@@ -68,15 +69,44 @@ class LLMProvider:
         complete_adapter: CompleteAdapter,
         list_models_adapter: ListModelsAdapter,
     ) -> None:
-        if type(gateway) is not TransmissionGateway:
-            raise TypeError("언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다.")
-        if not callable(complete_adapter) or not callable(list_models_adapter):
-            raise TypeError("언어 모형 제공자 어댑터는 호출할 수 있어야 합니다.")
-        _PROVIDER_STATES[self] = _ProviderState(
-            gateway=gateway,
-            complete_adapter=complete_adapter,
-            list_models_adapter=list_models_adapter,
-        )
+        if type(self) is not LLMProvider:
+            raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+
+        identity = id(self)
+        with _PROVIDER_STATES_LOCK:
+            current = _PROVIDER_STATES.get(identity)
+            if current is not None:
+                owner = current.handle_ref()
+                if owner is self:
+                    raise TypeError(
+                        "언어 모형 제공자 실행 손잡이는 이미 초기화되었습니다."
+                    )
+                if owner is not None:
+                    raise TypeError(
+                        "언어 모형 제공자 실행 손잡이의 정체성이 충돌했습니다."
+                    )
+
+            if type(gateway) is not TransmissionGateway:
+                raise TypeError(
+                    "언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다."
+                )
+            if not callable(complete_adapter) or not callable(list_models_adapter):
+                raise TypeError("언어 모형 제공자 어댑터는 호출할 수 있어야 합니다.")
+
+            handle_ref = ref(
+                self,
+                lambda dead_ref, object_id=identity: _cleanup_provider_state(
+                    object_id, dead_ref
+                ),
+            )
+            _PROVIDER_STATES[identity] = _ProviderEntry(
+                handle_ref=handle_ref,
+                state=_ProviderState(
+                    gateway=gateway,
+                    complete_adapter=complete_adapter,
+                    list_models_adapter=list_models_adapter,
+                ),
+            )
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError(f"언어 모형 제공자 합성은 바꿀 수 없습니다: {name}")
@@ -108,10 +138,30 @@ class LLMProvider:
     def _state(self) -> _ProviderState:
         if type(self) is not LLMProvider:
             raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
-        try:
-            return _PROVIDER_STATES[self]
-        except KeyError:
-            raise TypeError("초기화된 언어 모형 제공자 실행 손잡이가 필요합니다.") from None
+        with _PROVIDER_STATES_LOCK:
+            entry = _PROVIDER_STATES.get(id(self))
+            if entry is None or entry.handle_ref() is not self:
+                raise TypeError(
+                    "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
+                )
+            return entry.state
 
 
-_PROVIDER_STATES: WeakKeyDictionary[LLMProvider, _ProviderState] = WeakKeyDictionary()
+@dataclass(frozen=True)
+class _ProviderEntry:
+    handle_ref: ReferenceType[LLMProvider]
+    state: _ProviderState
+
+
+_PROVIDER_STATES: dict[int, _ProviderEntry] = {}
+_PROVIDER_STATES_LOCK = RLock()
+
+
+def _cleanup_provider_state(
+    identity: int, dead_ref: ReferenceType[LLMProvider]
+) -> None:
+    """늦은 정리 콜백이 재사용된 같은 정체성 키를 지우지 않게 한다."""
+    with _PROVIDER_STATES_LOCK:
+        current = _PROVIDER_STATES.get(identity)
+        if current is not None and current.handle_ref is dead_ref:
+            del _PROVIDER_STATES[identity]

@@ -107,14 +107,11 @@ def test_settings_reject_provider_from_seal_bypassing_derived_metaclass(
             return LLMResponse(text="unguarded")
 
         def list_models(self):
+            adapter_calls.append("list_models")
             return ["models/unguarded"]
 
     audit_path = tmp_path / "audit.log"
-    provider = BypassProvider(
-        TransmissionGateway(audit_path, set, "test-provider"),
-        lambda request: LLMResponse(text="unused"),
-        lambda request: adapter_calls.append(request) or ["models/unguarded"],
-    )
+    provider = object.__new__(BypassProvider)
     assert isinstance(provider, LLMProvider)
     assert type(provider) is not LLMProvider
     monkeypatch.setattr(settings_api, "build_provider", lambda api_key, model: provider)

@@ -18,6 +18,18 @@ CONDITION_PATTERN = re.compile(
 )
 
 
+def _require_nonblank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("공백만 있는 문자열은 사용할 수 없습니다.")
+    return value
+
+
+def _require_nonblank_list(values: list[str]) -> list[str]:
+    if any(not value.strip() for value in values):
+        raise ValueError("문자열 목록에 공백만 있는 값이 있습니다.")
+    return values
+
+
 class ItemType(str, Enum):
     CLOSED_SHORT = "closed_short"
     CLOSED_TABLE = "closed_table"
@@ -35,6 +47,16 @@ class Blank(BaseModel):
     answers: list[str] = Field(min_length=1)
     aliases: list[str] = Field(default_factory=list)
 
+    @field_validator("key")
+    @classmethod
+    def key_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("answers", "aliases")
+    @classmethod
+    def candidates_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return _require_nonblank_list(values)
+
     def all_accepted(self) -> list[str]:
         return [*self.answers, *self.aliases]
 
@@ -45,11 +67,26 @@ class TableColumn(BaseModel):
     header: str
     answers: list[str] = Field(default_factory=list)
 
+    @field_validator("header")
+    @classmethod
+    def header_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("answers")
+    @classmethod
+    def answers_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return _require_nonblank_list(values)
+
 
 class ScoringRule(BaseModel):
     score: int = Field(ge=0)
     condition: str
     criterion: str
+
+    @field_validator("criterion")
+    @classmethod
+    def criterion_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
 
     @field_validator("condition")
     @classmethod
@@ -72,6 +109,20 @@ class AnswerSpec(BaseModel):
     choices: list[str] = Field(default_factory=list)
     correct_choice: str | None = None
 
+    @field_validator("numeric_answers", "choices")
+    @classmethod
+    def flat_candidates_must_not_be_blank(
+        cls, values: list[str]
+    ) -> list[str]:
+        return _require_nonblank_list(values)
+
+    @field_validator("correct_choice")
+    @classmethod
+    def correct_choice_must_not_be_blank(
+        cls, value: str | None
+    ) -> str | None:
+        return _require_nonblank(value) if value is not None else None
+
 
 class RubricPart(AnswerSpec):
     """복합 문항의 하위 파트."""
@@ -79,6 +130,11 @@ class RubricPart(AnswerSpec):
     part_id: str
     type: ItemType
     points: int = Field(ge=0)
+
+    @field_validator("part_id")
+    @classmethod
+    def part_id_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
 
 
 class RubricItem(AnswerSpec):
@@ -91,6 +147,18 @@ class RubricItem(AnswerSpec):
     scoring: list[ScoringRule] = Field(min_length=1)
     example_answer: str = ""
 
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("standard_id")
+    @classmethod
+    def standard_id_must_not_be_blank(
+        cls, value: str | None
+    ) -> str | None:
+        return _require_nonblank(value) if value is not None else None
+
 
 class AchievementStandard(BaseModel):
     id: str
@@ -98,12 +166,31 @@ class AchievementStandard(BaseModel):
     core_standard: str
     levels: dict[str, str]
 
+    @field_validator("id", "core_standard")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("levels")
+    @classmethod
+    def levels_must_not_contain_blank_text(
+        cls, values: dict[str, str]
+    ) -> dict[str, str]:
+        if any(not key.strip() or not value.strip() for key, value in values.items()):
+            raise ValueError("성취수준에 공백만 있는 키나 설명이 있습니다.")
+        return values
+
 
 class AssessmentMeta(BaseModel):
     title: str
     subject: str
     grade: int
     total_points: int = Field(ge=1)
+
+    @field_validator("title", "subject")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
 
 
 class Rubric(BaseModel):

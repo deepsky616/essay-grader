@@ -1038,9 +1038,6 @@ git commit -m "feat: 전사 결과 실명 마스킹"
 ```python
 import json
 
-import pytest
-
-from app.providers.gateway import TransmissionGateway
 from app.schemas.recognition import (
     RecognitionKind,
     RecognitionStatus,
@@ -1048,16 +1045,7 @@ from app.schemas.recognition import (
 )
 from app.schemas.rubric import ItemType, RubricItem, ScoringRule
 from app.services.llm_grader import grade_open_text
-from tests.fakes import FakeLLMProvider
-
-
-@pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log",
-        pii_terms_provider=set,
-        provider="test-provider",
-    )
+from tests.fakes import make_fake_llm_provider
 
 
 def _item() -> RubricItem:
@@ -1097,114 +1085,115 @@ def _llm_output(score: int, criterion: str, **overrides) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def test_valid_output_is_accepted(gateway):
+def test_valid_output_is_accepted():
     item = _item()
-    provider = FakeLLMProvider(
+    provider, _adapter = make_fake_llm_provider(
         responses=[_llm_output(3, "가격을 바르게 계산하고 이유를 구체적으로 설명함")]
     )
-    result = grade_open_text(item, _response("6400원이므로 옳지 않다"), provider, gateway)
+    result = grade_open_text(item, _response("6400원이므로 옳지 않다"), provider)
 
     assert result.score == 3
     assert result.deferred is False
     assert result.confidence == 0.82
 
 
-def test_score_outside_rubric_is_rejected(gateway):
+def test_score_outside_rubric_is_rejected():
     """루브릭에 없는 점수를 만들어내면 버린다."""
     item = _item()
-    provider = FakeLLMProvider(
+    provider, _adapter = make_fake_llm_provider(
         responses=[_llm_output(5, "가격을 바르게 계산하고 이유를 구체적으로 설명함")]
     )
-    result = grade_open_text(item, _response("답안"), provider, gateway)
+    result = grade_open_text(item, _response("답안"), provider)
 
     assert result.deferred is True
     assert result.score is None
     assert "배점" in result.reason
 
 
-def test_criterion_not_in_rubric_is_rejected(gateway):
+def test_criterion_not_in_rubric_is_rejected():
     item = _item()
-    provider = FakeLLMProvider(responses=[_llm_output(3, "제가 만든 새로운 기준입니다")])
-    result = grade_open_text(item, _response("답안"), provider, gateway)
+    provider, _adapter = make_fake_llm_provider(
+        responses=[_llm_output(3, "제가 만든 새로운 기준입니다")]
+    )
+    result = grade_open_text(item, _response("답안"), provider)
 
     assert result.deferred is True
     assert "채점기준" in result.reason
 
 
-def test_score_criterion_mismatch_is_rejected(gateway):
+def test_score_criterion_mismatch_is_rejected():
     """점수와 기준이 서로 다른 조항이면 버린다."""
     item = _item()
-    provider = FakeLLMProvider(
+    provider, _adapter = make_fake_llm_provider(
         responses=[_llm_output(3, "계산과 이유를 모두 제시하지 못함")]  # 0점 기준
     )
-    result = grade_open_text(item, _response("답안"), provider, gateway)
+    result = grade_open_text(item, _response("답안"), provider)
 
     assert result.deferred is True
     assert "일치하지" in result.reason
 
 
-def test_empty_evidence_is_rejected(gateway):
+def test_empty_evidence_is_rejected():
     item = _item()
-    provider = FakeLLMProvider(
+    provider, _adapter = make_fake_llm_provider(
         responses=[
             _llm_output(3, "가격을 바르게 계산하고 이유를 구체적으로 설명함", evidence="  ")
         ]
     )
-    result = grade_open_text(item, _response("답안"), provider, gateway)
+    result = grade_open_text(item, _response("답안"), provider)
 
     assert result.deferred is True
     assert "근거" in result.reason
 
 
-def test_malformed_json_is_rejected(gateway):
+def test_malformed_json_is_rejected():
     item = _item()
-    provider = FakeLLMProvider(responses=["JSON 이 아닙니다"])
-    result = grade_open_text(item, _response("답안"), provider, gateway)
+    provider, _adapter = make_fake_llm_provider(responses=["JSON 이 아닙니다"])
+    result = grade_open_text(item, _response("답안"), provider)
 
     assert result.deferred is True
     assert "JSON" in result.reason
 
 
-def test_unusable_recognition_is_deferred_without_calling_llm(gateway):
+def test_unusable_recognition_is_deferred_without_calling_llm():
     item = _item()
-    provider = FakeLLMProvider(responses=[])
+    provider, adapter = make_fake_llm_provider(responses=[])
     unreadable = RecognizedResponse(
         kind=RecognitionKind.TRANSCRIBE,
         status=RecognitionStatus.UNREADABLE,
         confidence=0.0,
     )
-    result = grade_open_text(item, unreadable, provider, gateway)
+    result = grade_open_text(item, unreadable, provider)
 
     assert result.deferred is True
-    assert provider.requests == []
+    assert adapter.requests == []
 
 
-def test_prompt_contains_only_rubric_criteria(gateway):
+def test_prompt_contains_only_rubric_criteria():
     item = _item()
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[_llm_output(2, "가격은 바르게 계산했으나 의견을 제시하지 못함")]
     )
-    grade_open_text(item, _response("6400원"), provider, gateway)
+    grade_open_text(item, _response("6400원"), provider)
 
-    prompt = provider.requests[0].user_text
+    prompt = adapter.requests[0].user_text
     for rule in item.scoring:
         assert rule.criterion in prompt
 
 
-def test_student_name_is_masked_before_sending(gateway):
+def test_student_name_is_masked_before_sending():
     item = _item()
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[_llm_output(0, "계산과 이유를 모두 제시하지 못함")]
     )
     grade_open_text(
         item,
         _response("김미래가 쓴 답: 모르겠다"),
         provider,
-        gateway,
         pii_terms={"김미래"},
     )
 
-    prompt = provider.requests[0].user_text
+    prompt = adapter.requests[0].user_text
     assert "김미래" not in prompt
     assert "[학생]" in prompt
 ```
@@ -1229,7 +1218,6 @@ import re
 from dataclasses import dataclass
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.providers.gateway import OutboundRequest, TransmissionGateway
 from app.schemas.recognition import RecognizedResponse
 from app.schemas.rubric import RubricItem
 from app.services.sanitize import mask_personal_names
@@ -1295,7 +1283,6 @@ def grade_open_text(
     item: RubricItem,
     response: RecognizedResponse,
     provider: LLMProvider,
-    gateway: TransmissionGateway,
     pii_terms: set[str] | None = None,
 ) -> LLMGradeOutcome:
     if not response.is_usable or not response.text.strip():
@@ -1308,14 +1295,13 @@ def grade_open_text(
     masked_text, _found = mask_personal_names(response.text, pii_terms or set())
     user_text = _build_prompt(item, masked_text)
 
-    outbound = OutboundRequest(
-        purpose="grade_open_text", text_parts=[SYSTEM_PROMPT, user_text]
-    )
     try:
-        llm_response = gateway.send(
-            outbound,
-            lambda _req: provider.complete(
-                LLMRequest(system=SYSTEM_PROMPT, user_text=user_text)
+        llm_response = LLMProvider.complete(
+            provider,
+            LLMRequest(
+                system=SYSTEM_PROMPT,
+                user_text=user_text,
+                purpose="grade_open_text",
             ),
         )
     except Exception as exc:  # noqa: BLE001 - 호출 실패는 교사 검토로 넘긴다
@@ -1404,9 +1390,6 @@ git commit -m "feat: LLM 서술 채점기와 출력 계약 강제"
 ```python
 import json
 
-import pytest
-
-from app.providers.gateway import TransmissionGateway
 from app.schemas.recognition import (
     RecognitionKind,
     RecognitionStatus,
@@ -1420,16 +1403,7 @@ from app.schemas.rubric import (
     ScoringRule,
 )
 from app.services.grader import grade_item
-from tests.fakes import FakeLLMProvider
-
-
-@pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log",
-        pii_terms_provider=set,
-        provider="test-provider",
-    )
+from tests.fakes import make_fake_llm_provider
 
 
 def _classified(values):
@@ -1441,7 +1415,7 @@ def _classified(values):
     )
 
 
-def test_drawing_item_always_routes_to_teacher(gateway):
+def test_drawing_item_always_routes_to_teacher():
     item = RubricItem(
         item_no=4,
         title="조건에 맞는 대칭인 도형 그리기",
@@ -1455,14 +1429,15 @@ def test_drawing_item_always_routes_to_teacher(gateway):
     skipped = RecognizedResponse(
         kind=RecognitionKind.SKIPPED, status=RecognitionStatus.SKIPPED, confidence=0.0
     )
-    result = grade_item(item, {0: skipped}, FakeLLMProvider([]), gateway)
+    provider, _adapter = make_fake_llm_provider([])
+    result = grade_item(item, {0: skipped}, provider)
 
     assert result.route == "manual"
     assert result.score is None
     assert "작도" in result.reason
 
 
-def test_closed_short_uses_deterministic_path(gateway):
+def test_closed_short_uses_deterministic_path():
     item = RubricItem(
         item_no=1,
         title="대칭축 찾기",
@@ -1474,12 +1449,12 @@ def test_closed_short_uses_deterministic_path(gateway):
             ScoringRule(score=0, condition="none_correct", criterion="모두 틀림"),
         ],
     )
-    provider = FakeLLMProvider([])
-    result = grade_item(item, {0: _classified(["선대칭", "점대칭"])}, provider, gateway)
+    provider, adapter = make_fake_llm_provider([])
+    result = grade_item(item, {0: _classified(["선대칭", "점대칭"])}, provider)
 
     assert result.score == 2
     assert result.route == "auto"
-    assert provider.requests == []  # LLM 을 부르지 않았다
+    assert adapter.requests == []  # LLM 을 부르지 않았다
 
 
 def _composite_item() -> RubricItem:
@@ -1516,7 +1491,7 @@ def _llm_ok(score: int, criterion: str) -> str:
     )
 
 
-def test_composite_with_open_text_proposes_no_score(gateway):
+def test_composite_with_open_text_proposes_no_score():
     """서술 파트가 섞이면 점수를 제안하지 않고 근거만 제시한다.
 
     RubricPart 에는 자체 채점기준이 없다. 부모 기준을 하위 파트에 적용하면
@@ -1533,15 +1508,15 @@ def test_composite_with_open_text_proposes_no_score(gateway):
         1: _classified(["25", "30"]),
         2: _classified(["샤프"]),
     }
-    provider = FakeLLMProvider([])
-    result = grade_item(item, responses, provider, gateway)
+    provider, adapter = make_fake_llm_provider([])
+    result = grade_item(item, responses, provider)
 
     assert result.score is None
     assert result.route == "manual"
-    assert provider.requests == []  # 서술 파트에 LLM 을 부르지 않는다
+    assert adapter.requests == []  # 서술 파트에 LLM 을 부르지 않는다
 
 
-def test_composite_reports_each_part_outcome(gateway):
+def test_composite_reports_each_part_outcome():
     item = _composite_item()
     responses = {
         0: RecognizedResponse(
@@ -1553,7 +1528,8 @@ def test_composite_reports_each_part_outcome(gateway):
         1: _classified(["25", "99"]),
         2: _classified(["샤프"]),
     }
-    result = grade_item(item, responses, FakeLLMProvider([]), gateway)
+    provider, _adapter = make_fake_llm_provider([])
+    result = grade_item(item, responses, provider)
 
     assert result.part_scores["values"] == 0   # 30 이 아니라 99
     assert result.part_scores["pick"] == 1     # 샤프 정답
@@ -1561,7 +1537,7 @@ def test_composite_reports_each_part_outcome(gateway):
     assert "오답" in result.evidence
 
 
-def test_composite_without_open_text_can_auto_confirm(gateway):
+def test_composite_without_open_text_can_auto_confirm():
     item = RubricItem(
         item_no=6,
         title="기호와 수치",
@@ -1579,13 +1555,14 @@ def test_composite_without_open_text_can_auto_confirm(gateway):
         ],
     )
     responses = {0: _classified(["㉣"]), 1: _classified(["10"])}
-    result = grade_item(item, responses, FakeLLMProvider([]), gateway)
+    provider, _adapter = make_fake_llm_provider([])
+    result = grade_item(item, responses, provider)
 
     assert result.score == 2
     assert result.route == "auto"
 
 
-def test_open_text_item_routes_to_manual(gateway):
+def test_open_text_item_routes_to_manual():
     item = RubricItem(
         item_no=8,
         title="이유 서술",
@@ -1604,15 +1581,17 @@ def test_open_text_item_routes_to_manual(gateway):
             confidence=0.8,
         )
     }
-    provider = FakeLLMProvider([_llm_ok(3, "구체적으로 설명함")])
-    result = grade_item(item, responses, provider, gateway)
+    provider, _adapter = make_fake_llm_provider(
+        [_llm_ok(3, "구체적으로 설명함")]
+    )
+    result = grade_item(item, responses, provider)
 
     assert result.score == 3
     assert result.route == "manual"
     assert result.evidence == "인용"
 
 
-def test_missing_response_defers(gateway):
+def test_missing_response_defers():
     item = RubricItem(
         item_no=1,
         title="단답",
@@ -1624,7 +1603,8 @@ def test_missing_response_defers(gateway):
             ScoringRule(score=0, condition="none_correct", criterion="틀림"),
         ],
     )
-    result = grade_item(item, {}, FakeLLMProvider([]), gateway)
+    provider, _adapter = make_fake_llm_provider([])
+    result = grade_item(item, {}, provider)
 
     assert result.route == "manual"
     assert result.score is None
@@ -1652,7 +1632,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.grader'`
 from dataclasses import dataclass, field
 
 from app.providers.base import LLMProvider
-from app.providers.gateway import TransmissionGateway
 from app.schemas.recognition import RecognizedResponse
 from app.schemas.rubric import ItemType, RubricItem
 from app.services.conditions import ConditionContext, evaluate_condition
@@ -1788,7 +1767,6 @@ def grade_item(
     item: RubricItem,
     responses: dict[int, RecognizedResponse],
     provider: LLMProvider,
-    gateway: TransmissionGateway,
     pii_terms: set[str] | None = None,
 ) -> ItemGrade:
     """문항 하나를 채점한다.
@@ -1811,7 +1789,7 @@ def grade_item(
         return _manual(item, f"{item.item_no}번의 인식 결과가 없습니다.")
 
     if item.type == ItemType.OPEN_TEXT:
-        outcome = grade_open_text(item, response, provider, gateway, pii_terms)
+        outcome = grade_open_text(item, response, provider, pii_terms=pii_terms)
         if outcome.deferred:
             return _manual(item, outcome.reason)
         return ItemGrade(
@@ -2031,6 +2009,9 @@ git commit -m "feat: 신뢰도 기반 자동확정·검토 라우팅"
 ## Task 9: 인식 제공자
 
 **Files:**
+- Modify: `backend/app/providers/base.py`
+- Modify: `backend/app/services/llm_grader.py`
+- Modify: `backend/app/services/grader.py`
 - Create: `backend/app/providers/recognition.py`
 - Create: `backend/app/providers/gemini_recognition.py`
 - Modify: `backend/tests/fakes.py`
@@ -2043,21 +2024,11 @@ git commit -m "feat: 신뢰도 기반 자동확정·검토 라우팅"
 ```python
 import json
 
-import pytest
-
+from app.providers.gemini_recognition import GeminiRecognitionProvider
 from app.providers.gateway import TransmissionGateway
 from app.providers.recognition import build_classify_prompt, parse_classify_output
 from app.schemas.recognition import RecognitionStatus
-from tests.fakes import FakeRecognitionProvider
-
-
-@pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log",
-        pii_terms_provider=set,
-        provider="test-provider",
-    )
+from tests.fakes import FakeRecognitionProvider, make_fake_llm_provider
 
 
 def test_prompt_lists_all_candidates():
@@ -2120,6 +2091,31 @@ def test_fake_provider_returns_queued_results():
 
     transcribed = provider.transcribe(b"png")
     assert transcribed.text == "계산 과정"
+
+
+def test_gemini_recognition_uses_exact_handle_once_and_audits_token(tmp_path):
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(
+        audit_log_path=audit_path,
+        pii_terms_provider=set,
+        provider="test-provider",
+    )
+    llm, adapter = make_fake_llm_provider(
+        responses=[json.dumps({"values": ["㉠"], "confidence": 0.95})],
+        gateway=gateway,
+    )
+    recognizer = GeminiRecognitionProvider(llm=llm)
+
+    result = recognizer.classify(
+        b"png", ["㉠", "㉡"], anonymous_token="S-abcd1234"
+    )
+
+    assert result.values == ["㉠"]
+    assert adapter.requests[0].images == [b"png"]
+    entries = [json.loads(line) for line in audit_path.read_text().splitlines()]
+    assert len(entries) == 1
+    assert entries[0]["purpose"] == "recognize_classify"
+    assert entries[0]["anonymous_token"] == "S-abcd1234"
 ```
 
 `backend/tests/fakes.py`에 추가한다.
@@ -2344,7 +2340,71 @@ def parse_transcribe_output(raw: str) -> RecognizedResponse:
     )
 ```
 
-- [ ] **Step 4: `providers/gemini_recognition.py` 작성**
+- [ ] **Step 4: 익명 표식을 정확한 실행 손잡이에 전달하고 `providers/gemini_recognition.py` 작성**
+
+P1의 합성 손잡이를 우회하는 별도 `gateway.send`를 추가하지 않는다. 대신
+`backend/app/providers/base.py`의 `LLMRequest`에 다음 선택 칸을 추가하고,
+`LLMProvider.complete`가 만드는 `LLMOutboundRequest`에 그대로 복사한다.
+
+```python
+@dataclass
+class LLMRequest:
+    # 기존 칸은 그대로 둔다.
+    anonymous_token: str | None = None
+
+
+# LLMProvider.complete 안의 LLMOutboundRequest 생성 인자에 추가
+anonymous_token=request.anonymous_token,
+```
+
+인식 뒤 서술 채점도 같은 학생 자료 흐름이므로, 이 단계에서
+`grade_open_text`와 `grade_item`에 선택 인자 `anonymous_token`을 추가한다.
+`grade_open_text`가 만드는 `LLMRequest`에 이 값을 복사하고,
+`grade_item`은 받은 값을 `grade_open_text`에 넘긴다. 기본값은 `None`으로 두어
+학생 자료가 아닌 기존 단위 테스트 호출은 그대로 유지한다.
+
+```python
+# services/llm_grader.py
+def grade_open_text(
+    item: RubricItem,
+    response: RecognizedResponse,
+    provider: LLMProvider,
+    pii_terms: set[str] | None = None,
+    anonymous_token: str | None = None,
+) -> LLMGradeOutcome:
+    # 앞의 검증과 마스킹은 그대로 둔다.
+    llm_response = LLMProvider.complete(
+        provider,
+        LLMRequest(
+            system=SYSTEM_PROMPT,
+            user_text=user_text,
+            purpose="grade_open_text",
+            anonymous_token=anonymous_token,
+        ),
+    )
+
+
+# services/grader.py
+def grade_item(
+    item: RubricItem,
+    responses: dict[int, RecognizedResponse],
+    provider: LLMProvider,
+    pii_terms: set[str] | None = None,
+    anonymous_token: str | None = None,
+) -> ItemGrade:
+    # 다른 분기는 그대로 둔다.
+    outcome = grade_open_text(
+        item,
+        response,
+        provider,
+        pii_terms=pii_terms,
+        anonymous_token=anonymous_token,
+    )
+```
+
+이 확장은 정확한 `LLMProvider` 자료형, 최초 한 번 초기화, 정체성 기반 상태표를
+바꾸지 않는다. 인식 요청은 손잡이 안의 같은 `TransmissionGateway`를 정확히 한
+번만 지나며, 인식과 서술 채점의 익명 표식도 각 공개 호출의 감사 기록에 남는다.
 
 ```python
 """Gemini 멀티모달 인식기.
@@ -2356,7 +2416,6 @@ def parse_transcribe_output(raw: str) -> RecognizedResponse:
 """
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.providers.gateway import OutboundRequest, TransmissionGateway
 from app.providers.recognition import (
     CLASSIFY_SYSTEM,
     TRANSCRIBE_SYSTEM,
@@ -2372,23 +2431,22 @@ from app.schemas.recognition import (
 
 
 class GeminiRecognitionProvider:
-    def __init__(self, llm: LLMProvider, gateway: TransmissionGateway) -> None:
+    def __init__(self, llm: LLMProvider) -> None:
+        if type(llm) is not LLMProvider:
+            raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
         self._llm = llm
-        self._gateway = gateway
 
     def _call(
         self, system: str, user_text: str, image: bytes, purpose: str, token: str | None
     ) -> str:
-        outbound = OutboundRequest(
-            purpose=purpose,
-            text_parts=[system, user_text],
-            image_parts=[image],
-            anonymous_token=token,
-        )
-        response = self._gateway.send(
-            outbound,
-            lambda _req: self._llm.complete(
-                LLMRequest(system=system, user_text=user_text, images=[image])
+        response = LLMProvider.complete(
+            self._llm,
+            LLMRequest(
+                system=system,
+                user_text=user_text,
+                images=[image],
+                purpose=purpose,
+                anonymous_token=token,
             ),
         )
         return response.text
@@ -2441,7 +2499,7 @@ class GeminiRecognitionProvider:
 - [ ] **Step 5: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_recognition_provider.py -v`
-Expected: PASS (9 tests)
+Expected: PASS (10 tests)
 
 - [ ] **Step 6: 커밋**
 
@@ -2660,8 +2718,6 @@ git commit -m "feat: 채점 실행과 문항 점수 모델"
 ```python
 import json
 
-import pytest
-
 from app.providers.gateway import TransmissionGateway
 from app.schemas.rubric import (
     AssessmentMeta,
@@ -2672,16 +2728,7 @@ from app.schemas.rubric import (
     ScoringRule,
 )
 from app.services.grading_pipeline import SubmissionContext, grade_submission
-from tests.fakes import FakeLLMProvider, FakeRecognitionProvider
-
-
-@pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log",
-        pii_terms_provider=set,
-        provider="test-provider",
-    )
+from tests.fakes import FakeRecognitionProvider, make_fake_llm_provider
 
 
 def _rubric() -> Rubric:
@@ -2752,37 +2799,54 @@ def _llm_ok(score: int, criterion: str) -> str:
     )
 
 
-def test_produces_one_score_per_item(gateway):
+def test_produces_one_score_per_item():
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["6400원이라 옳지 않다"]
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
-    scores = grade_submission(_rubric(), _context(), recognizer, llm, gateway)
+    scores = grade_submission(_rubric(), _context(), recognizer, llm)
 
     assert len(scores) == 3
     assert {score.item_no for score in scores} == {1, 2, 3}
 
 
-def test_drawing_item_is_not_recognized(gateway):
+def test_open_text_grading_audit_keeps_anonymous_token(tmp_path):
+    audit_path = tmp_path / "audit.log"
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["서술"]
     )
-    llm = FakeLLMProvider([_llm_ok(0, "설명하지 못함")])
+    llm, _adapter = make_fake_llm_provider(
+        [_llm_ok(2, "구체적으로 설명함")],
+        gateway=TransmissionGateway(audit_path, set, "test-provider"),
+    )
 
-    grade_submission(_rubric(), _context(), recognizer, llm, gateway)
+    grade_submission(_rubric(), _context(), recognizer, llm)
+
+    entry = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert entry["purpose"] == "grade_open_text"
+    assert entry["anonymous_token"] == "S-abcd1234"
+
+
+def test_drawing_item_is_not_recognized():
+    recognizer = FakeRecognitionProvider(
+        classify_results=[["선대칭", "점대칭"]], transcribe_results=["서술"]
+    )
+    llm, _adapter = make_fake_llm_provider([_llm_ok(0, "설명하지 못함")])
+
+    grade_submission(_rubric(), _context(), recognizer, llm)
 
     # 1번은 classify, 3번은 transcribe. 2번(작도)은 부르지 않는다.
     assert recognizer.calls == ["classify", "transcribe"]
 
 
-def test_closed_item_is_auto_routed(gateway):
+def test_closed_item_is_auto_routed():
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["서술"]
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
-    scores = {s.item_no: s for s in grade_submission(_rubric(), _context(), recognizer, llm, gateway)}
+    scores = {s.item_no: s for s in grade_submission(_rubric(), _context(), recognizer, llm)}
 
     assert scores[1].route == "auto"
     assert scores[1].proposed_score == 2
@@ -2790,11 +2854,11 @@ def test_closed_item_is_auto_routed(gateway):
     assert scores[3].route == "manual"
 
 
-def test_unconfirmed_assignment_forces_all_manual(gateway):
+def test_unconfirmed_assignment_forces_all_manual():
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["서술"]
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
     scores = {
         s.item_no: s
@@ -2803,40 +2867,37 @@ def test_unconfirmed_assignment_forces_all_manual(gateway):
             _context(assignment_status="needs_review"),
             recognizer,
             llm,
-            gateway,
         )
     }
     assert scores[1].route == "manual"
     assert any("배정" in reason for reason in scores[1].routing_reasons)
 
 
-def test_missing_crop_defers_item(gateway):
+def test_missing_crop_defers_item():
     recognizer = FakeRecognitionProvider(classify_results=[], transcribe_results=[])
-    llm = FakeLLMProvider([])
+    llm, _adapter = make_fake_llm_provider([])
 
     scores = {
         s.item_no: s
-        for s in grade_submission(
-            _rubric(), _context(crops={2: b"png2"}), recognizer, llm, gateway
-        )
+        for s in grade_submission(_rubric(), _context(crops={2: b"png2"}), recognizer, llm)
     }
     assert scores[1].route == "manual"
     assert scores[1].proposed_score is None
 
 
-def test_review_all_mode_routes_everything_manual(gateway):
+def test_review_all_mode_routes_everything_manual():
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["서술"]
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
     scores = grade_submission(
-        _rubric(), _context(), recognizer, llm, gateway, review_all=True
+        _rubric(), _context(), recognizer, llm, review_all=True
     )
     assert all(score.route == "manual" for score in scores)
 
 
-def test_composite_item_recognized_per_part(gateway):
+def test_composite_item_recognized_per_part():
     """composite 는 같은 이미지에 파트마다 다른 질문을 던진다."""
     from app.schemas.rubric import RubricPart
 
@@ -2863,7 +2924,7 @@ def test_composite_item_recognized_per_part(gateway):
         classify_results=[["선대칭", "점대칭"], ["25", "30"]],
         transcribe_results=["서술", "180/720×100=25"],
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
     scores = {
         s.item_no: s
@@ -2872,7 +2933,6 @@ def test_composite_item_recognized_per_part(gateway):
             _context(crops={1: b"p1", 2: b"p2", 3: b"p3", 4: b"p4"}),
             recognizer,
             llm,
-            gateway,
         )
     }
 
@@ -2882,13 +2942,13 @@ def test_composite_item_recognized_per_part(gateway):
     assert "25, 30" in scores[4].recognized_raw
 
 
-def test_recognized_raw_is_recorded(gateway):
+def test_recognized_raw_is_recorded():
     recognizer = FakeRecognitionProvider(
         classify_results=[["선대칭", "점대칭"]], transcribe_results=["6400원"]
     )
-    llm = FakeLLMProvider([_llm_ok(2, "구체적으로 설명함")])
+    llm, _adapter = make_fake_llm_provider([_llm_ok(2, "구체적으로 설명함")])
 
-    scores = {s.item_no: s for s in grade_submission(_rubric(), _context(), recognizer, llm, gateway)}
+    scores = {s.item_no: s for s in grade_submission(_rubric(), _context(), recognizer, llm)}
     assert "선대칭" in scores[1].recognized_raw
     assert "6400원" in scores[3].recognized_raw
 ```
@@ -2910,7 +2970,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.grading_p
 from dataclasses import dataclass, field
 
 from app.providers.base import LLMProvider
-from app.providers.gateway import TransmissionGateway
 from app.providers.recognition import RecognitionProvider
 from app.schemas.recognition import (
     RecognitionKind,
@@ -3052,7 +3111,6 @@ def grade_submission(
     context: SubmissionContext,
     recognizer: RecognitionProvider,
     llm: LLMProvider,
-    gateway: TransmissionGateway,
     pii_terms: set[str] | None = None,
     confidence_threshold: float = 0.90,
     review_all: bool = False,
@@ -3078,7 +3136,13 @@ def grade_submission(
         responses = _recognize_item(
             item, image or b"", recognizer, context.anonymous_token
         )
-        grade = grade_item(item, responses, llm, gateway, pii_terms)
+        grade = grade_item(
+            item,
+            responses,
+            llm,
+            pii_terms=pii_terms,
+            anonymous_token=context.anonymous_token,
+        )
 
         decision = decide_route(
             RoutingInput(
@@ -3352,7 +3416,7 @@ from app.models.grading import GradingRun, ItemScore
 from app.models.rubric import RubricDraft
 from app.models.scan import ItemResponse, ScanBatch, Submission
 from app.providers.gateway import TransmissionGateway
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gemini_llm import create_gemini_provider
 from app.providers.gemini_recognition import GeminiRecognitionProvider
 from app.providers.pii_terms import roster_pii_terms
 from app.schemas.rubric import Rubric
@@ -3458,8 +3522,12 @@ def execute_run(session: Session, run_id: int) -> None:
             pii_terms_provider=roster_pii_terms(session),
             provider="gemini",
         )
-        llm = GeminiLLMProvider(api_key=api_key, model=model)
-        recognizer = GeminiRecognitionProvider(llm=llm, gateway=gateway)
+        llm = create_gemini_provider(
+            api_key=api_key,
+            model=model,
+            gateway=gateway,
+        )
+        recognizer = GeminiRecognitionProvider(llm=llm)
         pii_terms = roster_pii_terms(session)()
 
         submissions = list(
@@ -3491,7 +3559,6 @@ def execute_run(session: Session, run_id: int) -> None:
                 ),
                 recognizer=recognizer,
                 llm=llm,
-                gateway=gateway,
                 pii_terms=pii_terms,
                 confidence_threshold=run.confidence_threshold,
                 review_all=run.review_all,

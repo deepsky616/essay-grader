@@ -47,7 +47,7 @@ essay-grader/
 │   │   │   ├── rubric_warnings.py      ★ 경고 감지 (자동 수정 금지)
 │   │   │   └── rubric_compiler.py      ★ LLM 호출 + 파싱 + 재시도
 │   │   ├── providers/
-│   │   │   ├── base.py                 LLMProvider Protocol
+│   │   │   ├── base.py                 정확한 LLMProvider 실행 손잡이
 │   │   │   ├── gateway.py              ★ 전송 게이트웨이
 │   │   │   ├── credentials.py          API 키 보관 (키체인 · 파일 대체)
 │   │   │   └── gemini_llm.py           Google Gemini 구현체
@@ -58,7 +58,7 @@ essay-grader/
 │   │       └── settings.py             API 키 · 모델 선택 · 정책 동의
 │   └── tests/
 │       ├── conftest.py
-│       ├── fakes.py                    FakeLLMProvider
+│       ├── fakes.py                    시험 어댑터와 손잡이 생성 함수
 │       ├── fixtures/sample_rubric.json
 │       ├── test_rubric_schema.py
 │       ├── test_rubric_validator.py
@@ -1554,13 +1554,14 @@ git commit -m "feat: 전송 게이트웨이와 PII 차단"
 `backend/tests/test_llm_provider.py`:
 
 ```python
-from app.providers.base import LLMRequest, LLMResponse
-from tests.fakes import FakeLLMProvider
+from app.providers.base import LLMProvider, LLMRequest, LLMResponse
+from tests.fakes import make_fake_llm_provider
 
 
 def test_fake_provider_returns_queued_response():
-    provider = FakeLLMProvider(responses=['{"ok": true}'])
-    response = provider.complete(
+    provider, _adapter = make_fake_llm_provider(responses=['{"ok": true}'])
+    response = LLMProvider.complete(
+        provider,
         LLMRequest(system="시스템 지시", user_text="사용자 입력", images=[])
     )
     assert isinstance(response, LLMResponse)
@@ -1568,15 +1569,21 @@ def test_fake_provider_returns_queued_response():
 
 
 def test_fake_provider_records_requests():
-    provider = FakeLLMProvider(responses=["a", "b"])
-    provider.complete(LLMRequest(system="s", user_text="첫 번째", images=[]))
-    provider.complete(LLMRequest(system="s", user_text="두 번째", images=[]))
-    assert [req.user_text for req in provider.requests] == ["첫 번째", "두 번째"]
+    provider, adapter = make_fake_llm_provider(responses=["a", "b"])
+    LLMProvider.complete(
+        provider, LLMRequest(system="s", user_text="첫 번째", images=[])
+    )
+    LLMProvider.complete(
+        provider, LLMRequest(system="s", user_text="두 번째", images=[])
+    )
+    assert [req.user_text for req in adapter.requests] == ["첫 번째", "두 번째"]
 
 
 def test_fake_provider_lists_models():
-    provider = FakeLLMProvider(responses=[], models=["gemini-a", "gemini-b"])
-    assert provider.list_models() == ["gemini-a", "gemini-b"]
+    provider, _adapter = make_fake_llm_provider(
+        responses=[], models=["gemini-a", "gemini-b"]
+    )
+    assert LLMProvider.list_models(provider) == ["gemini-a", "gemini-b"]
 ```
 
 - [ ] **Step 2: 실패하는 테스트 작성 — 자격 증명**
@@ -1662,8 +1669,12 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.providers.base'`
 - [ ] **Step 4: `providers/base.py` 작성**
 
 ```python
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from threading import RLock
+from weakref import ReferenceType, ref
+
+from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 
 @dataclass
@@ -1673,6 +1684,7 @@ class LLMRequest:
     images: list[bytes] = field(default_factory=list)
     max_output_tokens: int = 32000
     json_output: bool = True
+    purpose: str = "rubric_compile"
 
 
 @dataclass
@@ -1680,34 +1692,228 @@ class LLMResponse:
     text: str
 
 
-class LLMProvider(Protocol):
-    def complete(self, request: LLMRequest) -> LLMResponse: ...
+@dataclass(frozen=True)
+class LLMOutboundRequest(OutboundRequest):
+    """완성 어댑터가 받는 검사 대상과 출력 설정의 불변 사본이다."""
 
-    def list_models(self) -> list[str]: ...
+    max_output_tokens: int = 32000
+    json_output: bool = True
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if type(self.max_output_tokens) is not int or self.max_output_tokens <= 0:
+            raise ValueError("출력 토큰 수는 양의 정수여야 합니다.")
+        if type(self.json_output) is not bool:
+            raise ValueError("출력 형식 선택은 참 또는 거짓이어야 합니다.")
+
+
+CompleteAdapter = Callable[[LLMOutboundRequest], LLMResponse]
+ListModelsAdapter = Callable[[OutboundRequest], list[str]]
+
+
+@dataclass(frozen=True)
+class _ProviderState:
+    gateway: TransmissionGateway
+    complete_adapter: CompleteAdapter
+    list_models_adapter: ListModelsAdapter
+
+
+class LLMProvider:
+    """전송 관문과 공급자별 원시 어댑터를 묶는 유일한 실행 손잡이다.
+
+    공급자 교체는 이 자료형을 상속하지 않고 두 어댑터 콜백을 합성해서 한다.
+    제품 진입점은 이 정확한 자료형만 받아 하위 자료형이나 흉내 객체가 공개
+    전송 흐름을 바꾸지 못하게 한다.
+    """
+
+    __slots__ = ("__weakref__",)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError(
+            "LLMProvider 하위 자료형은 지원하지 않습니다. "
+            "complete와 list_models 어댑터를 합성하세요."
+        )
+
+    def __init__(
+        self,
+        gateway: TransmissionGateway,
+        complete_adapter: CompleteAdapter,
+        list_models_adapter: ListModelsAdapter,
+    ) -> None:
+        if type(self) is not LLMProvider:
+            raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+
+        identity = id(self)
+        with _PROVIDER_STATES_LOCK:
+            current = _PROVIDER_STATES.get(identity)
+            if current is not None:
+                owner = current.handle_ref()
+                if owner is self:
+                    raise TypeError(
+                        "언어 모형 제공자 실행 손잡이는 이미 초기화되었습니다."
+                    )
+                if owner is not None:
+                    raise TypeError(
+                        "언어 모형 제공자 실행 손잡이의 정체성이 충돌했습니다."
+                    )
+
+            if type(gateway) is not TransmissionGateway:
+                raise TypeError(
+                    "언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다."
+                )
+            if not callable(complete_adapter) or not callable(list_models_adapter):
+                raise TypeError("언어 모형 제공자 어댑터는 호출할 수 있어야 합니다.")
+
+            handle_ref = ref(
+                self,
+                lambda dead_ref, object_id=identity: _cleanup_provider_state(
+                    object_id, dead_ref
+                ),
+            )
+            _PROVIDER_STATES[identity] = _ProviderEntry(
+                handle_ref=handle_ref,
+                state=_ProviderState(
+                    gateway=gateway,
+                    complete_adapter=complete_adapter,
+                    list_models_adapter=list_models_adapter,
+                ),
+            )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"언어 모형 제공자 합성은 바꿀 수 없습니다: {name}")
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        state = self._state()
+        outbound = LLMOutboundRequest(
+            purpose=request.purpose,
+            text_parts=[request.system, request.user_text],
+            image_parts=request.images,
+            max_output_tokens=request.max_output_tokens,
+            json_output=request.json_output,
+        )
+        return TransmissionGateway.send(
+            state.gateway,
+            outbound,
+            state.complete_adapter,
+        )
+
+    def list_models(self) -> list[str]:
+        state = self._state()
+        request = OutboundRequest(purpose="list_models")
+        return TransmissionGateway.send(
+            state.gateway,
+            request,
+            state.list_models_adapter,
+        )
+
+    def _state(self) -> _ProviderState:
+        if type(self) is not LLMProvider:
+            raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+        with _PROVIDER_STATES_LOCK:
+            entry = _PROVIDER_STATES.get(id(self))
+            if entry is None or entry.handle_ref() is not self:
+                raise TypeError(
+                    "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
+                )
+            return entry.state
+
+
+@dataclass(frozen=True)
+class _ProviderEntry:
+    handle_ref: ReferenceType[LLMProvider]
+    state: _ProviderState
+
+
+_PROVIDER_STATES: dict[int, _ProviderEntry] = {}
+_PROVIDER_STATES_LOCK = RLock()
+
+
+def _cleanup_provider_state(
+    identity: int, dead_ref: ReferenceType[LLMProvider]
+) -> None:
+    """늦은 정리 콜백이 재사용된 같은 정체성 키를 지우지 않게 한다."""
+    with _PROVIDER_STATES_LOCK:
+        current = _PROVIDER_STATES.get(identity)
+        if current is not None and current.handle_ref is dead_ref:
+            del _PROVIDER_STATES[identity]
 ```
 
 - [ ] **Step 5: `tests/fakes.py` 작성**
 
 ```python
-from app.providers.base import LLMRequest, LLMResponse
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from app.providers.base import (
+    LLMOutboundRequest,
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+)
+from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 
-class FakeLLMProvider:
-    """테스트용 LLM. 미리 넣어둔 응답을 순서대로 돌려주고 요청을 기록한다."""
+class FakeLLMAdapter:
+    """준비한 응답을 돌려주며 검사된 요청을 기록하는 시험 어댑터."""
 
-    def __init__(self, responses: list[str], models: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str | Exception],
+        models: list[str] | None = None,
+    ) -> None:
         self._responses = list(responses)
-        self._models = models or ["fake-model"]
+        self._models = list(models) if models is not None else ["fake-model"]
+        self._audit_directory: TemporaryDirectory[str] | None = None
         self.requests: list[LLMRequest] = []
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
+    def complete(self, request: LLMOutboundRequest) -> LLMResponse:
+        system, user_text = request.text_parts
+        self.requests.append(
+            LLMRequest(
+                system=system,
+                user_text=user_text,
+                images=list(request.image_parts),
+                max_output_tokens=request.max_output_tokens,
+                json_output=request.json_output,
+                purpose=request.purpose,
+            )
+        )
         if not self._responses:
-            raise AssertionError("FakeLLMProvider 에 남은 응답이 없습니다.")
-        return LLMResponse(text=self._responses.pop(0))
+            raise AssertionError("시험 제공자에 남은 응답이 없습니다.")
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return LLMResponse(text=response)
 
-    def list_models(self) -> list[str]:
+    def list_models(self, _request: OutboundRequest) -> list[str]:
         return list(self._models)
+
+
+def make_fake_llm_provider(
+    responses: list[str | Exception],
+    models: list[str] | None = None,
+    gateway: TransmissionGateway | None = None,
+) -> tuple[LLMProvider, FakeLLMAdapter]:
+    adapter = FakeLLMAdapter(responses=responses, models=models)
+    return make_llm_provider(adapter, gateway), adapter
+
+
+def make_llm_provider(
+    adapter: FakeLLMAdapter,
+    gateway: TransmissionGateway | None = None,
+) -> LLMProvider:
+    if gateway is None:
+        adapter._audit_directory = TemporaryDirectory(prefix="essay-grader-fake-llm-")
+        gateway = TransmissionGateway(
+            Path(adapter._audit_directory.name) / "audit.log",
+            pii_terms_provider=set,
+            provider="test-provider",
+        )
+    return LLMProvider(
+        gateway=gateway,
+        complete_adapter=adapter.complete,
+        list_models_adapter=adapter.list_models,
+    )
 ```
 
 - [ ] **Step 6: `providers/credentials.py` 작성**
@@ -1775,9 +1981,10 @@ class CredentialStore:
 - [ ] **Step 7: `providers/gemini_llm.py` 작성**
 
 ```python
-"""Google Gemini 어댑터.
+"""검사된 요청만 구글 제미나이 도구로 옮기는 원시 어댑터.
 
-직접 호출하지 말고 TransmissionGateway 를 통해서만 사용한다.
+외부에서는 어댑터를 직접 쓰지 않고 create_gemini_provider 로 정확한
+LLMProvider 실행 손잡이를 만든다.
 
 설계 메모 — response_schema 를 쓰지 않는 이유:
 Gemini 는 응답 스키마를 강제할 수 있지만, 지원하는 스키마 부분집합이 제한적이라
@@ -1788,26 +1995,38 @@ rubric_validator 가 한다. 검증 실패 시 컴파일러가 오류를 붙여 
 
 from google import genai
 from google.genai import types
+from typing import Any
 
-from app.providers.base import LLMRequest, LLMResponse
+from app.providers.base import LLMOutboundRequest, LLMProvider, LLMResponse
+from app.providers.gateway import OutboundRequest, TransmissionGateway
+
+__all__ = ["create_gemini_provider"]
+_MIN_RUBRIC_OUTPUT_TOKENS = 32000
 
 
-class GeminiLLMProvider:
-    def __init__(self, api_key: str, model: str) -> None:
-        self._client = genai.Client(api_key=api_key)
+class _GeminiLLMAdapter:
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None,
+        client: Any | None = None,
+    ) -> None:
+        self._client = client if client is not None else genai.Client(api_key=api_key)
         self._model = model
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
+    def complete(self, request: LLMOutboundRequest) -> LLMResponse:
+        if self._model is None:
+            raise ValueError("사용할 모델을 먼저 선택하세요.")
+        system, user_text = request.text_parts
         parts: list[types.Part] = [
             types.Part.from_bytes(data=image, mime_type="image/png")
-            for image in request.images
+            for image in request.image_parts
         ]
-        parts.append(types.Part.from_text(text=request.user_text))
+        parts.append(types.Part.from_text(text=user_text))
 
         config = types.GenerateContentConfig(
-            system_instruction=request.system,
+            system_instruction=system,
             max_output_tokens=request.max_output_tokens,
-            # 컴파일은 같은 입력에 같은 결과가 나와야 한다.
             temperature=0.0,
             response_mime_type="application/json" if request.json_output else "text/plain",
         )
@@ -1819,19 +2038,36 @@ class GeminiLLMProvider:
         )
         return LLMResponse(text=response.text or "")
 
-    def list_models(self) -> list[str]:
-        """생성에 쓸 수 있는 모델 이름 목록.
-
-        SDK 버전에 따라 지원 동작을 담은 필드명이 다를 수 있어 방어적으로 읽는다.
-        필드가 없으면 걸러내지 않고 모두 반환한다 — 교사가 고르면 된다.
-        """
+    def list_models(self, _request: OutboundRequest) -> list[str]:
         names: list[str] = []
         for model in self._client.models.list():
-            actions = getattr(model, "supported_actions", None) or []
-            if not actions or "generateContent" in actions:
-                if model.name:
-                    names.append(model.name)
+            name = getattr(model, "name", None)
+            actions = getattr(model, "supported_actions", None)
+            output_limit = getattr(model, "output_token_limit", None)
+            if (
+                isinstance(name, str)
+                and bool(name.strip())
+                and isinstance(actions, list)
+                and "generateContent" in actions
+                and type(output_limit) is int
+                and output_limit >= _MIN_RUBRIC_OUTPUT_TOKENS
+            ):
+                names.append(name)
         return sorted(names)
+
+
+def create_gemini_provider(
+    api_key: str,
+    model: str | None,
+    gateway: TransmissionGateway,
+    client: Any | None = None,
+) -> LLMProvider:
+    adapter = _GeminiLLMAdapter(api_key=api_key, model=model, client=client)
+    return LLMProvider(
+        gateway=gateway,
+        complete_adapter=adapter.complete,
+        list_models_adapter=adapter.list_models,
+    )
 ```
 
 - [ ] **Step 8: 테스트 통과 확인 (어댑터·자격 증명)**
@@ -1847,7 +2083,15 @@ Expected: PASS (9 tests)
 import pytest
 
 from app.api import settings as settings_api
-from tests.fakes import FakeLLMProvider
+from tests.fakes import make_fake_llm_provider
+
+
+def build_fake_provider(api_key, model):
+    provider, _adapter = make_fake_llm_provider(
+        responses=["{}"],
+        models=["models/gemini-2.5-pro", "models/gemini-2.5-flash"],
+    )
+    return provider
 
 
 @pytest.fixture(autouse=True)
@@ -1856,9 +2100,7 @@ def stub_provider(monkeypatch):
     monkeypatch.setattr(
         settings_api,
         "build_provider",
-        lambda api_key, model: FakeLLMProvider(
-            responses=["{}"], models=["models/gemini-2.5-pro", "models/gemini-2.5-flash"]
-        ),
+        build_fake_provider,
     )
 
 
@@ -1896,6 +2138,22 @@ def test_select_model_persists(client):
     client.put("/api/settings/api-key", json={"api_key": "AIza-secret"})
     client.put("/api/settings/model", json={"llm_model": "models/gemini-2.5-pro"})
     assert client.get("/api/settings").json()["llm_model"] == "models/gemini-2.5-pro"
+
+
+def test_select_model_requires_api_key(client):
+    response = client.put(
+        "/api/settings/model", json={"llm_model": "models/gemini-2.5-pro"}
+    )
+    assert response.status_code == 400
+
+
+def test_model_not_in_current_provider_list_is_rejected(client):
+    client.put("/api/settings/api-key", json={"api_key": "AIza-secret"})
+    response = client.put(
+        "/api/settings/model", json={"llm_model": "models/not-available"}
+    )
+    assert response.status_code == 400
+    assert client.get("/api/settings").json()["llm_model"] is None
 
 
 def test_data_policy_acknowledgement_persists(client):
@@ -1960,14 +2218,20 @@ from app.db import get_session
 from app.models.app_setting import KEY_DATA_POLICY_ACK, KEY_LLM_MODEL, AppSetting
 from app.providers.base import LLMProvider
 from app.providers.credentials import CredentialStore
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gateway import TransmissionGateway
+from app.providers.gemini_llm import create_gemini_provider
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
-def build_provider(api_key: str, model: str) -> LLMProvider:
+def build_provider(api_key: str, model: str | None) -> LLMProvider:
     """테스트에서 monkeypatch 로 대체한다."""
-    return GeminiLLMProvider(api_key=api_key, model=model)
+    gateway = TransmissionGateway(
+        audit_log_path=app_config.audit_log_path(),
+        pii_terms_provider=set,
+        provider="gemini",
+    )
+    return create_gemini_provider(api_key=api_key, model=model, gateway=gateway)
 
 
 def get_credential_store() -> CredentialStore:
@@ -2055,13 +2319,13 @@ def list_models(
             status.HTTP_400_BAD_REQUEST, "먼저 Gemini API 키를 입력하세요."
         )
 
-    provider = build_provider(api_key, read_setting(session, KEY_LLM_MODEL) or app_config.fallback_llm_model)
+    provider = build_provider(api_key, read_setting(session, KEY_LLM_MODEL))
     try:
-        return {"models": provider.list_models()}
-    except Exception as exc:  # noqa: BLE001 - 키 오류·네트워크 오류를 그대로 보여준다
+        return {"models": LLMProvider.list_models(provider)}
+    except Exception:  # noqa: BLE001 - 외부 오류 세부 내용은 내보내지 않는다
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"모델 목록을 가져오지 못했습니다: {exc}"
-        ) from exc
+            status.HTTP_400_BAD_REQUEST, "모델 목록을 가져오지 못했습니다."
+        ) from None
 
 
 @router.put("/model", response_model=SettingsOut)
@@ -2070,7 +2334,28 @@ def set_model(
     session: Session = Depends(get_session),
     store: CredentialStore = Depends(get_credential_store),
 ) -> SettingsOut:
-    write_setting(session, KEY_LLM_MODEL, payload.llm_model)
+    model = payload.llm_model.strip()
+    if not model:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "모델 이름이 비어 있습니다."
+        )
+    api_key = store.get_api_key()
+    if api_key is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "먼저 Gemini API 키를 입력하세요."
+        )
+    try:
+        provider = build_provider(api_key, None)
+        available_models = LLMProvider.list_models(provider)
+    except Exception:  # noqa: BLE001 - 외부 오류 세부 내용은 내보내지 않는다
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "모델 목록을 가져오지 못했습니다."
+        ) from None
+    if model not in available_models:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "현재 사용할 수 없는 모델입니다."
+        )
+    write_setting(session, KEY_LLM_MODEL, model)
     return _current(session, store)
 
 
@@ -2125,10 +2410,9 @@ import json
 
 import pytest
 
-from app.providers.gateway import TransmissionGateway
 from app.services.pdf_extract import PdfExtract, PdfPage
 from app.services.rubric_compiler import CompileResult, compile_rubric
-from tests.fakes import FakeLLMProvider
+from tests.fakes import make_fake_llm_provider
 
 VALID_RUBRIC = {
     "assessment": {"title": "수학 논술형", "subject": "수학", "grade": 6, "total_points": 4},
@@ -2176,23 +2460,16 @@ VALID_RUBRIC = {
 
 
 @pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log",
-        pii_terms_provider=set,
-        provider="test-provider",
-    )
-
-
-@pytest.fixture
 def extracts():
     page = PdfPage(page_no=1, text="채점기준표 내용", image_png=b"\x89PNG fake")
     return [PdfExtract(source_path="rubric.pdf", pages=[page])]
 
 
-def test_compiles_valid_rubric(gateway, extracts):
-    provider = FakeLLMProvider(responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)])
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+def test_compiles_valid_rubric(extracts):
+    provider, _adapter = make_fake_llm_provider(
+        responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
+    )
+    result = compile_rubric(provider, extracts, total_points=4)
 
     assert isinstance(result, CompileResult)
     assert result.succeeded
@@ -2201,59 +2478,65 @@ def test_compiles_valid_rubric(gateway, extracts):
     assert result.errors == []
 
 
-def test_strips_markdown_code_fence(gateway, extracts):
+def test_strips_markdown_code_fence(extracts):
     fenced = "```json\n" + json.dumps(VALID_RUBRIC, ensure_ascii=False) + "\n```"
-    provider = FakeLLMProvider(responses=[fenced])
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+    provider, _adapter = make_fake_llm_provider(responses=[fenced])
+    result = compile_rubric(provider, extracts, total_points=4)
     assert result.succeeded
 
 
-def test_retries_once_with_error_feedback(gateway, extracts):
+def test_retries_once_with_error_feedback(extracts):
     broken = json.loads(json.dumps(VALID_RUBRIC))
     broken["items"][0]["points"] = 99  # 배점 합계가 총점과 어긋남
-    provider = FakeLLMProvider(
+    provider, adapter = make_fake_llm_provider(
         responses=[
             json.dumps(broken, ensure_ascii=False),
             json.dumps(VALID_RUBRIC, ensure_ascii=False),
         ]
     )
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, total_points=4)
 
     assert result.succeeded
-    assert len(provider.requests) == 2
-    assert "배점 합계" in provider.requests[1].user_text
+    assert len(adapter.requests) == 2
+    assert "배점 합계" in adapter.requests[1].user_text
 
 
-def test_gives_up_after_second_failure(gateway, extracts):
+def test_gives_up_after_second_failure(extracts):
     broken = json.loads(json.dumps(VALID_RUBRIC))
     broken["items"][0]["points"] = 99
     payload = json.dumps(broken, ensure_ascii=False)
-    provider = FakeLLMProvider(responses=[payload, payload])
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+    provider, adapter = make_fake_llm_provider(responses=[payload, payload])
+    result = compile_rubric(provider, extracts, total_points=4)
 
     assert not result.succeeded
     assert any("배점 합계" in e for e in result.errors)
-    assert len(provider.requests) == 2
+    assert len(adapter.requests) == 2
 
 
-def test_malformed_json_is_reported(gateway, extracts):
-    provider = FakeLLMProvider(responses=["이건 JSON 이 아닙니다", "여전히 아닙니다"])
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+def test_malformed_json_is_reported(extracts):
+    provider, _adapter = make_fake_llm_provider(
+        responses=["이건 JSON 이 아닙니다", "여전히 아닙니다"]
+    )
+    result = compile_rubric(provider, extracts, total_points=4)
     assert not result.succeeded
     assert any("JSON" in e for e in result.errors)
 
 
-def test_warnings_are_returned_alongside_rubric(gateway, extracts):
-    provider = FakeLLMProvider(responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)])
-    result = compile_rubric(provider, gateway, extracts, total_points=4)
+def test_warnings_are_returned_alongside_rubric(extracts):
+    provider, _adapter = make_fake_llm_provider(
+        responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
+    )
+    result = compile_rubric(provider, extracts, total_points=4)
     # 2번이 작도 문항이므로 교사 검토 경고가 나와야 한다.
     assert any(w.code == "manual_review_required" for w in result.warnings)
 
 
-def test_images_are_sent_to_llm(gateway, extracts):
-    provider = FakeLLMProvider(responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)])
-    compile_rubric(provider, gateway, extracts, total_points=4)
-    assert provider.requests[0].images == [b"\x89PNG fake"]
+def test_images_are_sent_to_llm(extracts):
+    provider, adapter = make_fake_llm_provider(
+        responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
+    )
+    compile_rubric(provider, extracts, total_points=4)
+    assert adapter.requests[0].images == [b"\x89PNG fake"]
 ```
 
 - [ ] **Step 2: 테스트 실패 확인**
@@ -2278,7 +2561,6 @@ from dataclasses import dataclass, field
 from pydantic import ValidationError as PydanticValidationError
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.providers.gateway import OutboundRequest, TransmissionGateway
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import PdfExtract
 from app.services.rubric_validator import validate_rubric
@@ -2398,7 +2680,6 @@ def _parse_and_validate(raw_text: str, total_points: int) -> tuple[Rubric | None
 
 def compile_rubric(
     provider: LLMProvider,
-    gateway: TransmissionGateway,
     extracts: list[PdfExtract],
     total_points: int,
 ) -> CompileResult:
@@ -2416,15 +2697,13 @@ def compile_rubric(
                 f"직전 시도의 결과에 다음 문제가 있었습니다. 고쳐서 다시 출력하세요.\n{joined}"
             )
 
-        outbound = OutboundRequest(
-            purpose="rubric_compile",
-            text_parts=[SYSTEM_PROMPT, user_text],
-            image_parts=images,
-        )
-        response = gateway.send(
-            outbound,
-            lambda _req: provider.complete(
-                LLMRequest(system=SYSTEM_PROMPT, user_text=user_text, images=images)
+        response = LLMProvider.complete(
+            provider,
+            LLMRequest(
+                system=SYSTEM_PROMPT,
+                user_text=user_text,
+                images=images,
+                purpose="rubric_compile",
             ),
         )
 
@@ -3128,7 +3407,7 @@ from app.models.assessment import Assessment
 from app.models.document import SourceDocument
 from app.models.rubric import RubricDraft
 from app.providers.gateway import TransmissionGateway
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gemini_llm import create_gemini_provider
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import extract_pdf
 from app.services.rubric_compiler import CompileResult, compile_rubric
@@ -3176,14 +3455,18 @@ def run_compile(
         )
 
     extracts = [extract_pdf(Path(document.stored_path)) for document in documents]
-    provider = GeminiLLMProvider(api_key=api_key, model=model)
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
         # P1 에서는 명렬표가 없다. P2 에서 학생 이름 집합을 넘기도록 교체한다.
         pii_terms_provider=set,
         provider="gemini",
     )
-    return compile_rubric(provider, gateway, extracts, assessment.total_points)
+    provider = create_gemini_provider(
+        api_key=api_key,
+        model=model,
+        gateway=gateway,
+    )
+    return compile_rubric(provider, extracts, assessment.total_points)
 
 
 def _load_draft(assessment_id: int, session: Session) -> RubricDraft:
@@ -4373,9 +4656,11 @@ cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
 `http://127.0.0.1:8000/settings` 접속 → 개인 Gemini API 키 입력 후 저장 → "사용 가능한 모델
 불러오기" → 목록에서 멀티모달 지원 모델 선택.
 
-모델 목록이 비어 있거나 오류가 나면 `providers/gemini_llm.py` 의 `list_models` 가 설치된
-SDK 버전의 필드명과 맞는지 확인한다. 방어적으로 작성했으므로 필드가 없으면 전체 목록이
-그대로 나와야 한다.
+모델 목록에는 설치된 SDK 메타자료에서 `generateContent` 지원과 32000 이상의 출력 토큰
+한도를 모두 명시한 모델만 나와야 한다. 두 필드 가운데 하나라도 없거나 뜻이 분명하지 않은
+모델은 안전 목록에서 빠지는 것이 정상이다. 이미지 입력과 JSON 출력 지원은 이 목록
+메타자료로 확인할 수 없으므로 이름이나 설명에서 짐작하지 않는다. 두 기능의 실제 호환성은
+첫 컴파일 요청에서 확인하며, 실패하면 세부 외부 오류를 드러내지 않고 요청을 끝낸다.
 
 - [ ] **Step 3: 예시 자료 준비**
 

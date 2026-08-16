@@ -4,6 +4,7 @@ from app.schemas.rubric import (
     ItemType,
     Rubric,
     RubricItem,
+    RubricPart,
     ScoringRule,
     TableColumn,
 )
@@ -56,6 +57,42 @@ def test_mixed_symbol_families_inside_one_item_are_warned():
     )
     warnings = detect_warnings(_rubric([item], total=2))
     assert any(w.code == "symbol_family_mismatch" for w in warnings)
+
+
+def test_scoring_criterion_and_composite_part_candidates_are_checked_together():
+    item = RubricItem(
+        item_no=1,
+        title="보기에서 고르기",
+        points=1,
+        type=ItemType.COMPOSITE,
+        parts=[
+            RubricPart(
+                part_id="기호",
+                type=ItemType.CLOSED_SHORT,
+                points=1,
+                blanks=[Blank(key="빈칸", answers=["㉠"])],
+            )
+        ],
+        scoring=[
+            ScoringRule(
+                score=1,
+                condition="all_correct",
+                criterion="①을 정확하게 고름",
+            ),
+            ScoringRule(
+                score=0,
+                condition="none_correct",
+                criterion="고르지 못함",
+            ),
+        ],
+        example_answer="보기의 기호를 사용한다",
+    )
+
+    warnings = detect_warnings(_rubric([item], total=1))
+
+    assert any(w.code == "symbol_family_mismatch" for w in warnings)
+    assert item.parts[0].blanks[0].answers == ["㉠"]
+    assert item.scoring[0].criterion == "①을 정확하게 고름"
 
 
 def test_matching_symbol_family_is_not_warned():

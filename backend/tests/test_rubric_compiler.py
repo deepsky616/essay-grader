@@ -283,6 +283,7 @@ def test_compile_rejects_subclass_that_escaped_failed_class_creation_before_audi
             capture = CaptureOwner()
 
             def complete(self, request):
+                adapter_calls.append(request)
                 return LLMResponse(text=_payload())
 
             def _complete(self, request, max_output_tokens, json_output):
@@ -292,15 +293,8 @@ def test_compile_rejects_subclass_that_escaped_failed_class_creation_before_audi
                 return []
 
     audit_path = tmp_path / "audit.log"
-    gateway = TransmissionGateway(audit_path, set, "test-provider")
     adapter_calls = []
-    provider = escaped_types[0](
-        gateway,
-        lambda request: (
-            adapter_calls.append(request) or LLMResponse(text=_payload())
-        ),
-        lambda request: [],
-    )
+    provider = object.__new__(escaped_types[0])
 
     with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
         compile_rubric(provider, extracts, authority)
@@ -411,6 +405,33 @@ def test_retries_once_with_schema_validation_feedback(extracts, authority):
     assert result.succeeded
     assert result.attempts == 2
     assert "items.0.title" in adapter.requests[1].user_text
+
+
+@pytest.mark.parametrize(
+    ("field", "feedback_path"),
+    [
+        ("answer", "items.0.blanks.0.answers"),
+        ("criterion", "items.0.scoring.0.criterion"),
+    ],
+)
+def test_retries_whitespace_only_required_text_as_schema_error(
+    extracts, authority, field, feedback_path
+):
+    broken = json.loads(_payload())
+    if field == "answer":
+        broken["items"][0]["blanks"][0]["answers"] = ["   "]
+    else:
+        broken["items"][0]["scoring"][0]["criterion"] = "   "
+    provider, adapter = make_fake_llm_provider(
+        responses=[_payload(broken), _payload()]
+    )
+
+    result = compile_rubric(provider, extracts, authority)
+
+    assert result.succeeded
+    assert result.attempts == 2
+    assert len(adapter.requests) == 2
+    assert feedback_path in adapter.requests[1].user_text
 
 
 def test_gives_up_after_second_validation_failure(extracts, authority):

@@ -9,6 +9,7 @@ from app.providers.base import LLMOutboundRequest, LLMProvider, LLMResponse
 from app.providers.gateway import OutboundRequest, TransmissionGateway
 
 __all__ = ["create_gemini_provider"]
+_MIN_RUBRIC_OUTPUT_TOKENS = 32000
 
 
 class _GeminiLLMAdapter:
@@ -51,11 +52,25 @@ class _GeminiLLMAdapter:
         return LLMResponse(text=response.text or "")
 
     def list_models(self, _request: OutboundRequest) -> list[str]:
+        """목록 메타자료로 확인 가능한 컴파일 최소 조건만 통과시킨다.
+
+        설치된 도구의 모델 자료에는 이미지 입력과 구조화 출력 지원 칸이 없다.
+        그 둘은 이름이나 설명으로 추정하지 않고 첫 실제 완성 호출에서 확인한다.
+        """
         names: list[str] = []
         for model in self._client.models.list():
-            actions = getattr(model, "supported_actions", None) or []
-            if (not actions or "generateContent" in actions) and model.name:
-                names.append(model.name)
+            name = getattr(model, "name", None)
+            actions = getattr(model, "supported_actions", None)
+            output_limit = getattr(model, "output_token_limit", None)
+            if (
+                isinstance(name, str)
+                and bool(name.strip())
+                and isinstance(actions, list)
+                and "generateContent" in actions
+                and type(output_limit) is int
+                and output_limit >= _MIN_RUBRIC_OUTPUT_TOKENS
+            ):
+                names.append(name)
         return sorted(names)
 
 
