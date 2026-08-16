@@ -46,6 +46,11 @@ def db_session(engine):
 
 
 @pytest.fixture
+def session_factory(engine):
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+@pytest.fixture
 def client(engine, db_session):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db_session

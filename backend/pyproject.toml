@@ -13,6 +13,10 @@ dependencies = [
     "google-genai>=1.0",
     "keyring>=25.0",
     "cryptography>=46.0",
+    "opencv-contrib-python>=4.10",
+    "numpy>=2.0",
+    "pillow>=11.0",
+    "pytesseract>=0.3.13",
 ]
 
 [project.optional-dependencies]
