@@ -1,10 +1,16 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, Integer, String
 from sqlalchemy.ext.mutable import MutableDict, MutableList
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.document import SourceDocument
+    from app.models.rubric import RubricDraft
 
 
 class Assessment(Base, TimestampMixin):
@@ -25,3 +31,15 @@ class Assessment(Base, TimestampMixin):
         MutableDict.as_mutable(JSON), nullable=False, default=dict
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+
+    documents: Mapped[list[SourceDocument]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    rubric_draft: Mapped[RubricDraft | None] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )

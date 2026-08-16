@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -9,10 +9,18 @@ from app.models.app_setting import (
     DATA_POLICY_WORDING_TEXT,
     DATA_POLICY_WORDING_VERSION,
 )
-from app.models.base import Base
+from app.models import Base
 
 _engine = None
 _SessionFactory = None
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 def migrate_schema(engine: Engine) -> None:
@@ -66,6 +74,7 @@ def init_db() -> None:
         f"sqlite:///{settings.resolved_db_path()}",
         connect_args={"check_same_thread": False},
     )
+    event.listen(candidate_engine, "connect", _enable_sqlite_foreign_keys)
     try:
         Base.metadata.create_all(candidate_engine)
         migrate_schema(candidate_engine)

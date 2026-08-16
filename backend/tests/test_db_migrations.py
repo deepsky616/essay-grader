@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import IntegrityError
 
 from app import db as db_module
 from app.api import settings as settings_api
@@ -165,3 +166,62 @@ def test_init_db_propagates_migration_failure(
         db_module.init_db()
 
     assert db_module._SessionFactory is None
+
+
+def test_init_db_adds_document_and_rubric_tables_to_existing_database(
+    tmp_path, monkeypatch, isolated_db_globals
+):
+    database_path = tmp_path / "existing.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE assessments (
+                id INTEGER PRIMARY KEY,
+                title VARCHAR(300) NOT NULL,
+                subject VARCHAR(50) NOT NULL,
+                grade INTEGER NOT NULL,
+                total_points INTEGER NOT NULL,
+                achievement_standards JSON NOT NULL,
+                level_cutoffs JSON NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+            """
+        )
+    engine.dispose()
+    monkeypatch.setattr(settings, "db_path", database_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+
+    db_module.init_db()
+    db_module.init_db()
+
+    with db_module._engine.connect() as connection:
+        table_names = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {"source_documents", "rubric_drafts"} <= table_names
+
+
+def test_init_db_enables_foreign_key_enforcement(
+    tmp_path, monkeypatch, isolated_db_globals
+):
+    monkeypatch.setattr(settings, "db_path", tmp_path / "foreign-keys.db")
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+
+    db_module.init_db()
+
+    with pytest.raises(IntegrityError):
+        with db_module._engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                INSERT INTO source_documents
+                    (assessment_id, kind, filename, stored_path, page_count)
+                VALUES
+                    (999999, 'rubric_table', 'rubric.pdf', '/local/rubric.pdf', 1)
+                """
+            )
