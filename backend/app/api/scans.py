@@ -689,22 +689,51 @@ def reassign_submission(
             Submission.id != submission.id,
         )
     )
-    if duplicate is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "이미 다른 제출물에 배정된 학생입니다.",
-        )
-    submission.student_id = student.id
-    submission.assignment_status = "confirmed"
-    submission.assignment_note = "교사가 직접 배정함"
-    remaining = session.scalar(
-        select(func.count()).select_from(Submission).where(
-            Submission.batch_id == batch_id,
-            Submission.assignment_status == "needs_review",
-        )
-    ) or 0
-    batch.status = "needs_review" if remaining else "ready"
     try:
+        if duplicate is None:
+            submission.student_id = student.id
+            submission.assignment_status = "confirmed"
+            submission.assignment_note = "교사가 직접 배정함"
+        else:
+            counterpart = session.get(Submission, duplicate)
+            if counterpart is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "맞바꿀 학생 배정 정보를 찾을 수 없습니다.",
+                )
+            previous_student_id = submission.student_id
+            max_number = session.scalar(
+                select(func.max(Student.number)).where(
+                    Student.classroom_id == batch.classroom_id
+                )
+            ) or 0
+            placeholder = Student(
+                classroom_id=batch.classroom_id,
+                number=max_number + 1,
+                name="임시 배정 자리",
+                absent=True,
+            )
+            session.add(placeholder)
+            session.flush()
+            counterpart.student_id = placeholder.id
+            session.flush()
+            submission.student_id = student.id
+            session.flush()
+            counterpart.student_id = previous_student_id
+            submission.assignment_status = "confirmed"
+            counterpart.assignment_status = "confirmed"
+            submission.assignment_note = "교사가 답안 배정을 서로 맞바꿈"
+            counterpart.assignment_note = "교사가 답안 배정을 서로 맞바꿈"
+            session.flush()
+            session.delete(placeholder)
+
+        remaining = session.scalar(
+            select(func.count()).select_from(Submission).where(
+                Submission.batch_id == batch_id,
+                Submission.assignment_status == "needs_review",
+            )
+        ) or 0
+        batch.status = "needs_review" if remaining else "ready"
         session.commit()
     except IntegrityError:
         session.rollback()

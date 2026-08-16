@@ -2,10 +2,14 @@ import type {
   AppSettings,
   Assessment,
   AssessmentInput,
+  ClassroomInfo,
+  ParsedStudent,
   Rubric,
   RubricResponse,
   Region,
+  ScanBatchStatus,
   SourceDocument,
+  SubmissionInfo,
   TemplateInfo,
 } from "../types/rubric";
 
@@ -151,6 +155,63 @@ export const api = {
 
   printableUrl: (id: number) =>
     `/api/assessments/${id}/template/printable`,
+
+  parseRoster: (rosterText: string) =>
+    request<{ students: ParsedStudent[] }>("/api/classrooms/parse-roster", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ text: rosterText }),
+    }),
+
+  createClassroom: (
+    name: string,
+    students: Array<ParsedStudent & { absent: boolean }>,
+  ) =>
+    request<ClassroomInfo>("/api/classrooms", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, students }),
+    }),
+
+  listClassrooms: () => request<ClassroomInfo[]>("/api/classrooms"),
+
+  uploadScan: (
+    assessmentId: number,
+    classroomId: number,
+    file: File,
+  ) => {
+    const form = new FormData();
+    form.append("assessment_id", String(assessmentId));
+    form.append("classroom_id", String(classroomId));
+    form.append("file", file);
+    return request<ScanBatchStatus>("/api/scans", {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  getScanBatch: (batchId: number) =>
+    request<ScanBatchStatus>(`/api/scans/${batchId}`),
+
+  listSubmissions: (batchId: number) =>
+    request<{ submissions: SubmissionInfo[] }>(
+      `/api/scans/${batchId}/submissions`,
+    ),
+
+  reassignSubmission: (
+    batchId: number,
+    submissionId: number,
+    studentId: number,
+  ) =>
+    request<{
+      id: number;
+      student_id: number;
+      assignment_status: string;
+    }>(`/api/scans/${batchId}/submissions/${submissionId}/reassign`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ student_id: studentId }),
+    }),
 
   getSettings: () => request<AppSettings>("/api/settings"),
 

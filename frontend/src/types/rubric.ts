@@ -133,3 +133,46 @@ export interface TemplateInfo {
   dpi: number;
   printable_ready: boolean;
 }
+
+export interface ParsedStudent {
+  number: number;
+  name: string;
+}
+
+export interface StudentInfo extends ParsedStudent {
+  id: number;
+  absent: boolean;
+}
+
+export interface ClassroomInfo {
+  id: number;
+  name: string;
+  students: StudentInfo[];
+}
+
+export type ScanBatchState =
+  | "pending"
+  | "processing"
+  | "split_failed"
+  | "failed"
+  | "needs_review"
+  | "ready";
+
+export interface ScanBatchStatus {
+  id: number;
+  status: ScanBatchState;
+  failure_reason: string | null;
+  submission_count: number;
+  review_count: number;
+}
+
+export interface SubmissionInfo {
+  id: number;
+  student_id: number;
+  student_name: string;
+  recognized_name: string | null;
+  assignment_status: "pending" | "confirmed" | "needs_review";
+  assignment_note: string | null;
+  page_start: number;
+  page_end: number;
+}

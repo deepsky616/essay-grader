@@ -453,6 +453,7 @@ export default function RegionEditor() {
             만든 답안지 내려받기
           </a>
         )}
+        <Link to={`/assessments/${assessmentId}/scan`}>스캔 배치 올리기</Link>
       </div>
 
       <div aria-live="polite">

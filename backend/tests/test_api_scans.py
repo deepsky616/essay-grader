@@ -388,7 +388,7 @@ def test_reassign_submission_clears_review(
     assert client.get(f"/api/scans/{batch.id}").json()["status"] == "ready"
 
 
-def test_reassign_rejects_other_classroom_or_duplicate_student(
+def test_reassign_swaps_existing_student_and_rejects_other_classroom(
     client,
     setup_ids,
     stub_job,
@@ -403,7 +403,10 @@ def test_reassign_rejects_other_classroom_or_duplicate_student(
         batch,
         PipelineResult(
             PipelineOutcome.NEEDS_REVIEW,
-            [_student_result(0, "needs_review"), _student_result(1)],
+            [
+                _student_result(0, "needs_review"),
+                _student_result(1, "needs_review"),
+            ],
             None,
         ),
         classroom.present_students(),
@@ -414,16 +417,30 @@ def test_reassign_rejects_other_classroom_or_duplicate_student(
     db_session.add(other_classroom)
     db_session.commit()
 
-    duplicate = client.post(
+    first_student_id = submissions[0].student_id
+    second_student_id = submissions[1].student_id
+    swapped = client.post(
         f"/api/scans/{batch.id}/submissions/{submissions[0].id}/reassign",
-        json={"student_id": submissions[1].student_id},
+        json={"student_id": second_student_id},
     )
+    db_session.expire_all()
+    first_after = db_session.get(Submission, submissions[0].id)
+    second_after = db_session.get(Submission, submissions[1].id)
     outside = client.post(
         f"/api/scans/{batch.id}/submissions/{submissions[0].id}/reassign",
         json={"student_id": other_classroom.students[0].id},
     )
 
-    assert duplicate.status_code == 409
+    assert swapped.status_code == 200
+    assert first_after.student_id == second_student_id
+    assert second_after.student_id == first_student_id
+    assert first_after.assignment_status == "confirmed"
+    assert second_after.assignment_status == "confirmed"
+    assert client.get(f"/api/scans/{batch.id}").json()["status"] == "ready"
+    assert (
+        db_session.query(Student).filter_by(classroom_id=classroom_id).count()
+        == 2
+    )
     assert outside.status_code == 400
 
 
