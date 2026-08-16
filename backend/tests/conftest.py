@@ -95,6 +95,7 @@ def graded_setup(db_session):
             page_start=index,
             page_end=index + 1,
             assignment_status="confirmed",
+            anonymous_token=f"S-{index + 1:08d}",
         )
         db_session.add(submission)
         db_session.commit()

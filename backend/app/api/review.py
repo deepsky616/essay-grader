@@ -254,6 +254,16 @@ def confirm(
     score = _load_score(score_id, session)
     run = _load_run(score.run_id, session)
     item = _find_item(_load_rubric(run, session), score.item_no)
+    if payload.score > item.points:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"점수 {payload.score}가 문항 배점 {item.points}을 초과합니다.",
+        )
+    if sum(rule.score == payload.score for rule in item.scoring) != 1:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "선택한 점수에 맞는 채점 기준이 하나가 아닙니다.",
+        )
     source = (
         "teacher_accept"
         if payload.score == score.proposed_score

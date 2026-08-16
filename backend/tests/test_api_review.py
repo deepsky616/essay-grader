@@ -150,6 +150,19 @@ def test_confirm_rejects_score_above_item_points(
     assert "배점" in response.json()["detail"]
 
 
+def test_confirm_rejects_score_without_rubric_criterion(
+    with_rubric, client, db_session
+):
+    score = db_session.query(ItemScore).filter_by(item_no=2).first()
+    response = client.post(
+        f"/api/review/scores/{score.id}/confirm",
+        json={"score": 1},
+    )
+
+    assert response.status_code == 400
+    assert "채점 기준" in response.json()["detail"]
+
+
 @pytest.mark.parametrize("invalid_score", [True, 1.5, "2", -1])
 def test_confirm_rejects_non_contract_scores(
     with_rubric, client, db_session, invalid_score
