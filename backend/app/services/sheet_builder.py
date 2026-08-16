@@ -205,6 +205,8 @@ def build_printable_sheet(
 
             document.save(temporary, garbage=4, deflate=True)
 
+        os.chmod(temporary, 0o600)
+
         with fitz.open(temporary) as completed:
             if completed.page_count != len(sizes):
                 raise ValueError("배부용 답안지 PDF 검증에 실패했습니다.")
