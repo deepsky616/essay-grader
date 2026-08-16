@@ -604,9 +604,21 @@ app/services/rubric_validator.py 에 둔다. 둘을 섞으면 LLM 출력 파싱 
 
 import re
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+)
+
+LEVEL_KEYS = frozenset({"1", "2", "3"})
+LevelKey = Literal["1", "2", "3"]
+LevelDescriptions = dict[LevelKey, StrictStr]
+LevelCutoffs = dict[LevelKey, StrictInt]
 
 CONDITION_PATTERN = re.compile(
     r"^(all_correct|none_correct|set_exact|set_partial|llm|manual"
@@ -757,10 +769,14 @@ class RubricItem(AnswerSpec):
 
 
 class AchievementStandard(BaseModel):
-    id: str
-    item_range: Annotated[list[int], Field(min_length=2, max_length=2)]
-    core_standard: str
-    levels: dict[str, str]
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr
+    item_range: Annotated[
+        list[StrictInt], Field(min_length=2, max_length=2)
+    ]
+    core_standard: StrictStr
+    levels: LevelDescriptions
 
     @field_validator("id", "core_standard")
     @classmethod
@@ -770,8 +786,8 @@ class AchievementStandard(BaseModel):
     @field_validator("levels")
     @classmethod
     def levels_must_not_contain_blank_text(
-        cls, values: dict[str, str]
-    ) -> dict[str, str]:
+        cls, values: LevelDescriptions
+    ) -> LevelDescriptions:
         if any(not key.strip() or not value.strip() for key, value in values.items()):
             raise ValueError("성취수준에 공백만 있는 키나 설명이 있습니다.")
         return values
@@ -793,7 +809,7 @@ class Rubric(BaseModel):
     assessment: AssessmentMeta
     achievement_standards: list[AchievementStandard] = Field(default_factory=list)
     items: list[RubricItem] = Field(min_length=1)
-    level_cutoffs: dict[str, int] = Field(default_factory=dict)
+    level_cutoffs: LevelCutoffs = Field(default_factory=dict)
 ```
 
 `backend/app/schemas/__init__.py`는 빈 파일로 만든다.
@@ -951,7 +967,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.rubric_va
 
 from dataclasses import dataclass
 
-from app.schemas.rubric import AnswerSpec, ItemType, Rubric, RubricItem
+from app.schemas.rubric import (
+    LEVEL_KEYS,
+    AnswerSpec,
+    ItemType,
+    Rubric,
+    RubricItem,
+)
 
 # 정답 후보가 반드시 있어야 하는 유형
 _REQUIRES_ANSWERS = {
@@ -1050,13 +1072,28 @@ def _validate_cutoffs(rubric: Rubric) -> list[ValidationError]:
         return []
 
     errors: list[ValidationError] = []
-    try:
-        pairs = sorted(
-            ((int(level), cut) for level, cut in rubric.level_cutoffs.items()),
-            reverse=True,
-        )
-    except ValueError:
-        return [ValidationError("level_cutoffs", "성취수준 키는 정수 문자열이어야 합니다.")]
+    if any(
+        type(level) is not str or level not in LEVEL_KEYS
+        for level in rubric.level_cutoffs
+    ):
+        return [
+            ValidationError(
+                "level_cutoffs",
+                "성취수준 키는 1, 2, 3 가운데 하나여야 합니다.",
+            )
+        ]
+    if any(type(cut) is not int for cut in rubric.level_cutoffs.values()):
+        return [
+            ValidationError(
+                "level_cutoffs",
+                "성취수준 경계값은 정수여야 합니다.",
+            )
+        ]
+
+    pairs = sorted(
+        ((int(level), cut) for level, cut in rubric.level_cutoffs.items()),
+        reverse=True,
+    )
 
     total = rubric.assessment.total_points
     previous_cut: int | None = None
@@ -2940,13 +2977,18 @@ from typing import Any, Self
 from pydantic import TypeAdapter, ValidationError as PydanticValidationError
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.schemas.rubric import AchievementStandard, AssessmentMeta, Rubric
+from app.schemas.rubric import (
+    AchievementStandard,
+    AssessmentMeta,
+    LevelCutoffs,
+    Rubric,
+)
 from app.services.pdf_extract import PdfExtract
 from app.services.rubric_validator import validate_level_cutoffs, validate_rubric
 from app.services.rubric_warnings import Warning, detect_warnings
 
 MAX_ATTEMPTS = 2
-_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(dict[str, int])
+_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(LevelCutoffs)
 _CODE_FENCE = re.compile(
     r"\A```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```[ \t]*\Z",
     re.IGNORECASE | re.DOTALL,
@@ -3485,20 +3527,29 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.rubric import AchievementStandard
+from app.schemas.rubric import AchievementStandard, LevelCutoffs
 
 
 class AssessmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=300)
     subject: str = Field(min_length=1, max_length=50)
-    grade: int = Field(ge=1, le=12)
-    total_points: int = Field(ge=1)
+    grade: int = Field(ge=1, le=12, strict=True)
+    total_points: int = Field(ge=1, strict=True)
+    achievement_standards: list[AchievementStandard] = Field(default_factory=list)
+    level_cutoffs: LevelCutoffs = Field(default_factory=dict)
 
 
 class AssessmentUpdate(BaseModel):
-    title: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    subject: str | None = Field(default=None, min_length=1, max_length=50)
+    grade: int | None = Field(default=None, ge=1, le=12, strict=True)
+    total_points: int | None = Field(default=None, ge=1, strict=True)
     achievement_standards: list[AchievementStandard] | None = None
-    level_cutoffs: dict[str, int] | None = None
+    level_cutoffs: LevelCutoffs | None = None
 
 
 class AssessmentOut(BaseModel):
@@ -3509,21 +3560,30 @@ class AssessmentOut(BaseModel):
     subject: str
     grade: int
     total_points: int
-    achievement_standards: list[dict]
-    level_cutoffs: dict[str, int]
+    achievement_standards: list[AchievementStandard]
+    level_cutoffs: LevelCutoffs
     status: str
     created_at: datetime
 ```
 
+성취기준 안쪽 객체도 알 수 없는 칸을 거부한다. `item_range`는 정확히 두 개의
+엄격한 정수만 받고 문자열 숫자와 불 값을 변환하지 않는다. 성취수준 설명과
+수준 경계값의 키는 문자열 `1`, `2`, `3`의 부분집합만 허용하며 빈 사전과 일부
+수준만 있는 사전은 기존 계약대로 허용한다. 만들기와 수정 모두 같은 자료형을
+사용해 교사 정본을 조용히 버리거나 변환하지 않는다.
+
 - [ ] **Step 4: `api/assessments.py` 작성**
 
 ```python
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models.assessment import Assessment
+from app.models.document import SourceDocument
 from app.schemas.assessment import AssessmentCreate, AssessmentOut, AssessmentUpdate
 
 router = APIRouter(prefix="/api/assessments", tags=["assessments"])
@@ -3536,13 +3596,21 @@ def load_assessment(assessment_id: int, session: Session) -> Assessment:
     return assessment
 
 
+def _path_may_exist(stored_path: str) -> bool:
+    try:
+        os.lstat(stored_path)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return True
+
+
 @router.post("", response_model=AssessmentOut, status_code=status.HTTP_201_CREATED)
 def create_assessment(
     payload: AssessmentCreate, session: Session = Depends(get_session)
 ) -> Assessment:
-    assessment = Assessment(
-        **payload.model_dump(), achievement_standards=[], level_cutoffs={}
-    )
+    assessment = Assessment(**payload.model_dump(mode="json"))
     session.add(assessment)
     session.commit()
     return assessment
@@ -3567,19 +3635,41 @@ def update_assessment(
     session: Session = Depends(get_session),
 ) -> Assessment:
     assessment = load_assessment(assessment_id, session)
+    changes = payload.model_dump(exclude_unset=True, mode="json")
 
-    if payload.title is not None:
-        assessment.title = payload.title
-    if payload.achievement_standards is not None:
-        assessment.achievement_standards = [
-            standard.model_dump() for standard in payload.achievement_standards
-        ]
-    if payload.level_cutoffs is not None:
-        assessment.level_cutoffs = payload.level_cutoffs
+    for field_name, value in changes.items():
+        setattr(assessment, field_name, value)
 
     session.commit()
     return assessment
+
+
+@router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_assessment(
+    assessment_id: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    assessment = load_assessment(assessment_id, session)
+    stored_paths = session.scalars(
+        select(SourceDocument.stored_path).where(
+            SourceDocument.assessment_id == assessment_id
+        )
+    )
+    if any(_path_may_exist(stored_path) for stored_path in stored_paths):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="연결된 로컬 문서 파일을 먼저 안전하게 정리해야 합니다.",
+        )
+
+    session.delete(assessment)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 ```
+
+삭제 전 연결 문서 경로는 `os.lstat` 한 번으로만 상태를 확인한다. 오직
+`FileNotFoundError`만 파일 없음으로 보아 데이터베이스 연쇄 삭제를 허용한다.
+파일, 디렉터리, 심볼릭 링크가 있거나 접근 거부와 잘못된 경로를 포함한 다른
+오류가 나면 고정된 409 응답으로 삭제를 막고 경로와 내부 오류를 내보내지 않는다.
 
 `backend/app/api/__init__.py`는 빈 파일로 만든다.
 

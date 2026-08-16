@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,43 @@ def _create(client, **overrides):
     }
     payload.update(overrides)
     return client.post("/api/assessments", json=payload)
+
+
+def _standard(**overrides):
+    standard = {
+        "id": "AS1",
+        "item_range": [1, 4],
+        "core_standard": "성취기준",
+        "levels": {"1": "시도", "2": "가능", "3": "정확"},
+    }
+    standard.update(overrides)
+    return standard
+
+
+def _submit_standard_change(client, operation, standard):
+    if operation == "create":
+        return _create(client, achievement_standards=[standard])
+    assessment_id = _create(client).json()["id"]
+    return client.patch(
+        f"/api/assessments/{assessment_id}",
+        json={"achievement_standards": [standard]},
+    )
+
+
+def _submit_level_mapping(client, operation, field_name, invalid_key):
+    if field_name == "level_cutoffs":
+        changes = {"level_cutoffs": {invalid_key: 0}}
+    else:
+        changes = {
+            "achievement_standards": [
+                _standard(levels={invalid_key: "잘못된 수준"})
+            ]
+        }
+
+    if operation == "create":
+        return _create(client, **changes)
+    assessment_id = _create(client).json()["id"]
+    return client.patch(f"/api/assessments/{assessment_id}", json=changes)
 
 
 def test_create_assessment_preserves_all_teacher_authored_fields(client):
@@ -92,6 +130,41 @@ def test_update_preserves_every_changed_teacher_authored_field(client):
 
     assert response.status_code == 200
     assert {key: response.json()[key] for key in changed} == changed
+    saved = client.get(f"/api/assessments/{created['id']}").json()
+    assert {key: saved[key] for key in changed} == changed
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize(
+    "standard",
+    [
+        _standard(unexpected="교사 원문"),
+        _standard(item_range=["1", 4]),
+        _standard(item_range=[True, 4]),
+    ],
+    ids=["extra-field", "string-item-range", "boolean-item-range"],
+)
+def test_create_and_update_reject_lossy_achievement_standard_input(
+    client, operation, standard
+):
+    response = _submit_standard_change(client, operation, standard)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize(
+    "field_name", ["level_cutoffs", "achievement_levels"]
+)
+@pytest.mark.parametrize("invalid_key", ["03", "4", "0", "-1"])
+def test_create_and_update_reject_level_keys_outside_the_closed_set(
+    client, operation, field_name, invalid_key
+):
+    response = _submit_level_mapping(
+        client, operation, field_name, invalid_key
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize("method", ["get", "patch", "delete"])
@@ -217,6 +290,85 @@ def test_delete_is_blocked_when_a_linked_local_file_exists(
         "detail": "연결된 로컬 문서 파일을 먼저 안전하게 정리해야 합니다."
     }
     assert Path(stored_file).read_bytes() == b"local source"
+    db_session.expire_all()
+    assert db_session.get(Assessment, assessment_id) is not None
+    assert db_session.get(SourceDocument, document.id) is not None
+
+
+def test_delete_blocks_every_local_path_state_other_than_missing(
+    client, db_session, tmp_path
+):
+    regular_file = tmp_path / "regular.pdf"
+    regular_file.write_bytes(b"source")
+    directory = tmp_path / "document-directory"
+    directory.mkdir()
+    dangling_link = tmp_path / "dangling.pdf"
+    dangling_link.symlink_to(tmp_path / "missing-target.pdf")
+    stored_paths = [
+        str(regular_file),
+        str(directory),
+        str(dangling_link),
+        "\0invalid-local-path",
+    ]
+
+    for stored_path in stored_paths:
+        assessment_id = _create(client).json()["id"]
+        document = SourceDocument(
+            assessment_id=assessment_id,
+            kind="rubric_table",
+            filename="원본.pdf",
+            stored_path=stored_path,
+            page_count=1,
+        )
+        db_session.add(document)
+        db_session.commit()
+
+        response = client.delete(f"/api/assessments/{assessment_id}")
+
+        assert response.status_code == 409
+        assert response.json() == {
+            "detail": "연결된 로컬 문서 파일을 먼저 안전하게 정리해야 합니다."
+        }
+        db_session.expire_all()
+        assert db_session.get(Assessment, assessment_id) is not None
+        assert db_session.get(SourceDocument, document.id) is not None
+
+
+def test_delete_keeps_database_and_file_reference_when_status_lookup_fails(
+    client, db_session, tmp_path, monkeypatch
+):
+    stored_file = tmp_path / "private-reference.pdf"
+    stored_file.write_bytes(b"teacher source")
+    assessment_id = _create(client).json()["id"]
+    document = SourceDocument(
+        assessment_id=assessment_id,
+        kind="rubric_table",
+        filename="원본.pdf",
+        stored_path=str(stored_file),
+        page_count=1,
+    )
+    db_session.add(document)
+    db_session.commit()
+
+    status_lookups = []
+
+    def deny_status(path, *args, **kwargs):
+        status_lookups.append(path)
+        raise PermissionError(f"private failure for {stored_file}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "stat", deny_status)
+        patch.setattr(os, "lstat", deny_status)
+        response = client.delete(f"/api/assessments/{assessment_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "연결된 로컬 문서 파일을 먼저 안전하게 정리해야 합니다."
+    }
+    assert str(stored_file) not in response.text
+    assert "private failure" not in response.text
+    assert len(status_lookups) == 1
+    assert stored_file.read_bytes() == b"teacher source"
     db_session.expire_all()
     assert db_session.get(Assessment, assessment_id) is not None
     assert db_session.get(SourceDocument, document.id) is not None

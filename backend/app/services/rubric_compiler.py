@@ -14,14 +14,19 @@ from typing import Any, Self
 from pydantic import TypeAdapter, ValidationError as PydanticValidationError
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.schemas.rubric import AchievementStandard, AssessmentMeta, Rubric
+from app.schemas.rubric import (
+    AchievementStandard,
+    AssessmentMeta,
+    LevelCutoffs,
+    Rubric,
+)
 from app.services.pdf_extract import PdfExtract
 from app.services.rubric_validator import validate_level_cutoffs, validate_rubric
 from app.services.rubric_warnings import Warning, detect_warnings
 
 
 MAX_ATTEMPTS = 2
-_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(dict[str, int])
+_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(LevelCutoffs)
 _CODE_FENCE = re.compile(
     r"\A```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```[ \t]*\Z",
     re.IGNORECASE | re.DOTALL,

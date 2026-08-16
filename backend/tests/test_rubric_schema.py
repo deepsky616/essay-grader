@@ -152,6 +152,105 @@ def test_nonblank_rubric_source_text_is_validated_without_normalizing_it():
     assert blank.aliases == [" 별칭 "]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "id": "AS1",
+            "item_range": [1, 1],
+            "core_standard": "기준",
+            "levels": {"1": "기초"},
+            "unexpected": "교사 원문",
+        },
+        {
+            "id": "AS1",
+            "item_range": ["1", 1],
+            "core_standard": "기준",
+            "levels": {"1": "기초"},
+        },
+        {
+            "id": "AS1",
+            "item_range": [True, 1],
+            "core_standard": "기준",
+            "levels": {"1": "기초"},
+        },
+        {
+            "id": 1,
+            "item_range": [1, 1],
+            "core_standard": "기준",
+            "levels": {"1": "기초"},
+        },
+        {
+            "id": "AS1",
+            "item_range": [1, 1],
+            "core_standard": True,
+            "levels": {"1": "기초"},
+        },
+        {
+            "id": "AS1",
+            "item_range": [1, 1],
+            "core_standard": "기준",
+            "levels": {1: "기초"},
+        },
+        {
+            "id": "AS1",
+            "item_range": [1, 1],
+            "core_standard": "기준",
+            "levels": {"1": 1},
+        },
+    ],
+    ids=[
+        "extra-field",
+        "string-item-range",
+        "boolean-item-range",
+        "integer-id",
+        "boolean-core-standard",
+        "integer-level-key",
+        "integer-level-description",
+    ],
+)
+def test_achievement_standard_rejects_lossy_input(payload):
+    with pytest.raises(ValidationError):
+        AchievementStandard.model_validate(payload)
+
+
+@pytest.mark.parametrize("invalid_key", ["03", "4", "0", "-1"])
+def test_achievement_standard_rejects_levels_outside_closed_set(invalid_key):
+    with pytest.raises(ValidationError):
+        AchievementStandard(
+            id="AS1",
+            item_range=[1, 1],
+            core_standard="기준",
+            levels={invalid_key: "설명"},
+        )
+
+
+@pytest.mark.parametrize(
+    "level_cutoffs",
+    [
+        {"03": 0},
+        {"4": 0},
+        {"0": 0},
+        {"-1": 0},
+        {1: 0},
+        {"1": "0"},
+        {"1": False},
+    ],
+)
+def test_rubric_rejects_lossy_or_unknown_level_cutoffs(level_cutoffs):
+    with pytest.raises(ValidationError):
+        Rubric(
+            assessment={
+                "title": "평가",
+                "subject": "수학",
+                "grade": 6,
+                "total_points": 2,
+            },
+            items=[_minimal_item()],
+            level_cutoffs=level_cutoffs,
+        )
+
+
 def test_rubric_round_trips_through_json():
     rubric = Rubric(
         assessment={"title": "수학 논술형", "subject": "수학", "grade": 6, "total_points": 2},

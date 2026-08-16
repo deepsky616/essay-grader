@@ -1,4 +1,4 @@
-from pathlib import Path
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -54,11 +54,13 @@ def _validate_cutoffs(total_points: int, level_cutoffs: dict[str, int]) -> None:
 
 
 def _path_may_exist(stored_path: str) -> bool:
-    path = Path(stored_path)
     try:
-        return path.exists() or path.is_symlink()
+        os.lstat(stored_path)
+    except FileNotFoundError:
+        return False
     except (OSError, ValueError):
         return True
+    return True
 
 
 @router.post("", response_model=AssessmentOut, status_code=status.HTTP_201_CREATED)

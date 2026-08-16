@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from app.providers.base import LLMProvider, LLMResponse
 from app.providers.gateway import TransmissionGateway
@@ -190,6 +191,61 @@ def test_invalid_authority_cutoffs_are_rejected_before_audit_or_provider_call(
 
     assert adapter.requests == []
     assert not audit_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("achievement_standards", "level_cutoffs"),
+    [
+        (
+            [
+                {
+                    "id": "AS1",
+                    "item_range": ["1", 2],
+                    "core_standard": "기준",
+                    "levels": {"1": "기초"},
+                }
+            ],
+            {"3": 4},
+        ),
+        (
+            [
+                {
+                    "id": "AS1",
+                    "item_range": [1, 2],
+                    "core_standard": "기준",
+                    "levels": {1: "기초"},
+                }
+            ],
+            {"3": 4},
+        ),
+        ([], {3: 4}),
+        ([], {"03": 4}),
+        ([], {"3": "4"}),
+        ([], {"3": True}),
+    ],
+    ids=[
+        "string-item-range",
+        "integer-standard-level-key",
+        "integer-cutoff-key",
+        "unknown-cutoff-key",
+        "string-cutoff",
+        "boolean-cutoff",
+    ],
+)
+def test_authority_rejects_lossy_teacher_canonical_input(
+    achievement_standards, level_cutoffs
+):
+    with pytest.raises(ValidationError):
+        RubricCompileAuthority(
+            assessment={
+                "title": "교사 평가명",
+                "subject": "수학",
+                "grade": 6,
+                "total_points": 4,
+            },
+            achievement_standards=achievement_standards,
+            level_cutoffs=level_cutoffs,
+        )
 
 
 def test_all_teacher_authority_fields_override_model_without_retry(extracts, authority):

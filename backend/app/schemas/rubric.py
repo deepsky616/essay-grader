@@ -7,15 +7,27 @@ app.services.rubric_validator 에 둔다. 둘을 섞으면 언어 모형 출력 
 
 import re
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+)
 
 
 CONDITION_PATTERN = re.compile(
     r"^(all_correct|none_correct|set_exact|set_partial|llm|manual"
     r"|partial:\d+|partial:>=\d+)$"
 )
+
+LEVEL_KEYS = frozenset({"1", "2", "3"})
+LevelKey = Literal["1", "2", "3"]
+LevelDescriptions = dict[LevelKey, StrictStr]
+LevelCutoffs = dict[LevelKey, StrictInt]
 
 
 def _require_nonblank(value: str) -> str:
@@ -161,10 +173,14 @@ class RubricItem(AnswerSpec):
 
 
 class AchievementStandard(BaseModel):
-    id: str
-    item_range: Annotated[list[int], Field(min_length=2, max_length=2)]
-    core_standard: str
-    levels: dict[str, str]
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr
+    item_range: Annotated[
+        list[StrictInt], Field(min_length=2, max_length=2)
+    ]
+    core_standard: StrictStr
+    levels: LevelDescriptions
 
     @field_validator("id", "core_standard")
     @classmethod
@@ -174,8 +190,8 @@ class AchievementStandard(BaseModel):
     @field_validator("levels")
     @classmethod
     def levels_must_not_contain_blank_text(
-        cls, values: dict[str, str]
-    ) -> dict[str, str]:
+        cls, values: LevelDescriptions
+    ) -> LevelDescriptions:
         if any(not key.strip() or not value.strip() for key, value in values.items()):
             raise ValueError("성취수준에 공백만 있는 키나 설명이 있습니다.")
         return values
@@ -197,4 +213,4 @@ class Rubric(BaseModel):
     assessment: AssessmentMeta
     achievement_standards: list[AchievementStandard] = Field(default_factory=list)
     items: list[RubricItem] = Field(min_length=1)
-    level_cutoffs: dict[str, int] = Field(default_factory=dict)
+    level_cutoffs: LevelCutoffs = Field(default_factory=dict)

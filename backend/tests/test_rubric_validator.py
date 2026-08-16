@@ -1,3 +1,5 @@
+import pytest
+
 from app.schemas.rubric import (
     AssessmentMeta,
     AchievementStandard,
@@ -9,7 +11,7 @@ from app.schemas.rubric import (
     ScoringRule,
     TableColumn,
 )
-from app.services.rubric_validator import validate_rubric
+from app.services.rubric_validator import validate_level_cutoffs, validate_rubric
 
 
 def _item(item_no: int, points: int, **kwargs) -> RubricItem:
@@ -101,6 +103,14 @@ def test_level_cutoffs_must_decrease():
     rubric.level_cutoffs = {"3": 10, "2": 15, "1": 0}
     errors = validate_rubric(rubric)
     assert any("컷오프" in error.message for error in errors)
+
+
+@pytest.mark.parametrize("invalid_key", ["03", "4", "0", "-1", 1])
+def test_level_cutoff_validator_rejects_keys_outside_closed_set(invalid_key):
+    errors = validate_level_cutoffs(20, {invalid_key: 0})
+
+    assert errors
+    assert errors[0].path == "level_cutoffs"
 
 
 def test_drawing_item_does_not_require_answer_candidates():

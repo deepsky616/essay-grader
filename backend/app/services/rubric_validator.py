@@ -7,7 +7,13 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from app.schemas.rubric import AnswerSpec, ItemType, Rubric, RubricItem
+from app.schemas.rubric import (
+    LEVEL_KEYS,
+    AnswerSpec,
+    ItemType,
+    Rubric,
+    RubricItem,
+)
 
 
 _DETERMINISTIC_CONDITIONS = frozenset(
@@ -159,13 +165,28 @@ def validate_level_cutoffs(
     if not level_cutoffs:
         return []
 
-    try:
-        pairs = sorted(
-            ((int(level), cut) for level, cut in level_cutoffs.items()),
-            reverse=True,
-        )
-    except ValueError:
-        return [ValidationError("level_cutoffs", "성취수준 키는 정수 문자열이어야 합니다.")]
+    if any(
+        type(level) is not str or level not in LEVEL_KEYS
+        for level in level_cutoffs
+    ):
+        return [
+            ValidationError(
+                "level_cutoffs",
+                "성취수준 키는 1, 2, 3 가운데 하나여야 합니다.",
+            )
+        ]
+    if any(type(cut) is not int for cut in level_cutoffs.values()):
+        return [
+            ValidationError(
+                "level_cutoffs",
+                "성취수준 경계값은 정수여야 합니다.",
+            )
+        ]
+
+    pairs = sorted(
+        ((int(level), cut) for level, cut in level_cutoffs.items()),
+        reverse=True,
+    )
 
     errors: list[ValidationError] = []
     previous_cut: int | None = None

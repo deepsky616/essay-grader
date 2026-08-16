@@ -4,12 +4,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictInt,
     field_validator,
     model_validator,
 )
 
-from app.schemas.rubric import AchievementStandard
+from app.schemas.rubric import AchievementStandard, LevelCutoffs
 
 
 def _require_nonblank(value: str) -> str:
@@ -26,7 +25,7 @@ class AssessmentCreate(BaseModel):
     grade: int = Field(ge=1, le=12, strict=True)
     total_points: int = Field(ge=1, strict=True)
     achievement_standards: list[AchievementStandard] = Field(default_factory=list)
-    level_cutoffs: dict[str, StrictInt] = Field(default_factory=dict)
+    level_cutoffs: LevelCutoffs = Field(default_factory=dict)
 
     @field_validator("title", "subject")
     @classmethod
@@ -42,7 +41,7 @@ class AssessmentUpdate(BaseModel):
     grade: int | None = Field(default=None, ge=1, le=12, strict=True)
     total_points: int | None = Field(default=None, ge=1, strict=True)
     achievement_standards: list[AchievementStandard] | None = None
-    level_cutoffs: dict[str, StrictInt] | None = None
+    level_cutoffs: LevelCutoffs | None = None
 
     @field_validator("title", "subject")
     @classmethod
@@ -70,6 +69,6 @@ class AssessmentOut(BaseModel):
     grade: int
     total_points: int
     achievement_standards: list[AchievementStandard]
-    level_cutoffs: dict[str, int]
+    level_cutoffs: LevelCutoffs
     status: str
     created_at: datetime
