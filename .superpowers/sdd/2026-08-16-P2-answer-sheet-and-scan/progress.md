@@ -34,3 +34,5 @@ Task 15: Ruling: 명렬표 이름은 전송 때마다 독립 세션으로 모든
 Task 15: complete (local fallback review clean, focused 35 passed, backend 595 passed; implementation commit cbab679)
 Task 16: Ruling: 포인터 좌표는 원본 답안지 화소로 바꾸고 이미지 경계에 고정하며, 화면에서 중복 문항과 식별정보 영역의 누락, 중복, 응답 영역 겹침을 먼저 막고 서버가 저장 및 배부용 파일 생성 때 다시 확인한다 — 화면 크기나 직접 API 요청이 식별정보 배제 경계를 우회하지 못하게 하기 위해서다 — 이 판단이 틀리면 실제 스캔 흔들림을 고려한 식별정보 영역 여백 안내와 경계 확장이 필요하다.
 Task 16: complete (local fallback review clean, focused backend 19 passed, backend 596 passed, frontend build and audit passed; implementation commit db979c5)
+Task 17: Ruling: 배치가 시작되면 올리기 당시 학급을 결과 표시의 기준으로 고정하고 상태 조회는 겹치지 않게 이어 간다. 이미 배정된 학생을 고르는 교사 수정은 유일성 오류로 막지 않고 같은 배치 안 두 제출의 학생을 한 트랜잭션에서 맞바꾼다 — 실제 오배정은 두 학생이 서로 뒤바뀐 형태가 흔하고 한쪽만 덮으면 다른 제출이 미배정되기 때문이다 — 이 판단이 틀리면 셋 이상이 순환해 어긋난 배정에는 여러 번의 맞바꾸기가 필요하다.
+Task 17: complete (local fallback review clean, focused scan API 13 passed, backend 596 passed, frontend build and audit passed, responsive browser check passed; implementation commit f646af9)
