@@ -266,6 +266,9 @@ export default function ReviewQueue() {
             미확정만 보기
           </label>
           <Link to={`/runs/${run}/accuracy`}>일치율 보고서</Link>
+          {progress?.complete && (
+            <Link to={`/runs/${run}/feedback`}>피드백과 내보내기</Link>
+          )}
         </div>
       </section>
 

@@ -286,3 +286,23 @@ export interface TotalsRow {
   pending: number;
   complete: boolean;
 }
+
+export interface FeedbackItemComment {
+  item_no: number;
+  score: number;
+  max: number;
+  comment: string;
+}
+
+export interface FeedbackRow {
+  id: number;
+  student_number: number;
+  student_name: string;
+  total_score: number;
+  level: string | null;
+  degraded: boolean;
+  stale: boolean;
+  item_comments: FeedbackItemComment[];
+  summary: string;
+  next_step: string;
+}

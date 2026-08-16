@@ -4,6 +4,7 @@ import type {
   Assessment,
   AssessmentInput,
   ClassroomInfo,
+  FeedbackRow,
   GradingRunStatus,
   ItemDetail,
   ItemScoreRow,
@@ -292,6 +293,23 @@ export const api = {
     request<{ students: TotalsRow[] }>(
       `/api/review/runs/${runId}/totals`,
     ),
+
+  generateFeedback: (runId: number) =>
+    request<{ generated: number; degraded: number }>(
+      `/api/feedback/runs/${runId}/generate`,
+      { method: "POST" },
+    ),
+
+  listFeedback: (runId: number) =>
+    request<{ feedbacks: FeedbackRow[] }>(
+      `/api/feedback/runs/${runId}`,
+    ),
+
+  feedbackHtmlUrl: (runId: number) =>
+    `/api/feedback/runs/${runId}/export.html`,
+
+  gradebookUrl: (runId: number) =>
+    `/api/feedback/runs/${runId}/export.xlsx`,
 
   getSettings: () => request<AppSettings>("/api/settings"),
 

@@ -30,7 +30,16 @@ def _generated(**overrides) -> GeneratedFeedback:
 
 def test_real_name_is_inserted_locally():
     html = render_one(_context(), _generated())
-    assert "김미래" in html
+    assert "김미래 학생은 뜻을 정확히 알아요." in html
+    assert "김미래 학생은 대칭의 뜻을 잘 이해하고 있어요." in html
+
+
+def test_summary_without_anonymous_subject_gets_local_subject():
+    html = render_one(
+        _context(),
+        _generated(summary="대칭의 뜻을 잘 이해하고 있어요."),
+    )
+    assert "김미래 학생은 대칭의 뜻을 잘 이해하고 있어요." in html
 
 
 def test_scores_and_level_appear_in_output():

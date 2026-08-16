@@ -28,7 +28,7 @@
         <tr>
           <td>{{ comment.item_no }}번</td>
           <td>{{ comment.score }} / {{ comment.max }}</td>
-          <td>{{ comment.comment }}</td>
+          <td>{{ personalize(comment.comment, context.student_name) }}</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -36,11 +36,11 @@
 
   <div class="summary">
     <h2>총평</h2>
-    <p>{{ context.student_name }} {{ generated.summary }}</p>
+    <p>{{ personalize(generated.summary, context.student_name, true) }}</p>
   </div>
 
   <div class="next-step">
     <h2>다음에 해볼 것</h2>
-    <p>{{ generated.next_step }}</p>
+    <p>{{ personalize(generated.next_step, context.student_name) }}</p>
   </div>
 </section>

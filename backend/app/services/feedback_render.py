@@ -18,12 +18,29 @@ _environment = Environment(
 )
 
 
+def personalize(
+    text: str,
+    student_name: str,
+    add_subject: bool = False,
+) -> str:
+    """익명 주어를 지역 학생 이름으로 바꾼다."""
+    if text.startswith("학생"):
+        return f"{student_name} 학생{text[2:]}"
+    if add_subject:
+        return f"{student_name} 학생은 {text}"
+    return text
+
+
 def render_one(
     context: FeedbackContext,
     generated: GeneratedFeedback,
 ) -> str:
     template = _environment.get_template("feedback.html.j2")
-    return template.render(context=context, generated=generated)
+    return template.render(
+        context=context,
+        generated=generated,
+        personalize=personalize,
+    )
 
 
 def render_all(

@@ -80,7 +80,12 @@ export default function AccuracyReport() {
           <h1>채점 제안 일치율 보고서</h1>
           <p>교사가 확정한 점수와 채점 제안이 얼마나 일치했는지 보여 줍니다.</p>
         </div>
-        <Link to={`/runs/${run}/review`}>검토 화면으로 돌아가기</Link>
+        <div className="form-actions">
+          <Link to={`/runs/${run}/review`}>검토 화면으로 돌아가기</Link>
+          {totals.length > 0 && totals.every((row) => row.complete) && (
+            <Link to={`/runs/${run}/feedback`}>피드백과 내보내기</Link>
+          )}
+        </div>
       </div>
 
       <section

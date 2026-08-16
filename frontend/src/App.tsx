@@ -4,6 +4,7 @@ import AccuracyReport from "./pages/AccuracyReport";
 import AssessmentList from "./pages/AssessmentList";
 import AssessmentNew from "./pages/AssessmentNew";
 import ClassroomSetup from "./pages/ClassroomSetup";
+import Feedback from "./pages/Feedback";
 import GradingRun from "./pages/GradingRun";
 import RegionEditor from "./pages/RegionEditor";
 import ReviewQueue from "./pages/ReviewQueue";
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/batches/:batchId/grading" element={<GradingRun />} />
         <Route path="/runs/:runId/review" element={<ReviewQueue />} />
         <Route path="/runs/:runId/accuracy" element={<AccuracyReport />} />
+        <Route path="/runs/:runId/feedback" element={<Feedback />} />
         <Route path="/classrooms" element={<ClassroomSetup />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
