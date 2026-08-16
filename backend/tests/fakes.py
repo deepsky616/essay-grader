@@ -1,8 +1,28 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
+
 from app.providers.base import LLMOutboundRequest, LLMProvider, LLMRequest, LLMResponse
 from app.providers.gateway import OutboundRequest, TransmissionGateway
+
+
+class FakeLocalOCR:
+    """미리 넣은 로컬 인식 결과를 순서대로 돌려주는 시험 대역."""
+
+    def __init__(self, results: list[str]) -> None:
+        if type(results) is not list or not all(type(item) is str for item in results):
+            raise ValueError("시험용 로컬 인식 결과가 올바르지 않습니다.")
+        self._results = list(results)
+        self.calls: list[np.ndarray] = []
+
+    def recognize(self, image: np.ndarray) -> str:
+        copied = np.array(image, copy=True)
+        copied.setflags(write=False)
+        self.calls.append(copied)
+        if not self._results:
+            return ""
+        return self._results.pop(0)
 
 
 class FakeKeyring:
