@@ -105,6 +105,8 @@ Task 13: Ruling: 현재 API 키와 그 키에 묶인 모형은 같은 설정 잠
 Task 13: complete (local fallback review clean, backend tests 329 passed; implementation commit 32dd567)
 Task 14: Ruling: 알려진 이동 경로 취약점 범위인 React Router 6 계열 대신 공개 구성 요소 호환 빌드를 통과한 7.18 이상을 쓰고, 빌드 산출물은 제외하되 잠금 파일을 추적한다 — 의존성 감사와 재현 가능한 소스 정본을 함께 지키기 위해서다 — 이 판단이 틀리면 뒤 화면의 라우터 동작 조정과 배포 전 빌드가 필요하다.
 Task 14: complete (local fallback review clean, frontend build passed, npm audit 0 vulnerabilities; implementation commit f8cb96f)
+Task 15: Ruling: API 키와 현재 키에 묶인 모형을 평가 생성 전에 확인하고, 평가 생성 뒤 부분 실패 때 같은 평가 번호와 성공한 문서 종류를 기억해 이어서 처리한다. 설정 화면은 키체인과 암호화 대체 저장의 실제 계약만 안내한다 — 빈 평가와 중복 문서, 잘못된 비밀 저장 안내를 줄이기 위해서다 — 이 판단이 틀리면 설정을 나중에 준비하는 흐름과 화면을 벗어난 뒤 이어서 처리가 제한된다.
+Task 15: complete (local fallback review clean, frontend build passed, npm audit 0 vulnerabilities; implementation commit 5a27ddd)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록

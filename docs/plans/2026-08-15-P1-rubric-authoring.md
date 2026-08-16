@@ -4664,6 +4664,10 @@ git commit -m "feat: 프런트엔드 스캐폴딩과 API 클라이언트"
 
 ## Task 15: 평가 생성 화면
 
+**설계 참조:** 1절, 2절, 4절, 5절, 7.7절, 8절, 10절, 11절, 12절. 평가와 PDF는 로컬 API에만 저장하고, 키 원문은 화면 상태에서 저장 뒤 즉시 비우며, 학생 자료 처리 전 정책 확인 상태를 분명하게 보여 준다.
+
+> **구현 계약 보강:** 새 평가 제출은 API 키와 현재 키에 묶인 모형이 준비됐는지 먼저 확인한 뒤 평가를 만든다. 평가 생성 뒤 일부 문서 업로드나 컴파일이 실패하면 같은 화면 상태에서 이미 만든 평가와 성공한 문서 종류를 기억해 중복 평가를 만들지 않고 이어서 처리한다. 목록 화면은 불러오는 중, 빈 목록, 실패를 구분한다. 설정 화면은 키체인 우선, 명시적 암호화 키가 있을 때만 암호화 파일 대체 저장, 그 밖의 저장 거절이라는 실제 백엔드 계약을 안내한다.
+
 **Files:**
 - Create: `frontend/src/pages/AssessmentList.tsx`
 - Create: `frontend/src/pages/AssessmentNew.tsx`
@@ -5044,6 +5048,8 @@ export default function Settings() {
 
 Run: `cd frontend && npm run build`
 Expected: 빌드 성공
+
+추가 검사: `npm audit --audit-level=moderate`가 취약점 없이 끝나야 한다.
 
 - [ ] **Step 5: 커밋**
 
