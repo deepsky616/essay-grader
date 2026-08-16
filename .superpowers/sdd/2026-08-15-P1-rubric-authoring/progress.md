@@ -91,4 +91,6 @@ Task 9: blocked after fix round 5/5 — 최종 독립 검토에서 합성 손잡
 Task 9: Ruling: 사용자가 추천안대로 계속 진행하도록 명시적으로 허용했으므로 고침 한도 예외로 6차를 수행한다. 정확한 self 자료형, 최초 한 번 초기화, 객체 정체성 기반 상태 결합을 함께 강제한다 — 하나라도 빠지면 정상 손잡이 상태가 다시 묶일 수 있기 때문이다 — 이 판단이 틀리면 합성 손잡이의 상태 수명 관리 방식을 다시 설계해야 한다.
 Task 9: fix round 6 exception (5 addressed, 0 open — 정확한 self와 최초 한 번 초기화 및 정체성 상태표, 필수 문자열 공백 검증, 기호 경고 범위, 보수적 모델 안전 목록, P1·P3·P5 단일 손잡이와 익명 표식 계획을 해결; commits fa40fff..d9ef6c6)
 Task 9: fix round 7 exception (0 addressed, 4 open — 콜백이 손잡이를 되잡을 때 정체성 상태표가 강한 순환 뿌리가 되는 수거 문제, 실제 수거·오염·동시 초기화 회귀 시험 부족, P1 스키마와 경고 예시 누락, P1 컴파일러 예시의 옛 정본 계약; review f4e77d4)
+Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 슬롯 강한 상태와 전역표 두 약한 참조, 실제 수거·경쟁·정체성 재사용 시험, P1 작업 3·5·8·9·13 계획 계약 갱신; commits f4e77d4..8f07827)
+Task 9: complete (commits 0ad7480..8f07827, final review clean, backend tests 200 passed)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
