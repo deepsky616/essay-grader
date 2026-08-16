@@ -53,6 +53,13 @@ def test_parse_rejects_value_outside_candidates():
     assert result.values == []
 
 
+def test_parse_allows_table_cell_made_only_from_candidates():
+    raw = json.dumps({"values": ["가|나"], "confidence": 0.93}, ensure_ascii=False)
+    result = parse_classify_output(raw, 1, candidates=["가", "나", "다"])
+    assert result.status == RecognitionStatus.OK
+    assert result.values == ["가|나"]
+
+
 def test_parse_none_of_above():
     raw = json.dumps({"values": [], "status": "none_of_above", "confidence": 0.8})
     result = parse_classify_output(raw, slot_count=1)

@@ -170,7 +170,17 @@ def parse_classify_output(
             RecognitionKind.CLASSIFY,
             "분류 응답 상태와 값이 서로 맞지 않습니다.",
         )
-    if candidates is not None and any(value not in candidates for value in values):
+    def is_candidate_value(value: str) -> bool:
+        parts = value.split("|")
+        return (
+            bool(parts)
+            and len(set(parts)) == len(parts)
+            and all(part in candidates for part in parts)
+        )
+
+    if candidates is not None and any(
+        not is_candidate_value(value) for value in values
+    ):
         return _error(
             RecognitionKind.CLASSIFY,
             "분류 결과에 후보 목록 밖의 값이 있습니다.",
