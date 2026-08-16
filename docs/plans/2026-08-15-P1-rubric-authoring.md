@@ -3713,6 +3713,19 @@ git commit -m "feat: 평가 CRUD API"
 
 ## Task 12: 문서 업로드 API
 
+**설계 참조:** 1절, 2절, 4절, 5절, 10절, 11절, 12절. 원본 PDF와 저장 경로는 로컬에만 두고 외부 전송을 만들지 않는다.
+
+> **구현 계약 보강:** 아래 최초 초안의 `read()` 전체 적재, `%PDF` 머리말만 확인, 곧바로 최종 경로 쓰기는 사용하지 않는다. 실제 구현은 다음 닫힌 저장 계약을 정본으로 삼는다.
+>
+> - 허용 종류는 `rubric_table`, `example_answer`, `answer_sheet`의 닫힌 집합이다. 오류에 사용자가 보낸 종류나 경로를 되비추지 않는다.
+> - 입력은 1 MiB 조각으로 읽고 전체 25 MiB를 넘기기 전에 413으로 중단한다.
+> - 업로드 폴더는 실제 디렉터리여야 하며 심볼릭 링크를 거절한다. 무작위 임시 파일은 배타 생성과 권한 600을 사용한다.
+> - PyMuPDF가 실제 PDF로 열 수 있고 쪽이 하나 이상이며 암호화되지 않은 경우만 허용한다.
+> - 검증을 마친 임시 파일만 무작위 최종 이름으로 원자 이동하고 디렉터리를 동기화한다. 원래 파일 이름은 표시용 basename으로만 저장한다.
+> - 파일 쓰기, PDF 해석, 원자 이동, 데이터베이스 커밋이 실패하면 생성한 임시 파일과 최종 파일을 정리하고 세션을 되돌린다. 내부 오류와 로컬 경로는 응답에 넣지 않는다.
+> - 목록 응답에는 `stored_path`를 포함하지 않는다. 평가가 없으면 평가 API와 같은 고정 404를 반환한다.
+> - `backend/tests/test_api_documents.py`는 정상 저장과 목록 외에 잘못된 종류, 깨진·빈·암호화 PDF, 크기 제한, 경로 탈출 파일 이름, 데이터베이스 실패 정리, 업로드 폴더 링크, 쓰기 실패 정리를 검증한다.
+
 **Files:**
 - Create: `backend/app/api/documents.py`
 - Modify: `backend/app/main.py`
@@ -3791,32 +3804,11 @@ Expected: FAIL — 404
 
 - [ ] **Step 3: `api/documents.py` 작성**
 
+구현은 다음 공개 흐름을 유지하고, 세부 저장 함수는 위의 보강 계약을 각각 한 경계로 구현한다.
+
 ```python
-import uuid
-
-import fitz
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from app.api.assessments import load_assessment
-from app.config import settings
-from app.db import get_session
-from app.models.document import SourceDocument
-
-router = APIRouter(prefix="/api/assessments/{assessment_id}/documents", tags=["documents"])
-
-ALLOWED_KINDS = {"rubric_table", "example_answer", "answer_sheet"}
-
-
-class DocumentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    kind: str
-    filename: str
-    page_count: int
+ALLOWED_KINDS = frozenset({"rubric_table", "example_answer", "answer_sheet"})
+MAX_PDF_BYTES = 25 * 1024 * 1024
 
 
 @router.post("", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -3827,46 +3819,36 @@ def upload_document(
     session: Session = Depends(get_session),
 ) -> SourceDocument:
     load_assessment(assessment_id, session)
-
-    if kind not in ALLOWED_KINDS:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"알 수 없는 문서 종류입니다: {kind}. 허용: {', '.join(sorted(ALLOWED_KINDS))}",
+    validate_kind_without_echo(kind)
+    filename = display_only_basename(file.filename)
+    directory = require_real_upload_directory()
+    temporary = stream_to_private_bounded_file(file, directory)
+    try:
+        page_count = inspect_unencrypted_pdf(temporary)
+        final_path = publish_atomically(temporary, directory)
+        return commit_document_or_remove_file(
+            session=session,
+            assessment_id=assessment_id,
+            kind=kind,
+            filename=filename,
+            stored_path=final_path,
+            page_count=page_count,
         )
-
-    content = file.file.read()
-    if not content.startswith(b"%PDF"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "PDF 파일만 올릴 수 있습니다.")
-
-    stored_path = settings.uploads_dir() / f"{uuid.uuid4().hex}.pdf"
-    stored_path.write_bytes(content)
-
-    with fitz.open(stored_path) as document:
-        page_count = document.page_count
-
-    record = SourceDocument(
-        assessment_id=assessment_id,
-        kind=kind,
-        filename=file.filename or "upload.pdf",
-        stored_path=str(stored_path),
-        page_count=page_count,
-    )
-    session.add(record)
-    session.commit()
-    return record
+    except Exception:
+        remove_only_generated_paths(temporary)
+        raise
 
 
 @router.get("", response_model=list[DocumentOut])
 def list_documents(
-    assessment_id: int, session: Session = Depends(get_session)
+    assessment_id: int,
+    session: Session = Depends(get_session),
 ) -> list[SourceDocument]:
     load_assessment(assessment_id, session)
-    return list(
-        session.scalars(
-            select(SourceDocument).where(SourceDocument.assessment_id == assessment_id)
-        )
-    )
+    return ordered_local_document_metadata(session, assessment_id)
 ```
+
+위 이름은 경계의 뜻을 보여 주는 계획 표기다. 실제 함수 이름은 `_upload_directory`, `_stream_to_private_file`, `_inspect_pdf`, `_publish_file`이며 모든 실패 응답은 고정 문구를 사용한다.
 
 - [ ] **Step 4: `main.py` 에 라우터 등록**
 
@@ -3879,7 +3861,7 @@ def list_documents(
 - [ ] **Step 5: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_api_documents.py -v`
-Expected: PASS (4 tests)
+Expected: PASS (정상 흐름과 안전 실패 경계를 포함한 전체 테스트)
 
 - [ ] **Step 6: 커밋**
 
