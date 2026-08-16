@@ -6,6 +6,7 @@ from app.models.document import SourceDocument
 from app.models.grading import GradingRun, ItemScore
 from app.models.job import Job
 from app.models.rubric import RubricDraft
+from app.models.review import ScoreRevision
 from app.models.scan import ItemResponse, PageImage, ScanBatch, Submission
 from app.models.sheet_template import RegionSpec, SheetTemplate
 
@@ -27,4 +28,5 @@ __all__ = [
     "ItemResponse",
     "GradingRun",
     "ItemScore",
+    "ScoreRevision",
 ]

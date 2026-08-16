@@ -55,3 +55,93 @@ def client(engine, db_session):
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db_session
     return TestClient(app)
+
+
+@pytest.fixture
+def graded_setup(db_session):
+    """확정 대기 상태인 채점 결과 한 벌을 만든다."""
+    from app.models.assessment import Assessment
+    from app.models.classroom import Classroom, Student
+    from app.models.grading import GradingRun, ItemScore
+    from app.models.scan import ItemResponse, ScanBatch, Submission
+
+    assessment = Assessment(title="가", subject="수학", grade=6, total_points=4)
+    classroom = Classroom(name="6-3")
+    classroom.students = [
+        Student(number=1, name="김미래"),
+        Student(number=2, name="박균형"),
+    ]
+    db_session.add_all([assessment, classroom])
+    db_session.commit()
+
+    batch = ScanBatch(
+        assessment_id=assessment.id,
+        classroom_id=classroom.id,
+        stored_path="/tmp/s.pdf",
+        status="ready",
+    )
+    db_session.add(batch)
+    db_session.commit()
+
+    run = GradingRun(batch_id=batch.id, status="succeeded")
+    db_session.add(run)
+    db_session.commit()
+
+    scores = []
+    for index, student in enumerate(classroom.students):
+        submission = Submission(
+            batch_id=batch.id,
+            student_id=student.id,
+            page_start=index,
+            page_end=index + 1,
+            assignment_status="confirmed",
+        )
+        db_session.add(submission)
+        db_session.commit()
+
+        db_session.add(
+            ItemResponse(
+                submission_id=submission.id,
+                item_no=1,
+                crop_path=f"/tmp/c{index}.png",
+            )
+        )
+        scores.extend(
+            [
+                ItemScore(
+                    run_id=run.id,
+                    submission_id=submission.id,
+                    item_no=1,
+                    proposed_score=2,
+                    matched_criterion="둘 다 정확",
+                    evidence="선대칭, 점대칭",
+                    reason="정답 2/2",
+                    confidence=0.96,
+                    route="auto",
+                ),
+                ItemScore(
+                    run_id=run.id,
+                    submission_id=submission.id,
+                    item_no=2,
+                    proposed_score=None,
+                    reason="작도 문항",
+                    route="manual",
+                ),
+            ]
+        )
+    db_session.add_all(scores)
+    db_session.commit()
+
+    return {
+        "assessment": assessment,
+        "classroom": classroom,
+        "batch": batch,
+        "run": run,
+    }
+
+
+@pytest.fixture
+def item_score(graded_setup, db_session):
+    from app.models.grading import ItemScore
+
+    return db_session.query(ItemScore).first()
