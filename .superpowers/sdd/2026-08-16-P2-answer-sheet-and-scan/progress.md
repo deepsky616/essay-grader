@@ -24,3 +24,5 @@ Task 10: Ruling: 설계 문서의 소유 관계를 외래 키와 삭제 규칙�
 Task 10: complete (local fallback review clean, focused 21 passed, backend 525 passed; implementation commit 2d95bcf)
 Task 11: Ruling: 모든 입력 계약과 식별정보 겹침을 처리 전에 검사하고, 정합과 쪽 수열 검증을 이름 인식과 크롭보다 앞에 둔다. 급지 또는 정합 실패는 부분 학생 결과 없이 끝내지만 로컬 이름 인식 불가는 해당 학생만 검토 상태로 남긴다 — 배정이 밀린 크롭을 만들지 않으면서 읽지 못한 이름 때문에 답안 본문까지 버리지 않기 위해서다 — 이 판단이 틀리면 특징점만 쓰는 기존 양식의 여러 쪽 구분 임계값을 현장 표본으로 다시 조정해야 한다.
 Task 11: complete (local fallback review clean, focused 18 passed, backend 543 passed; implementation commit cee89c2)
+Task 12: Ruling: 명렬표 붙여넣기와 학급 생성 양쪽에서 학생 수, 이름, 양의 번호와 중복을 검사하고, 잘못된 줄 오류에는 원문 이름을 되돌려 주지 않는다. 학생 수정은 경로의 학급 소속을 함께 확인한다 — 민감한 이름이 오류 응답에 복제되거나 다른 학급 학생이 잘못 수정되는 일을 막기 위해서다 — 이 판단이 틀리면 한 학급 500명 제한을 쓰는 특수 운영은 별도 가져오기 경로가 필요하다.
+Task 12: complete (local fallback review clean, focused 15 passed, backend 558 passed; implementation commit ecd51e1)
