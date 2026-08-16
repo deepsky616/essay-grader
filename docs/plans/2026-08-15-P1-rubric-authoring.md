@@ -4260,6 +4260,10 @@ git commit -m "feat: 루브릭 컴파일·수정·확정 API"
 
 ## Task 14: 프런트엔드 스캐폴딩과 타입
 
+**설계 참조:** 1절, 2절, 5절, 6절, 8절, 10절, 11절, 12절. 프런트는 로컬 FastAPI만 호출하고 비밀값이나 원문 저장 경로를 자료형과 화면 상태에 넣지 않는다.
+
+> **구현 계약 보강:** 프런트 자료형은 백엔드의 닫힌 문항 종류, 1·2·3 수준 키, 두 정수 문항 범위, 문서 종류, 경고 경로, 정책 확인 시각까지 반영한다. API 손잡이는 오류 본문 전체를 문자열로 바꾸지 않고 허용된 메시지만 표시하며, 204 응답도 안전하게 처리한다. 빌드 산출물과 타입스크립트 증분 자료는 다시 만들 수 있으므로 저장소에서 제외하고 `package-lock.json`으로 의존성을 재현한다.
+
 **Files:**
 - Create: `frontend/package.json`
 - Create: `frontend/vite.config.ts`
@@ -4285,7 +4289,7 @@ git commit -m "feat: 루브릭 컴파일·수정·확정 API"
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -4646,6 +4650,8 @@ export default function Settings() {
 
 Run: `cd frontend && npm install && npm run build`
 Expected: 타입 오류 없이 빌드 성공
+
+추가 검사: `npm audit --audit-level=moderate`가 취약점 없이 끝나야 한다. 최초 계획의 라우터 6 계열은 알려진 이동 경로 취약점 범위에 들어가므로 공개 API 호환 빌드를 확인한 라우터 7.18 이상을 쓴다.
 
 - [ ] **Step 10: 커밋**
 
