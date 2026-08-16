@@ -99,3 +99,7 @@ Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태�
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
 Task 10: verification — focused 14 passed, backend 209 passed, compileall passed, git diff checks passed
+Task 11: Ruling: 연결된 `SourceDocument.stored_path`에 실제 파일이나 심볼릭 링크가 있거나 경로 상태를 안전하게 확인할 수 없으면 평가 삭제를 409로 막는다. 작업 12 계획에는 업로드와 행 저장만 있고 파일 정리 서비스 계약이 없어, 지금 경로를 믿고 직접 지우면 범위를 앞지르고 사용자 파일을 잘못 지울 수 있기 때문이다. 파일이 이미 없을 때만 평가와 연관 행을 데이터베이스 연쇄 삭제한다 — 이 판단이 틀리면 실제 업로드 뒤 평가를 삭제할 수 없고, 작업 12 이후 전용 저장 서비스가 파일 정리와 데이터베이스 삭제를 보상 가능한 하나의 흐름으로 묶어야 한다.
+Task 11: start base b89b3ca — 작업 10 최종 승인 머리와 깨끗한 작업 나무 확인
+Task 11: implementation commit cd491fa — 평가 만들기·최신순 목록·단건 조회·교사 정본 여섯 칸 수정·삭제 API, 엄격 입력 스키마, 공용 수준 경계값 검증, 고정 404·409·422 오류, 실제 파일이 있는 평가 삭제 차단, 누적 라우터 등록
+Task 11: verification — focused 24 passed, backend 233 passed, compileall passed, git diff checks passed
