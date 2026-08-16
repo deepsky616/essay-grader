@@ -2,7 +2,17 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from app.api import assessments, classrooms, documents, grading, jobs, rubrics, scans, templates
+from app.api import (
+    assessments,
+    classrooms,
+    documents,
+    grading,
+    jobs,
+    review,
+    rubrics,
+    scans,
+    templates,
+)
 from app.api import settings as settings_api
 from app.config import settings
 from app.spa_static import SPAStaticFiles
@@ -20,6 +30,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     app.include_router(templates.router)
     app.include_router(scans.router)
     app.include_router(grading.router)
+    app.include_router(review.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

@@ -22,6 +22,10 @@ class ScoreRevision(Base, TimestampMixin):
             name="ck_score_revisions_source",
         ),
         CheckConstraint(
+            "actor = 'local_teacher'",
+            name="ck_score_revisions_actor",
+        ),
+        CheckConstraint(
             "note IS NULL OR length(trim(note)) BETWEEN 1 AND 4000",
             name="ck_score_revisions_note",
         ),
@@ -36,4 +40,7 @@ class ScoreRevision(Base, TimestampMixin):
     previous_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     new_score: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(30), nullable=False)
+    actor: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="local_teacher"
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)

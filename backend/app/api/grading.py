@@ -1,7 +1,4 @@
 import math
-import os
-from pathlib import Path
-import stat
 from threading import RLock
 from typing import Annotated, Any, Literal
 
@@ -41,6 +38,7 @@ from app.services.grading_pipeline import (
     grade_submission,
 )
 from app.services.rubric_validator import validate_rubric
+from app.services.safe_files import read_safe_regular_file
 
 
 router = APIRouter(prefix="/api/grading", tags=["grading"])
@@ -206,48 +204,14 @@ def _assert_ready_to_grade(
 
 
 def _safe_crop_bytes(raw_path: str) -> bytes:
-    path = Path(raw_path)
-    root = settings.data_dir / "batches"
-    descriptor: int | None = None
     try:
-        root_meta = os.lstat(root)
-        path_meta = os.lstat(path)
-        resolved_root = root.resolve(strict=True)
-        resolved_parent = path.parent.resolve(strict=True)
-        if (
-            not stat.S_ISDIR(root_meta.st_mode)
-            or stat.S_ISLNK(root_meta.st_mode)
-            or not stat.S_ISREG(path_meta.st_mode)
-            or stat.S_ISLNK(path_meta.st_mode)
-            or not resolved_parent.is_relative_to(resolved_root)
-            or not 1 <= path_meta.st_size <= MAX_CROP_BYTES
-        ):
-            raise OSError
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        descriptor = os.open(path, flags)
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_ino != path_meta.st_ino
-            or opened.st_dev != path_meta.st_dev
-            or opened.st_size != path_meta.st_size
-        ):
-            raise OSError
-        chunks: list[bytes] = []
-        remaining = opened.st_size
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
-            if not chunk:
-                raise OSError
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
-    except OSError:
+        return read_safe_regular_file(
+            raw_path,
+            root=settings.data_dir / "batches",
+            max_bytes=MAX_CROP_BYTES,
+        )
+    except RuntimeError:
         raise RuntimeError("지역 문항 크롭을 안전하게 읽지 못했습니다.") from None
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
 
 
 def _validate_scored_items(

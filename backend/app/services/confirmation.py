@@ -106,12 +106,16 @@ def bulk_accept_auto(session: Session, run_id: int) -> int:
     return len(candidates)
 
 
-def submission_total(session: Session, submission_id: int) -> SubmissionTotal:
-    scores = session.scalars(
-        select(ItemScore)
-        .where(ItemScore.submission_id == submission_id)
-        .order_by(ItemScore.id)
-    ).all()
+def submission_total(
+    session: Session,
+    submission_id: int,
+    *,
+    run_id: int | None = None,
+) -> SubmissionTotal:
+    query = select(ItemScore).where(ItemScore.submission_id == submission_id)
+    if run_id is not None:
+        query = query.where(ItemScore.run_id == run_id)
+    scores = session.scalars(query.order_by(ItemScore.id)).all()
     confirmed_scores = [score for score in scores if score.confirmed]
     return SubmissionTotal(
         points=sum(score.final_score or 0 for score in confirmed_scores),

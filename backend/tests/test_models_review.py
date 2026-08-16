@@ -36,7 +36,12 @@ def test_revision_allows_null_previous_score(db_session, item_score):
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("previous_score", -1), ("new_score", -1), ("source", "unknown")],
+    [
+        ("previous_score", -1),
+        ("new_score", -1),
+        ("source", "unknown"),
+        ("actor", "remote_user"),
+    ],
 )
 def test_revision_rejects_invalid_audit_values(
     db_session, item_score, field, value
