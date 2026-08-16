@@ -12,7 +12,8 @@ from app.models.classroom import Student
 from app.models.grading import GradingRun, ItemScore
 from app.models.review import ScoreRevision
 from app.models.rubric import RubricDraft
-from app.models.scan import ItemResponse, ScanBatch, Submission
+from app.models.scan import ItemResponse, PageImage, ScanBatch, Submission
+from app.models.sheet_template import RegionSpec, SheetTemplate
 from app.schemas.rubric import Rubric, RubricItem
 from app.services.accuracy import compute_accuracy
 from app.services.confirmation import (
@@ -150,6 +151,30 @@ def _score_row(score: ItemScore, session: Session) -> dict[str, Any]:
         "recognized_raw": score.recognized_raw,
         "part_scores": dict(score.part_scores),
     }
+
+
+def _safe_png_response(raw_path: str) -> Response:
+    try:
+        content = read_safe_regular_file(
+            raw_path,
+            root=settings.data_dir / "batches",
+            max_bytes=MAX_REVIEW_IMAGE_BYTES,
+        )
+    except RuntimeError:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "검토 이미지를 안전하게 읽을 수 없습니다.",
+        ) from None
+    if not content.startswith(PNG_SIGNATURE):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "검토 이미지 형식이 올바르지 않습니다.",
+        )
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/runs/{run_id}/queue")
@@ -292,27 +317,54 @@ def get_crop(
             status.HTTP_404_NOT_FOUND,
             "문항 크롭 이미지를 찾을 수 없습니다.",
         )
-    try:
-        content = read_safe_regular_file(
-            response_row.crop_path,
-            root=settings.data_dir / "batches",
-            max_bytes=MAX_REVIEW_IMAGE_BYTES,
-        )
-    except RuntimeError:
+    return _safe_png_response(response_row.crop_path)
+
+
+@router.get("/scores/{score_id}/page")
+def get_full_page(
+    score_id: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    score = _load_score(score_id, session)
+    run = _load_run(score.run_id, session)
+    batch = session.get(ScanBatch, run.batch_id)
+    if batch is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            "문항 크롭 이미지를 안전하게 읽을 수 없습니다.",
-        ) from None
-    if not content.startswith(PNG_SIGNATURE):
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "문항 크롭 이미지 형식이 올바르지 않습니다.",
+            "전체 페이지 이미지를 찾을 수 없습니다.",
         )
-    return Response(
-        content=content,
-        media_type="image/png",
-        headers={"Cache-Control": "no-store"},
+    template = session.scalar(
+        select(SheetTemplate).where(
+            SheetTemplate.assessment_id == batch.assessment_id
+        )
     )
+    region = (
+        session.scalar(
+            select(RegionSpec).where(
+                RegionSpec.template_id == template.id,
+                RegionSpec.region_type == "response",
+                RegionSpec.item_no == score.item_no,
+            )
+        )
+        if template is not None
+        else None
+    )
+    page = (
+        session.scalar(
+            select(PageImage).where(
+                PageImage.submission_id == score.submission_id,
+                PageImage.page_no == region.page_no,
+            )
+        )
+        if region is not None
+        else None
+    )
+    if page is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "전체 페이지 이미지를 찾을 수 없습니다.",
+        )
+    return _safe_png_response(page.aligned_path)
 
 
 @router.post("/runs/{run_id}/bulk-accept")

@@ -3,7 +3,8 @@ import pytest
 from app.config import settings
 from app.models.grading import GradingRun, ItemScore
 from app.models.rubric import RubricDraft
-from app.models.scan import ItemResponse
+from app.models.scan import ItemResponse, PageImage
+from app.models.sheet_template import RegionSpec, SheetTemplate
 
 
 @pytest.fixture
@@ -263,6 +264,47 @@ def test_crop_image_is_served_from_batch_storage(
     )
 
     result = client.get(f"/api/review/scores/{score.id}/crop")
+    assert result.status_code == 200
+    assert result.headers["content-type"] == "image/png"
+
+
+def test_full_page_image_is_served_for_item_region(
+    with_rubric, client, db_session
+):
+    page = settings.data_dir / "batches" / "1" / "page.png"
+    page.parent.mkdir(parents=True)
+    page.write_bytes(b"\x89PNG\r\n\x1a\nfull-page")
+    template = SheetTemplate(
+        assessment_id=with_rubric["assessment"].id,
+        page_count=1,
+    )
+    db_session.add(template)
+    db_session.commit()
+    db_session.add(
+        RegionSpec(
+            template_id=template.id,
+            region_type="response",
+            item_no=1,
+            page_no=1,
+            x=0,
+            y=0,
+            width=100,
+            height=100,
+        )
+    )
+    score = db_session.query(ItemScore).filter_by(item_no=1).first()
+    db_session.add(
+        PageImage(
+            submission_id=score.submission_id,
+            page_no=1,
+            aligned_path=str(page),
+            ink_path=str(page),
+            registration_quality=1.0,
+        )
+    )
+    db_session.commit()
+
+    result = client.get(f"/api/review/scores/{score.id}/page")
     assert result.status_code == 200
     assert result.headers["content-type"] == "image/png"
 

@@ -4,11 +4,15 @@ import type {
   AssessmentInput,
   ClassroomInfo,
   GradingRunStatus,
+  ItemDetail,
   ItemScoreRow,
   ParsedStudent,
   Rubric,
   RubricResponse,
   Region,
+  QueueGroup,
+  ReviewProgress,
+  ReviewScore,
   ScanBatchStatus,
   SourceDocument,
   SubmissionInfo,
@@ -239,6 +243,40 @@ export const api = {
       `/api/grading/runs/${runId}/scores${query}`,
     );
   },
+
+  getQueue: (runId: number) =>
+    request<{ run_id: number; items: QueueGroup[] }>(
+      `/api/review/runs/${runId}/queue`,
+    ),
+
+  getItemScores: (
+    runId: number,
+    itemNo: number,
+    pendingOnly: boolean,
+  ) =>
+    request<ItemDetail>(
+      `/api/review/runs/${runId}/items/${itemNo}?pending_only=${pendingOnly}`,
+    ),
+
+  confirmScore: (scoreId: number, score: number, note?: string) =>
+    request<ReviewScore>(`/api/review/scores/${scoreId}/confirm`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ score, note }),
+    }),
+
+  bulkAccept: (runId: number) =>
+    request<{ accepted: number }>(
+      `/api/review/runs/${runId}/bulk-accept`,
+      { method: "POST" },
+    ),
+
+  getProgress: (runId: number) =>
+    request<ReviewProgress>(`/api/review/runs/${runId}/progress`),
+
+  cropUrl: (scoreId: number) => `/api/review/scores/${scoreId}/crop`,
+
+  fullPageUrl: (scoreId: number) => `/api/review/scores/${scoreId}/page`,
 
   getSettings: () => request<AppSettings>("/api/settings"),
 

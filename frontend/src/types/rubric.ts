@@ -205,3 +205,55 @@ export interface ItemScoreRow {
   routing_reasons: string[];
   recognized_raw: string;
 }
+
+export interface ScoringOption {
+  score: number;
+  criterion: string;
+}
+
+export interface QueueGroup {
+  item_no: number;
+  title: string;
+  points: number;
+  type: string;
+  total: number;
+  pending: number;
+  manual: number;
+  scoring: ScoringOption[];
+}
+
+export interface ReviewScore {
+  id: number;
+  submission_id: number;
+  student_number: number;
+  student_name: string;
+  item_no: number;
+  proposed_score: number | null;
+  final_score: number | null;
+  confirmed: boolean;
+  matched_criterion: string | null;
+  evidence: string;
+  reason: string;
+  confidence: number;
+  route: "auto" | "manual";
+  routing_reasons: string[];
+  recognized_raw: string;
+  part_scores: Record<string, number | null>;
+}
+
+export interface ItemDetail {
+  item_no: number;
+  title: string;
+  points: number;
+  type: string;
+  example_answer: string;
+  scoring: ScoringOption[];
+  scores: ReviewScore[];
+}
+
+export interface ReviewProgress {
+  total: number;
+  confirmed: number;
+  pending: number;
+  complete: boolean;
+}

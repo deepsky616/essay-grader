@@ -207,10 +207,13 @@ export default function GradingRun() {
           {runActive && <p>채점 상태를 자동으로 확인하고 있습니다.</p>}
           {run.failure_reason && <p className="error-message">{run.failure_reason}</p>}
           {run.status === "succeeded" && (
-            <p>
-              총 {run.total_count}건, 자동 확정 가능 {run.auto_count}건, 교사 검토 {" "}
-              {run.manual_count}건
-            </p>
+            <>
+              <p>
+                총 {run.total_count}건, 자동 확정 가능 {run.auto_count}건, 교사 검토 {" "}
+                {run.manual_count}건
+              </p>
+              <Link to={`/runs/${run.id}/review`}>문항별 검토 시작</Link>
+            </>
           )}
         </section>
       )}
