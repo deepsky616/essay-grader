@@ -352,6 +352,10 @@ git commit -m "feat: 백그라운드 작업 큐와 진행률 기록"
 
 P2의 토대다. 순수 함수 모듈이므로 합성 이미지로 완전히 테스트할 수 있다.
 
+**설계 참조:** 2절, 7.1절, 7.2절, 10절, 11절, 12절. 마커 번호의 닫힌 집합으로 쪽과 물리 모서리를 함께 식별하고, 모호한 검출은 뒤 정합이나 학생 분할로 넘기지 않는다.
+
+> **구현 계약 보강:** `DICT_4X4_250` 가운데 0부터 247까지만 62쪽의 네 모서리에 쓰고 248과 249는 거절한다. 정수와 크기와 이미지 자료형을 엄격히 검사한다. 한 이미지에 서로 다른 쪽 마커가 하나라도 섞이거나 같은 모서리가 중복되면 다수결로 숨기지 않고 `MarkerDetectionError`로 닫아서 실패한다. 검출 결과의 좌표 매핑은 만든 뒤 바꿀 수 없다.
+
 **Files:**
 - Create: `backend/app/services/markers.py`
 - Test: `backend/tests/test_markers.py`
@@ -531,8 +535,8 @@ class DetectedPage:
 def detect_page_markers(image: np.ndarray) -> DetectedPage | None:
     """페이지 이미지에서 마커를 찾아 쪽 번호와 모서리 좌표를 돌려준다.
 
-    한 장에 여러 쪽의 마커가 섞여 보이면(스캔 겹침) 가장 많이 검출된 쪽을 택한다.
-    하나도 못 찾으면 None 을 돌려준다.
+    한 장에 여러 쪽의 마커가 섞이거나 같은 모서리가 중복되면 급지 겹침으로
+    보고 거절한다. 하나도 못 찾으면 None 을 돌려준다.
     """
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -553,8 +557,12 @@ def detect_page_markers(image: np.ndarray) -> DetectedPage | None:
             float(center[1]),
         )
 
-    page_no = max(by_page, key=lambda page: len(by_page[page]))
-    return DetectedPage(page_no=page_no, corner_points=by_page[page_no])
+    if len(by_page) != 1:
+        raise MarkerDetectionError("한 이미지에서 여러 쪽의 마커가 검출되었습니다.")
+    page_no, points = next(iter(by_page.items()))
+    if len(points) != len(corners):
+        raise MarkerDetectionError("같은 모서리 마커가 중복 검출되었습니다.")
+    return DetectedPage(page_no=page_no, corner_points=points)
 ```
 
 - [ ] **Step 4: 테스트 통과 확인**
