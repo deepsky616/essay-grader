@@ -18,3 +18,5 @@ Task 7: Ruling: 유니코드와 공백을 정규화한 뒤 실제 편집 거리�
 Task 7: complete (local fallback review clean, focused 17 passed, backend 471 passed; implementation commit 6073e40)
 Task 8: Ruling: 식별정보 이미지는 회색 복사본으로 지역 실행 파일에만 전달하고 한국어 한 줄 모드와 10초 제한을 고정한다. 실행 오류 원문과 경로는 버리고 고정 오류만 돌려준다 — 이름과 지역 경로가 오류 사슬이나 외부 제공자로 새지 않게 하기 위해서다 — 이 판단이 틀리면 지역 설치 문제를 자세히 찾을 별도 비식별 진단 수단이 필요하다.
 Task 8: complete (local fallback review clean, focused 10 passed, backend 481 passed; implementation commit 6eab307; local tesseract binary unavailable)
+Task 9: Ruling: 식별정보 영역은 페이지 안의 유효한 사각형으로 먼저 검사하고 응답 영역과 한 화소라도 겹치면 크롭 자체를 만들지 않는다. 결과는 원본과 메모리를 나누지 않는 읽기 전용 복사본이다 — 식별정보가 들어간 영상이 뒤 전송 단계까지 존재하지 않게 하기 위해서다 — 이 판단이 틀리면 아주 가까운 경계에서 손글씨가 잘릴 수 있어 영역 지정 화면의 여백 안내가 필요하다.
+Task 9: complete (local fallback review clean, focused 23 passed, backend 504 passed; implementation commit bdf8389)
