@@ -2488,7 +2488,7 @@ __all__ = ["Base", "Assessment", "SourceDocument", "RubricDraft", "AppSetting"]
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -3874,6 +3874,19 @@ git commit -m "feat: 문서 업로드 API"
 
 ## Task 13: 루브릭 컴파일·조회·수정·확정 API
 
+**설계 참조:** 1절, 2절, 4절, 5절, 6절, 7.7절, 8절, 10절, 11절, 12절. 언어 모형은 루브릭 컴파일에만 쓰고, 실제 외부 호출은 단일 전송 관문을 지나며, 선생님 정본과 원문 PDF는 지역 저장소가 권한을 가진다.
+
+> **구현 계약 보강:** 아래 최초 초안의 저장 경로 직접 열기, API 키와 모형 따로 읽기, 예외 원문 반환, 확정 뒤 재컴파일 허용은 사용하지 않는다. 실제 구현은 다음 계약을 정본으로 삼는다.
+>
+> - 컴파일 원문은 `rubric_table`, `example_answer`만 번호 오름차순으로 사용한다. 앱 업로드 폴더 바로 아래의 무작위 이름 일반 PDF만 허용하고, 없어진 파일과 심볼릭 링크, 폴더 밖 경로는 외부 호출 전에 고정 409로 막는다.
+> - 현재 API 키와 그 키에 묶인 모형은 설정 잠금 한 구간에서 함께 읽는다. 제공자 실행 손잡이는 정확히 하나의 `TransmissionGateway`를 소유하며 모든 실제 전송은 이 경계를 지난다.
+> - 루브릭 컴파일에는 학생 자료가 없으므로 설계 8절에 따라 자료 정책 동의를 요구하지 않는다. 학생 답안을 처리하는 뒤 채점 배치에서 동의를 강제한다.
+> - 컴파일 실패, 자격 정보 실패, 형태 검증 실패 응답에는 제공자 오류 원문, API 키, 사용자 입력값, 지역 경로를 넣지 않는다.
+> - 평가 제목, 과목, 학년, 총점, 성취기준, 수준 경계값은 조회, 수정, 확정 때마다 최신 평가 행을 정본으로 덮어 적용한다. 컴파일 뒤 총점이 바뀌어 문항 배점과 어긋나면 확정을 막는다.
+> - 확정된 루브릭은 수정과 재컴파일을 막고 평가 정본 수정도 막는다. 명시적으로 확정을 해제해야 다시 바꿀 수 있다.
+> - 데이터베이스 저장 실패는 세션을 되돌리고 고정 오류만 반환한다. 평가별 루브릭 초안은 하나만 유지한다.
+> - `backend/tests/test_api_rubrics.py`는 원문 종류와 순서, 고정 실패 응답, 안전한 경로, 키와 모형 결합, 단일 관문, 정본 보존, 형태와 업무 검증, 확정 잠금과 해제를 검증한다.
+
 **Files:**
 - Create: `backend/app/api/rubrics.py`
 - Modify: `backend/app/main.py`
@@ -3995,10 +4008,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.assessments import load_assessment
-from app.api.settings import get_credential_store, read_setting
+from app.api.settings import get_credential_store, read_llm_runtime
 from app.config import settings
 from app.db import get_session
-from app.models.app_setting import KEY_LLM_MODEL
 from app.models.assessment import Assessment
 from app.models.document import SourceDocument
 from app.models.rubric import RubricDraft
@@ -4040,14 +4052,13 @@ def run_compile(
     비로소 동의를 강제한다.
     """
     store = get_credential_store()
-    api_key = store.get_api_key()
+    api_key, model = read_llm_runtime(session, store)
     if api_key is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Gemini API 키가 설정되지 않았습니다. 설정 화면에서 입력하세요.",
         )
 
-    model = read_setting(session, KEY_LLM_MODEL)
     if model is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -4055,7 +4066,7 @@ def run_compile(
         )
 
     authority = RubricCompileAuthority.from_assessment(assessment)
-    extracts = [extract_pdf(Path(document.stored_path)) for document in documents]
+    extracts = [extract_pdf(require_safe_source_path(document)) for document in documents]
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
         # P1 에서는 명렬표가 없다. P2 에서 학생 이름 집합을 넘기도록 교체한다.
@@ -4084,8 +4095,8 @@ def _load_draft(assessment_id: int, session: Session) -> RubricDraft:
 def _validate_payload(payload: dict[str, Any]) -> tuple[Rubric | None, list[str]]:
     try:
         rubric = Rubric.model_validate(payload)
-    except Exception as exc:  # noqa: BLE001 - 형태 오류는 메시지로 돌려준다
-        return None, [str(exc)]
+    except PydanticValidationError as exc:
+        return None, safe_schema_errors_without_input_values(exc)
     return rubric, [error.message for error in validate_rubric(rubric)]
 
 
@@ -4095,12 +4106,17 @@ def compile_endpoint(
 ) -> RubricOut:
     assessment = load_assessment(assessment_id, session)
 
+    if assessment.status == "confirmed":
+        raise HTTPException(status.HTTP_409_CONFLICT, CONFIRMED_DETAIL)
+
     documents = list(
         session.scalars(
-            select(SourceDocument).where(
+            select(SourceDocument)
+            .where(
                 SourceDocument.assessment_id == assessment_id,
                 SourceDocument.kind.in_(COMPILE_SOURCE_KINDS),
             )
+            .order_by(SourceDocument.id)
         )
     )
     if not documents:
@@ -4113,7 +4129,7 @@ def compile_endpoint(
     if result.rubric is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"루브릭을 만들지 못했습니다: {'; '.join(result.errors)}",
+            "루브릭 초안을 만들지 못했습니다.",
         )
 
     content = result.rubric.model_dump(mode="json")
@@ -4140,11 +4156,12 @@ def compile_endpoint(
 
 @router.get("", response_model=RubricOut)
 def get_rubric(assessment_id: int, session: Session = Depends(get_session)) -> RubricOut:
-    load_assessment(assessment_id, session)
+    assessment = load_assessment(assessment_id, session)
     draft = _load_draft(assessment_id, session)
-    _, errors = _validate_payload(draft.content)
+    content = latest_authoritative_content(assessment, draft.content)
+    _, errors = _validate_payload(content)
     return RubricOut(
-        rubric=draft.content,
+        rubric=content,
         warnings=draft.warnings,
         errors=errors,
         confirmed=draft.confirmed,
@@ -4157,7 +4174,7 @@ def update_rubric(
     payload: RubricUpdate,
     session: Session = Depends(get_session),
 ) -> RubricOut:
-    load_assessment(assessment_id, session)
+    assessment = load_assessment(assessment_id, session)
     draft = _load_draft(assessment_id, session)
 
     if draft.confirmed:
@@ -4166,8 +4183,9 @@ def update_rubric(
             "확정된 루브릭은 수정할 수 없습니다. 확정을 해제한 뒤 수정하세요.",
         )
 
-    rubric, errors = _validate_payload(payload.rubric)
-    draft.content = payload.rubric
+    content = latest_authoritative_content(assessment, payload.rubric)
+    rubric, errors = _validate_payload(content)
+    draft.content = content
     draft.warnings = (
         [asdict(warning) for warning in detect_warnings(rubric)] if rubric else []
     )
@@ -4189,7 +4207,7 @@ def confirm_rubric(
     if errors:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"오류를 먼저 해결해야 확정할 수 있습니다: {'; '.join(errors)}",
+            "루브릭 오류를 먼저 해결해야 확정할 수 있습니다.",
         )
 
     draft.confirmed = True

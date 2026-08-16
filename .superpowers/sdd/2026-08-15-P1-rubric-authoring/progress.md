@@ -100,7 +100,9 @@ Task 11: fix round 1/5 (3 addressed, 0 open — 중첩 엄격 입력, 1·2·3 �
 Task 11: complete (commits a56d167..bbf092f, local fallback review clean, backend tests 286 passed)
 
 Task 12: Ruling: 전체 메모리 읽기와 머리말 확인 대신 크기 제한 조각 읽기, 실제 PDF 해석, 권한 600 임시 파일, 원자 게시와 실패 정리를 구현한다 — 로컬 원문과 DB 행의 불일치를 막기 위해서다 — 잘못 판단했을 때 25 MiB를 넘는 정상 문서를 올릴 수 없다.
-Task 12: complete (local fallback review clean, backend tests 300 passed; commit pending)
+Task 12: complete (local fallback review clean, backend tests 300 passed; commits bc88b9d..d2797cc)
+Task 13: Ruling: 현재 API 키와 그 키에 묶인 모형은 같은 설정 잠금 구간에서 읽고, 컴파일 원문은 앱 업로드 폴더 바로 아래의 무작위 이름 일반 PDF만 허용한다. 조회, 수정, 확정 때 선생님 평가 정본을 최신 평가 행에서 다시 덮어 적용하며 확정 뒤에는 평가 정본과 루브릭을 모두 잠근다 — 키 경합, 경로 탈출 전송, 확정 자료 불일치를 함께 막기 위해서다 — 이 판단이 틀리면 옛 임의 이름 원문을 다시 올려야 하고 작은 평가 정보 수정에도 확정 해제가 필요하다.
+Task 13: complete (local fallback review clean, backend tests 329 passed; implementation commit 32dd567)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
