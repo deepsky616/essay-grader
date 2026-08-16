@@ -65,6 +65,20 @@ def _compile(client, assessment_id):
     return client.post(f"/api/assessments/{assessment_id}/rubric/compile")
 
 
+def test_suggested_cutoffs_use_assessment_total(client, assessment_id):
+    response = client.get(
+        f"/api/assessments/{assessment_id}/rubric/suggested-cutoffs"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"3": 4, "2": 2, "1": 0}
+
+
+def test_suggested_cutoffs_require_existing_assessment(client):
+    response = client.get("/api/assessments/999/rubric/suggested-cutoffs")
+    assert response.status_code == 404
+
+
 def test_compile_stores_draft_warnings_and_status(
     client, db_session, assessment_id, stub_compile
 ):

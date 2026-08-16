@@ -26,6 +26,7 @@ from app.providers.gemini_llm import create_gemini_provider
 from app.providers.pii_terms import roster_pii_terms
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import extract_pdf
+from app.services.levels import LevelError, suggest_cutoffs
 from app.services.rubric_compiler import (
     CompileResult,
     RubricCompileAuthority,
@@ -66,6 +67,21 @@ class RubricOut(BaseModel):
     warnings: list[dict[str, Any]]
     errors: list[str]
     confirmed: bool
+
+
+@router.get("/suggested-cutoffs")
+def get_suggested_cutoffs(
+    assessment_id: int,
+    session: Session = Depends(get_session),
+) -> dict[str, int]:
+    assessment = load_assessment(assessment_id, session)
+    try:
+        return suggest_cutoffs(assessment.total_points)
+    except LevelError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            str(exc),
+        ) from exc
 
 
 def _safe_source_path(document: SourceDocument) -> Path:

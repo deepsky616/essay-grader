@@ -113,6 +113,11 @@ export const api = {
   getRubric: (id: number) =>
     request<RubricResponse>(`/api/assessments/${id}/rubric`),
 
+  getSuggestedCutoffs: (id: number) =>
+    request<Record<string, number>>(
+      `/api/assessments/${id}/rubric/suggested-cutoffs`,
+    ),
+
   saveRubric: (id: number, rubric: Rubric) =>
     request<RubricResponse>(`/api/assessments/${id}/rubric`, {
       method: "PUT",

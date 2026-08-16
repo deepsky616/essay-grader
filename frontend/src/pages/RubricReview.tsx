@@ -113,16 +113,29 @@ function cutoffFields(cutoffs: LevelCutoffs): Record<LevelKey, string> {
   };
 }
 
-function parseCutoffs(values: Record<LevelKey, string>): LevelCutoffs {
+function parseCutoffs(
+  values: Record<LevelKey, string>,
+  totalPoints: number,
+): LevelCutoffs {
   const cutoffs: LevelCutoffs = {};
   for (const level of LEVELS) {
     const value = values[level].trim();
-    if (!value) continue;
+    if (!value) {
+      throw new Error(`${level}수준 시작 점수를 입력하세요.`);
+    }
     const numeric = Number(value);
-    if (!Number.isSafeInteger(numeric) || numeric < 0) {
-      throw new Error(`${level}수준 경계값은 영 이상의 정수여야 합니다.`);
+    if (!Number.isSafeInteger(numeric) || numeric < 0 || numeric > totalPoints) {
+      throw new Error(
+        `${level}수준 시작 점수는 0부터 ${totalPoints} 사이의 정수여야 합니다.`,
+      );
     }
     cutoffs[level] = numeric;
+  }
+  if (cutoffs["1"] !== 0) {
+    throw new Error("1수준 시작 점수는 0이어야 합니다.");
+  }
+  if (!(cutoffs["3"]! > cutoffs["2"]! && cutoffs["2"]! > cutoffs["1"]!)) {
+    throw new Error("3수준, 2수준, 1수준 시작 점수는 차례로 낮아야 합니다.");
   }
   return cutoffs;
 }
@@ -214,7 +227,7 @@ export default function RubricReview() {
     let currentAssessment = assessment;
     if (cutoffsDirty) {
       currentAssessment = await api.updateAssessment(assessmentId, {
-        level_cutoffs: parseCutoffs(cutoffs),
+        level_cutoffs: parseCutoffs(cutoffs, assessment.total_points),
       });
       setAssessment(currentAssessment);
     }
@@ -261,6 +274,10 @@ export default function RubricReview() {
     setBusy(true);
     setError(null);
     try {
+      if (assessment === null) {
+        throw new Error("확인할 평가를 찾지 못했습니다.");
+      }
+      parseCutoffs(cutoffs, assessment.total_points);
       let current = data;
       if (dirty || cutoffsDirty) {
         current = await persistDraft();
@@ -275,6 +292,27 @@ export default function RubricReview() {
         value === null ? value : { ...value, status: "confirmed" },
       );
       setNotice("이 루브릭을 확정했습니다.");
+    } catch (caught) {
+      setError(caughtMessage(caught));
+      setNotice(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSuggestCutoffs() {
+    if (busy || confirmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const suggested = await api.getSuggestedCutoffs(assessmentId);
+      setCutoffs({
+        "3": String(suggested["3"]),
+        "2": String(suggested["2"]),
+        "1": String(suggested["1"]),
+      });
+      setCutoffsDirty(true);
+      setNotice("출발값을 채웠습니다. 평가 의도에 맞는지 확인한 뒤 저장하세요.");
     } catch (caught) {
       setError(caughtMessage(caught));
       setNotice(null);
@@ -446,9 +484,10 @@ export default function RubricReview() {
       <section style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, marginTop: 16 }}>
         <h2 style={{ fontSize: 16, marginTop: 0 }}>성취 수준 경계값</h2>
         <p style={{ color: "#64748b", fontSize: 13 }}>
-          선생님이 평가 정본으로 정하는 값입니다. 비워 둘 수 있지만 피드백에 수준이 표시되지 않습니다.
+          채점 기준표에는 없는 값이므로 선생님이 직접 정해야 합니다. 세 값을 모두
+          입력해야 피드백을 만들 수 있고, 1수준은 0점에서 시작합니다.
         </p>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div className="cutoff-editor">
           {LEVELS.map((level) => (
             <label key={level} style={{ flex: "1 1 120px" }}>
               {level}수준 시작 점수
@@ -463,7 +502,18 @@ export default function RubricReview() {
               />
             </label>
           ))}
+          <button
+            type="button"
+            disabled={controlsDisabled}
+            onClick={handleSuggestCutoffs}
+          >
+            출발값 채우기
+          </button>
         </div>
+        <small style={{ color: "#64748b" }}>
+          출발값은 3수준 85퍼센트, 2수준 45퍼센트 기준입니다. 권장 정답이 아니며
+          평가 의도에 맞게 선생님이 확정해야 합니다.
+        </small>
       </section>
 
       <div style={{ marginTop: 18 }}>
