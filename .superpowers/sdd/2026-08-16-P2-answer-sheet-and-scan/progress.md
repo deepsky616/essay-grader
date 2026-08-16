@@ -22,3 +22,5 @@ Task 9: Ruling: 식별정보 영역은 페이지 안의 유효한 사각형으�
 Task 9: complete (local fallback review clean, focused 23 passed, backend 504 passed; implementation commit bdf8389)
 Task 10: Ruling: 설계 문서의 소유 관계를 외래 키와 삭제 규칙으로 옮기고 상태, 좌표, 범위, 품질, 경로와 중복에 데이터베이스 제약을 둔다. 원본 답안지 문서 삭제는 템플릿을 없애지 않고 참조만 비운다 — 잘못된 처리 상태와 조용한 중복 저장을 자료 계층에서 막기 위해서다 — 이 판단이 틀리면 현장 자료 이관 때 기존의 느슨한 레코드를 정리하는 이동 절차가 필요하다.
 Task 10: complete (local fallback review clean, focused 21 passed, backend 525 passed; implementation commit 2d95bcf)
+Task 11: Ruling: 모든 입력 계약과 식별정보 겹침을 처리 전에 검사하고, 정합과 쪽 수열 검증을 이름 인식과 크롭보다 앞에 둔다. 급지 또는 정합 실패는 부분 학생 결과 없이 끝내지만 로컬 이름 인식 불가는 해당 학생만 검토 상태로 남긴다 — 배정이 밀린 크롭을 만들지 않으면서 읽지 못한 이름 때문에 답안 본문까지 버리지 않기 위해서다 — 이 판단이 틀리면 특징점만 쓰는 기존 양식의 여러 쪽 구분 임계값을 현장 표본으로 다시 조정해야 한다.
+Task 11: complete (local fallback review clean, focused 18 passed, backend 543 passed; implementation commit cee89c2)
