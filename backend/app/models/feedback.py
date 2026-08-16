@@ -22,6 +22,10 @@ class Feedback(Base, TimestampMixin):
             name="ck_feedbacks_degraded",
         ),
         CheckConstraint(
+            "source_digest IS NULL OR length(source_digest) = 64",
+            name="ck_feedbacks_source_digest",
+        ),
+        CheckConstraint(
             "length(summary) <= 10000",
             name="ck_feedbacks_summary",
         ),
@@ -49,6 +53,7 @@ class Feedback(Base, TimestampMixin):
     total_score: Mapped[int] = mapped_column(Integer, nullable=False)
     level: Mapped[str | None] = mapped_column(String(5), nullable=True)
     degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     item_comments: Mapped[list[dict[str, Any]]] = mapped_column(
         NestedMutableList.as_mutable(JSON),
         nullable=False,

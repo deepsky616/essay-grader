@@ -6,6 +6,7 @@ from app.api import (
     assessments,
     classrooms,
     documents,
+    feedback,
     grading,
     jobs,
     review,
@@ -31,6 +32,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     app.include_router(scans.router)
     app.include_router(grading.router)
     app.include_router(review.router)
+    app.include_router(feedback.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

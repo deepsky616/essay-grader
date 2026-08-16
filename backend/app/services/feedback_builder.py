@@ -1,6 +1,8 @@
 """같은 실행에서 모두 확정된 점수만 피드백 입력으로 조립한다."""
 
 from dataclasses import dataclass, field
+from hashlib import sha256
+import json
 from typing import Any
 
 from sqlalchemy import select
@@ -74,6 +76,22 @@ class FeedbackContext:
             ],
             "standards": self.standards,
         }
+
+
+def feedback_source_digest(context: FeedbackContext) -> str:
+    """확정 점수나 루브릭이 바뀌면 달라지는 피드백 원천 지문."""
+    payload = {
+        "submission_id": context.submission_id,
+        "anonymous_token": context.anonymous_token,
+        "feedback": context.to_llm_payload(),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
 
 
 def _criterion_for(item: RubricItem, score: int) -> str:

@@ -48,6 +48,7 @@ def test_feedback_defaults(db_session, graded_setup):
     assert loaded.summary == ""
     assert loaded.next_step == ""
     assert loaded.degraded is False
+    assert loaded.source_digest is None
 
 
 @pytest.mark.parametrize(
