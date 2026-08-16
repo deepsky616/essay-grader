@@ -32,3 +32,5 @@ Task 14: Ruling: 스캔 PDF와 파이프라인 결과 전체를 먼저 검사하
 Task 14: complete (local fallback review clean, focused 13 passed, backend 589 passed; implementation commit 78dcd1e)
 Task 15: Ruling: 명렬표 이름은 전송 때마다 독립 세션으로 모든 학급과 결시자까지 읽고 두 글자 이상의 정리된 이름만 검사한다. 조회 오류는 빈 목록으로 바꾸지 않고 전송 관문까지 전파하며 세션은 성공과 실패 모두에서 닫는다 — 오래된 이름 목록이나 데이터베이스 장애가 식별정보 없는 요청으로 잘못 통과하는 일을 막기 위해서다 — 이 판단이 틀리면 학급 수가 매우 큰 환경에서 전송 전 조회 비용을 줄이면서도 누락 없는 범위 제한이 필요하다.
 Task 15: complete (local fallback review clean, focused 35 passed, backend 595 passed; implementation commit cbab679)
+Task 16: Ruling: 포인터 좌표는 원본 답안지 화소로 바꾸고 이미지 경계에 고정하며, 화면에서 중복 문항과 식별정보 영역의 누락, 중복, 응답 영역 겹침을 먼저 막고 서버가 저장 및 배부용 파일 생성 때 다시 확인한다 — 화면 크기나 직접 API 요청이 식별정보 배제 경계를 우회하지 못하게 하기 위해서다 — 이 판단이 틀리면 실제 스캔 흔들림을 고려한 식별정보 영역 여백 안내와 경계 확장이 필요하다.
+Task 16: complete (local fallback review clean, focused backend 19 passed, backend 596 passed, frontend build and audit passed; implementation commit db979c5)
