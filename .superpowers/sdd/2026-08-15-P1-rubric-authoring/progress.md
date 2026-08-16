@@ -107,6 +107,8 @@ Task 14: Ruling: 알려진 이동 경로 취약점 범위인 React Router 6 계�
 Task 14: complete (local fallback review clean, frontend build passed, npm audit 0 vulnerabilities; implementation commit f8cb96f)
 Task 15: Ruling: API 키와 현재 키에 묶인 모형을 평가 생성 전에 확인하고, 평가 생성 뒤 부분 실패 때 같은 평가 번호와 성공한 문서 종류를 기억해 이어서 처리한다. 설정 화면은 키체인과 암호화 대체 저장의 실제 계약만 안내한다 — 빈 평가와 중복 문서, 잘못된 비밀 저장 안내를 줄이기 위해서다 — 이 판단이 틀리면 설정을 나중에 준비하는 흐름과 화면을 벗어난 뒤 이어서 처리가 제한된다.
 Task 15: complete (local fallback review clean, frontend build passed, npm audit 0 vulnerabilities; implementation commit 5a27ddd)
+Task 16: Ruling: 스키마 형태 오류는 정상 초안을 바꾸지 않는 고정 422로 거절하고, 수준 경계값은 평가 정본 API로 저장한다. 정적 서빙은 화면 GET만 뿌리 문서로 되돌리고 알 수 없는 API와 자산은 404를 유지한다 — 프런트 자료형 신뢰와 선생님 정본, API 실패 가시성을 지키기 위해서다 — 이 판단이 틀리면 옛 깨진 초안 이행과 마침표가 든 화면 주소 처리 규칙이 필요하다.
+Task 16: complete (local fallback and browser review clean, backend tests 334 passed, frontend build passed, npm audit 0 vulnerabilities; implementation commit 8a4df83)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
