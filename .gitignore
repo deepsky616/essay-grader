@@ -8,10 +8,12 @@ backend/.ruff_cache/
 backend/.mypy_cache/
 backend/**/__pycache__/
 backend/**/*.py[cod]
+backend/app/static/
 
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/*.tsbuildinfo
 
 *.db
 *.sqlite
