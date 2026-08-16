@@ -287,6 +287,13 @@ export default function ScanBatch() {
               {batch.review_count}명
             </p>
           )}
+          {RESULT_STATES.has(batch.status) && (
+            <p>
+              <Link to={`/batches/${batch.id}/grading`}>
+                이 배치 채점 실행하기
+              </Link>
+            </p>
+          )}
         </section>
       )}
 

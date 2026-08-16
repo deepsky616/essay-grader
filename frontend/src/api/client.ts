@@ -3,6 +3,8 @@ import type {
   Assessment,
   AssessmentInput,
   ClassroomInfo,
+  GradingRunStatus,
+  ItemScoreRow,
   ParsedStudent,
   Rubric,
   RubricResponse,
@@ -212,6 +214,31 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ student_id: studentId }),
     }),
+
+  startGrading: (
+    batchId: number,
+    reviewAll: boolean,
+    confidenceThreshold: number,
+  ) =>
+    request<GradingRunStatus>("/api/grading/runs", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        batch_id: batchId,
+        review_all: reviewAll,
+        confidence_threshold: confidenceThreshold,
+      }),
+    }),
+
+  getGradingRun: (runId: number) =>
+    request<GradingRunStatus>(`/api/grading/runs/${runId}`),
+
+  listScores: (runId: number, route?: "auto" | "manual") => {
+    const query = route ? `?route=${encodeURIComponent(route)}` : "";
+    return request<{ scores: ItemScoreRow[] }>(
+      `/api/grading/runs/${runId}/scores${query}`,
+    );
+  },
 
   getSettings: () => request<AppSettings>("/api/settings"),
 

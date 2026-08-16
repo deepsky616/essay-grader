@@ -176,3 +176,32 @@ export interface SubmissionInfo {
   page_start: number;
   page_end: number;
 }
+
+export type GradingRunState = "pending" | "running" | "succeeded" | "failed";
+
+export interface GradingRunStatus {
+  id: number;
+  batch_id: number;
+  status: GradingRunState;
+  failure_reason: string | null;
+  total_count: number;
+  auto_count: number;
+  manual_count: number;
+}
+
+export interface ItemScoreRow {
+  id: number;
+  submission_id: number;
+  student_name: string;
+  item_no: number;
+  proposed_score: number | null;
+  final_score: number | null;
+  confirmed: boolean;
+  matched_criterion: string | null;
+  evidence: string;
+  reason: string;
+  confidence: number;
+  route: "auto" | "manual";
+  routing_reasons: string[];
+  recognized_raw: string;
+}

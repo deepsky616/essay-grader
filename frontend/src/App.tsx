@@ -3,6 +3,7 @@ import { Link, Route, Routes } from "react-router-dom";
 import AssessmentList from "./pages/AssessmentList";
 import AssessmentNew from "./pages/AssessmentNew";
 import ClassroomSetup from "./pages/ClassroomSetup";
+import GradingRun from "./pages/GradingRun";
 import RegionEditor from "./pages/RegionEditor";
 import RubricReview from "./pages/RubricReview";
 import ScanBatch from "./pages/ScanBatch";
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/assessments/:id/rubric" element={<RubricReview />} />
         <Route path="/assessments/:id/regions" element={<RegionEditor />} />
         <Route path="/assessments/:id/scan" element={<ScanBatch />} />
+        <Route path="/batches/:batchId/grading" element={<GradingRun />} />
         <Route path="/classrooms" element={<ClassroomSetup />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
