@@ -97,3 +97,11 @@ def get_session() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+def session_factory() -> Session:
+    """요청 범위와 독립된 뒤 작업 전용 세션을 만든다."""
+    if _SessionFactory is None:
+        init_db()
+    assert _SessionFactory is not None
+    return _SessionFactory()
