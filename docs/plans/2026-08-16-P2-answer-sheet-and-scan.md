@@ -96,6 +96,10 @@ frontend/src/pages/
 
 P1에서 미뤄둔 작업 큐를 여기서 만든다. 28명 × 3쪽 = 84쪽의 정합과 차분은 수 분이 걸리므로, 이제 진행률 폴링이 실제로 필요하다.
 
+**설계 참조:** 5절, 7.1절, 7.2절, 7.3절, 10절, 11절, 12절. 오래 걸리는 지역 영상 처리를 한 스레드에서 독립 세션으로 실행하고, 로컬 API에는 필요한 상태와 진행률만 공개한다.
+
+> **구현 계약 보강:** 작업 종류는 소문자와 숫자와 밑줄만 허용하고 입력과 결과는 유한한 JSON 객체로 깊은 복사한다. 진행률은 영 이상, 완료량 이하, 단조 증가, 고정 전체량, 200자 이하 문구를 강제한다. 실행 실패의 예외 원문은 경로와 학생 자료를 포함할 수 있으므로 데이터베이스와 API에 넣지 않고 고정 문구만 저장한다. 종료된 실행기는 새 제출을 거절하고, API 응답은 작업 입력을 공개하지 않는다.
+
 **Files:**
 - Modify: `backend/pyproject.toml`
 - Create: `backend/app/models/job.py`
@@ -162,7 +166,7 @@ def test_failed_job_stores_error_message(session_factory):
     job_id = runner.submit("scan", {}, boom)
     job = _wait_until_done(session_factory, job_id)
     assert job.status == "failed"
-    assert "정합 실패" in job.error
+    assert job.error == "작업 실행 중 오류가 발생했습니다."
     runner.shutdown()
 
 
