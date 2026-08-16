@@ -40,7 +40,7 @@ CompleteAdapter = Callable[[LLMOutboundRequest], LLMResponse]
 ListModelsAdapter = Callable[[OutboundRequest], list[str]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class _ProviderState:
     gateway: TransmissionGateway
     complete_adapter: CompleteAdapter
@@ -55,7 +55,7 @@ class LLMProvider:
     전송 흐름을 바꾸지 못하게 한다.
     """
 
-    __slots__ = ("__weakref__",)
+    __slots__ = ("__state", "__weakref__")
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         raise TypeError(
@@ -86,6 +86,15 @@ class LLMProvider:
                         "언어 모형 제공자 실행 손잡이의 정체성이 충돌했습니다."
                     )
 
+            try:
+                object.__getattribute__(self, "_LLMProvider__state")
+            except AttributeError:
+                pass
+            else:
+                raise TypeError(
+                    "언어 모형 제공자 실행 손잡이는 이미 초기화되었습니다."
+                )
+
             if type(gateway) is not TransmissionGateway:
                 raise TypeError(
                     "언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다."
@@ -93,19 +102,21 @@ class LLMProvider:
             if not callable(complete_adapter) or not callable(list_models_adapter):
                 raise TypeError("언어 모형 제공자 어댑터는 호출할 수 있어야 합니다.")
 
+            state = _ProviderState(
+                gateway=gateway,
+                complete_adapter=complete_adapter,
+                list_models_adapter=list_models_adapter,
+            )
             handle_ref = ref(
                 self,
                 lambda dead_ref, object_id=identity: _cleanup_provider_state(
                     object_id, dead_ref
                 ),
             )
+            object.__setattr__(self, "_LLMProvider__state", state)
             _PROVIDER_STATES[identity] = _ProviderEntry(
                 handle_ref=handle_ref,
-                state=_ProviderState(
-                    gateway=gateway,
-                    complete_adapter=complete_adapter,
-                    list_models_adapter=list_models_adapter,
-                ),
+                state_ref=ref(state),
             )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -138,19 +149,29 @@ class LLMProvider:
     def _state(self) -> _ProviderState:
         if type(self) is not LLMProvider:
             raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+        try:
+            slot_state = object.__getattribute__(self, "_LLMProvider__state")
+        except AttributeError:
+            raise TypeError(
+                "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
+            ) from None
         with _PROVIDER_STATES_LOCK:
             entry = _PROVIDER_STATES.get(id(self))
-            if entry is None or entry.handle_ref() is not self:
+            if (
+                entry is None
+                or entry.handle_ref() is not self
+                or entry.state_ref() is not slot_state
+            ):
                 raise TypeError(
                     "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
                 )
-            return entry.state
+            return slot_state
 
 
 @dataclass(frozen=True)
 class _ProviderEntry:
     handle_ref: ReferenceType[LLMProvider]
-    state: _ProviderState
+    state_ref: ReferenceType[_ProviderState]
 
 
 _PROVIDER_STATES: dict[int, _ProviderEntry] = {}

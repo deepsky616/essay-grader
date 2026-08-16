@@ -455,11 +455,16 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.rubric import (
+    AchievementStandard,
+    AnswerSpec,
+    AssessmentMeta,
     Blank,
     ItemType,
     Rubric,
     RubricItem,
+    RubricPart,
     ScoringRule,
+    TableColumn,
 )
 
 
@@ -496,6 +501,72 @@ def test_condition_grammar_is_enforced():
 def test_partial_condition_accepts_count_forms():
     assert ScoringRule(score=1, condition="partial:2", criterion="x").condition == "partial:2"
     assert ScoringRule(score=1, condition="partial:>=2", criterion="x").condition == "partial:>=2"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Blank(key="   ", answers=["정답"]),
+        lambda: Blank(key="①", answers=["   "]),
+        lambda: Blank(key="①", answers=["정답"], aliases=["   "]),
+        lambda: TableColumn(header="   ", answers=["①"]),
+        lambda: TableColumn(header="분류", answers=["   "]),
+        lambda: AnswerSpec(numeric_answers=["   "]),
+        lambda: AnswerSpec(choices=["   "]),
+        lambda: AnswerSpec(choices=["가"], correct_choice="   "),
+        lambda: ScoringRule(score=1, condition="all_correct", criterion="   "),
+        lambda: RubricPart(
+            part_id="   ", type=ItemType.NUMERIC, points=1,
+            numeric_answers=["1"],
+        ),
+        lambda: RubricItem(
+            item_no=1,
+            title="   ",
+            points=1,
+            type=ItemType.CLOSED_SHORT,
+            blanks=[Blank(key="①", answers=["정답"])],
+            scoring=[ScoringRule(score=1, condition="all_correct", criterion="맞음")],
+        ),
+        lambda: RubricItem(
+            item_no=1,
+            title="문항",
+            points=1,
+            standard_id="   ",
+            type=ItemType.CLOSED_SHORT,
+            blanks=[Blank(key="①", answers=["정답"])],
+            scoring=[ScoringRule(score=1, condition="all_correct", criterion="맞음")],
+        ),
+        lambda: AchievementStandard(
+            id="   ", item_range=[1, 1], core_standard="기준", levels={"1": "기초"}
+        ),
+        lambda: AchievementStandard(
+            id="AS1", item_range=[1, 1], core_standard="   ", levels={"1": "기초"}
+        ),
+        lambda: AchievementStandard(
+            id="AS1", item_range=[1, 1], core_standard="기준", levels={"1": "   "}
+        ),
+        lambda: AchievementStandard(
+            id="AS1", item_range=[1, 1], core_standard="기준", levels={"   ": "기초"}
+        ),
+        lambda: AssessmentMeta(
+            title="   ", subject="수학", grade=6, total_points=1
+        ),
+        lambda: AssessmentMeta(
+            title="평가", subject="   ", grade=6, total_points=1
+        ),
+    ],
+)
+def test_required_rubric_strings_reject_whitespace_only(build):
+    with pytest.raises(ValidationError):
+        build()
+
+
+def test_nonblank_rubric_source_text_is_validated_without_normalizing_it():
+    blank = Blank(key=" ① ", answers=[" 정답 "], aliases=[" 별칭 "])
+
+    assert blank.key == " ① "
+    assert blank.answers == [" 정답 "]
+    assert blank.aliases == [" 별칭 "]
 
 
 def test_rubric_round_trips_through_json():
@@ -543,6 +614,18 @@ CONDITION_PATTERN = re.compile(
 )
 
 
+def _require_nonblank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("공백만 있는 문자열은 사용할 수 없습니다.")
+    return value
+
+
+def _require_nonblank_list(values: list[str]) -> list[str]:
+    if any(not value.strip() for value in values):
+        raise ValueError("문자열 목록에 공백만 있는 값이 있습니다.")
+    return values
+
+
 class ItemType(str, Enum):
     CLOSED_SHORT = "closed_short"   # 정답 후보가 유한한 단답
     CLOSED_TABLE = "closed_table"   # 표 각 칸에 기호 배치
@@ -560,6 +643,16 @@ class Blank(BaseModel):
     answers: list[str] = Field(min_length=1)
     aliases: list[str] = Field(default_factory=list)
 
+    @field_validator("key")
+    @classmethod
+    def key_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("answers", "aliases")
+    @classmethod
+    def candidates_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return _require_nonblank_list(values)
+
     def all_accepted(self) -> list[str]:
         return [*self.answers, *self.aliases]
 
@@ -570,16 +663,31 @@ class TableColumn(BaseModel):
     header: str
     answers: list[str] = Field(default_factory=list)
 
+    @field_validator("header")
+    @classmethod
+    def header_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("answers")
+    @classmethod
+    def answers_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return _require_nonblank_list(values)
+
 
 class ScoringRule(BaseModel):
     score: int = Field(ge=0)
     condition: str
     criterion: str
 
+    @field_validator("criterion")
+    @classmethod
+    def criterion_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
     @field_validator("condition")
     @classmethod
     def condition_must_match_grammar(cls, value: str) -> str:
-        if not CONDITION_PATTERN.match(value):
+        if not CONDITION_PATTERN.fullmatch(value):
             raise ValueError(
                 f"알 수 없는 조건식입니다: {value!r}. "
                 "허용: all_correct, none_correct, set_exact, set_partial, "
@@ -597,6 +705,20 @@ class AnswerSpec(BaseModel):
     choices: list[str] = Field(default_factory=list)
     correct_choice: str | None = None
 
+    @field_validator("numeric_answers", "choices")
+    @classmethod
+    def flat_candidates_must_not_be_blank(
+        cls, values: list[str]
+    ) -> list[str]:
+        return _require_nonblank_list(values)
+
+    @field_validator("correct_choice")
+    @classmethod
+    def correct_choice_must_not_be_blank(
+        cls, value: str | None
+    ) -> str | None:
+        return _require_nonblank(value) if value is not None else None
+
 
 class RubricPart(AnswerSpec):
     """composite 문항의 하위 파트."""
@@ -604,6 +726,11 @@ class RubricPart(AnswerSpec):
     part_id: str
     type: ItemType
     points: int = Field(ge=0)
+
+    @field_validator("part_id")
+    @classmethod
+    def part_id_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
 
 
 class RubricItem(AnswerSpec):
@@ -616,6 +743,18 @@ class RubricItem(AnswerSpec):
     scoring: list[ScoringRule] = Field(min_length=1)
     example_answer: str = ""
 
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("standard_id")
+    @classmethod
+    def standard_id_must_not_be_blank(
+        cls, value: str | None
+    ) -> str | None:
+        return _require_nonblank(value) if value is not None else None
+
 
 class AchievementStandard(BaseModel):
     id: str
@@ -623,12 +762,31 @@ class AchievementStandard(BaseModel):
     core_standard: str
     levels: dict[str, str]
 
+    @field_validator("id", "core_standard")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
+
+    @field_validator("levels")
+    @classmethod
+    def levels_must_not_contain_blank_text(
+        cls, values: dict[str, str]
+    ) -> dict[str, str]:
+        if any(not key.strip() or not value.strip() for key, value in values.items()):
+            raise ValueError("성취수준에 공백만 있는 키나 설명이 있습니다.")
+        return values
+
 
 class AssessmentMeta(BaseModel):
     title: str
     subject: str
     grade: int
     total_points: int = Field(ge=1)
+
+    @field_validator("title", "subject")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        return _require_nonblank(value)
 
 
 class Rubric(BaseModel):
@@ -643,7 +801,7 @@ class Rubric(BaseModel):
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_rubric_schema.py -v`
-Expected: PASS (4 tests)
+Expected: PASS (23 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -984,6 +1142,7 @@ from app.schemas.rubric import (
     ItemType,
     Rubric,
     RubricItem,
+    RubricPart,
     ScoringRule,
     TableColumn,
 )
@@ -1005,7 +1164,7 @@ def _scoring(points: int) -> list[ScoringRule]:
     ]
 
 
-def test_symbol_family_mismatch_is_warned():
+def test_symbol_family_mismatch_is_warned_with_item_path():
     """문항 본문은 ㉠~㉦, 예시답안은 ①~⑦ — 첨부 자료의 실제 문제."""
     item = RubricItem(
         item_no=1,
@@ -1020,7 +1179,58 @@ def test_symbol_family_mismatch_is_warned():
         example_answer="보기 ㉠㉡㉢㉣㉤㉥㉦ 중에서 고른다",
     )
     warnings = detect_warnings(_rubric([item], total=2))
+    mismatch = next(w for w in warnings if w.code == "symbol_family_mismatch")
+    assert mismatch.path == "items[1]"
+
+
+def test_mixed_symbol_families_inside_one_item_are_warned():
+    item = RubricItem(
+        item_no=1,
+        title="보기 ㉠과 ㉡을 고르기",
+        points=2,
+        type=ItemType.CLOSED_TABLE,
+        columns=[TableColumn(header="분류", answers=["㉠", "①"])],
+        scoring=_scoring(2),
+        example_answer="보기의 기호를 사용한다",
+    )
+    warnings = detect_warnings(_rubric([item], total=2))
     assert any(w.code == "symbol_family_mismatch" for w in warnings)
+
+
+def test_scoring_criterion_and_composite_part_candidates_are_checked_together():
+    item = RubricItem(
+        item_no=1,
+        title="보기에서 고르기",
+        points=1,
+        type=ItemType.COMPOSITE,
+        parts=[
+            RubricPart(
+                part_id="기호",
+                type=ItemType.CLOSED_SHORT,
+                points=1,
+                blanks=[Blank(key="빈칸", answers=["㉠"])],
+            )
+        ],
+        scoring=[
+            ScoringRule(
+                score=1,
+                condition="all_correct",
+                criterion="①을 정확하게 고름",
+            ),
+            ScoringRule(
+                score=0,
+                condition="none_correct",
+                criterion="고르지 못함",
+            ),
+        ],
+        example_answer="보기의 기호를 사용한다",
+    )
+
+    warnings = detect_warnings(_rubric([item], total=1))
+
+    assert any(w.code == "symbol_family_mismatch" for w in warnings)
+    assert item.parts[0].blanks[0].answers == ["㉠"]
+    assert item.scoring[0].criterion == "①을 정확하게 고름"
 
 
 def test_matching_symbol_family_is_not_warned():
@@ -1089,7 +1299,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.rubric_wa
 
 from dataclasses import dataclass
 
-from app.schemas.rubric import ItemType, Rubric, RubricItem
+from app.schemas.rubric import AnswerSpec, ItemType, Rubric, RubricItem
 
 # 원문자 기호 체계. 같은 문항 안에서 두 체계가 섞이면 출처가 어긋난 것이다.
 SYMBOL_FAMILIES: dict[str, str] = {
@@ -1104,6 +1314,7 @@ class Warning:
     code: str
     item_no: int | None
     message: str
+    path: str | None = None
 
 
 def _families_in(text: str) -> set[str]:
@@ -1114,35 +1325,42 @@ def _families_in(text: str) -> set[str]:
     }
 
 
-def _answer_symbols_text(item: RubricItem) -> str:
+def _answer_symbols_text(spec: AnswerSpec) -> str:
     parts: list[str] = []
-    for blank in item.blanks:
+    for blank in spec.blanks:
         parts.extend(blank.all_accepted())
         parts.append(blank.key)
-    for column in item.columns:
+    for column in spec.columns:
+        parts.append(column.header)
         parts.extend(column.answers)
-    parts.extend(item.choices)
-    if item.correct_choice:
-        parts.append(item.correct_choice)
+    parts.extend(spec.numeric_answers)
+    parts.extend(spec.choices)
+    if spec.correct_choice is not None:
+        parts.append(spec.correct_choice)
+    return " ".join(parts)
+
+
+def _item_symbols_text(item: RubricItem) -> str:
+    parts = [item.title, item.example_answer, _answer_symbols_text(item)]
+    parts.extend(rule.criterion for rule in item.scoring)
+    for part in item.parts:
+        parts.extend((part.part_id, _answer_symbols_text(part)))
     return " ".join(parts)
 
 
 def _check_symbol_family(item: RubricItem) -> Warning | None:
-    answer_families = _families_in(_answer_symbols_text(item))
-    context_families = _families_in(f"{item.title} {item.example_answer}")
-
-    if not answer_families or not context_families:
-        return None
-    if answer_families & context_families:
+    families = _families_in(_item_symbols_text(item))
+    if len(families) < 2:
         return None
 
     return Warning(
         code="symbol_family_mismatch",
         item_no=item.item_no,
+        path=f"items[{item.item_no}]",
         message=(
-            f"{item.item_no}번: 정답에 쓰인 기호 체계({', '.join(sorted(answer_families))})와 "
-            f"문항 설명의 기호 체계({', '.join(sorted(context_families))})가 다릅니다. "
-            "원본 자료의 표기가 어긋났을 수 있습니다. 자동으로 고치지 않았으니 직접 확인하세요."
+            f"{item.item_no}번: 서로 다른 원문자 기호 체계({', '.join(sorted(families))})가 "
+            "한 문항에 섞여 있습니다. 원본 자료의 표기가 어긋났을 수 있습니다. "
+            "자동으로 고치지 않았으니 원본을 직접 확인하세요."
         ),
     )
 
@@ -1160,6 +1378,7 @@ def detect_warnings(rubric: Rubric) -> list[Warning]:
                 Warning(
                     code="missing_example_answer",
                     item_no=item.item_no,
+                    path=f"items[{item.item_no}].example_answer",
                     message=f"{item.item_no}번: 예시답안이 비어 있습니다. 채점 근거 제시가 약해집니다.",
                 )
             )
@@ -1169,9 +1388,10 @@ def detect_warnings(rubric: Rubric) -> list[Warning]:
                 Warning(
                     code="manual_review_required",
                     item_no=item.item_no,
+                    path=f"items[{item.item_no}]",
                     message=(
                         f"{item.item_no}번은 작도 문항입니다({item.points}점). "
-                        "v1에서는 자동 채점하지 않고 교사 검토로 넘어갑니다."
+                        "첫 버전에서는 자동 채점하지 않고 교사 검토로 넘어갑니다."
                     ),
                 )
             )
@@ -1181,9 +1401,10 @@ def detect_warnings(rubric: Rubric) -> list[Warning]:
             Warning(
                 code="missing_level_cutoffs",
                 item_no=None,
+                path="level_cutoffs",
                 message=(
                     "성취수준 컷오프가 설정되지 않았습니다. "
-                    "채점기준표에는 보통 없는 값이라 직접 입력해야 피드백에 성취수준이 표시됩니다."
+                    "직접 입력해야 피드백에 성취수준이 표시됩니다."
                 ),
             )
         )
@@ -1194,7 +1415,7 @@ def detect_warnings(rubric: Rubric) -> list[Warning]:
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_rubric_warnings.py -v`
-Expected: PASS (5 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -1711,7 +1932,7 @@ CompleteAdapter = Callable[[LLMOutboundRequest], LLMResponse]
 ListModelsAdapter = Callable[[OutboundRequest], list[str]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class _ProviderState:
     gateway: TransmissionGateway
     complete_adapter: CompleteAdapter
@@ -1726,7 +1947,7 @@ class LLMProvider:
     전송 흐름을 바꾸지 못하게 한다.
     """
 
-    __slots__ = ("__weakref__",)
+    __slots__ = ("__state", "__weakref__")
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         raise TypeError(
@@ -1757,6 +1978,15 @@ class LLMProvider:
                         "언어 모형 제공자 실행 손잡이의 정체성이 충돌했습니다."
                     )
 
+            try:
+                object.__getattribute__(self, "_LLMProvider__state")
+            except AttributeError:
+                pass
+            else:
+                raise TypeError(
+                    "언어 모형 제공자 실행 손잡이는 이미 초기화되었습니다."
+                )
+
             if type(gateway) is not TransmissionGateway:
                 raise TypeError(
                     "언어 모형 제공자는 정확한 전송 게이트웨이를 사용해야 합니다."
@@ -1764,19 +1994,21 @@ class LLMProvider:
             if not callable(complete_adapter) or not callable(list_models_adapter):
                 raise TypeError("언어 모형 제공자 어댑터는 호출할 수 있어야 합니다.")
 
+            state = _ProviderState(
+                gateway=gateway,
+                complete_adapter=complete_adapter,
+                list_models_adapter=list_models_adapter,
+            )
             handle_ref = ref(
                 self,
                 lambda dead_ref, object_id=identity: _cleanup_provider_state(
                     object_id, dead_ref
                 ),
             )
+            object.__setattr__(self, "_LLMProvider__state", state)
             _PROVIDER_STATES[identity] = _ProviderEntry(
                 handle_ref=handle_ref,
-                state=_ProviderState(
-                    gateway=gateway,
-                    complete_adapter=complete_adapter,
-                    list_models_adapter=list_models_adapter,
-                ),
+                state_ref=ref(state),
             )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -1809,19 +2041,29 @@ class LLMProvider:
     def _state(self) -> _ProviderState:
         if type(self) is not LLMProvider:
             raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
+        try:
+            slot_state = object.__getattribute__(self, "_LLMProvider__state")
+        except AttributeError:
+            raise TypeError(
+                "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
+            ) from None
         with _PROVIDER_STATES_LOCK:
             entry = _PROVIDER_STATES.get(id(self))
-            if entry is None or entry.handle_ref() is not self:
+            if (
+                entry is None
+                or entry.handle_ref() is not self
+                or entry.state_ref() is not slot_state
+            ):
                 raise TypeError(
                     "초기화된 언어 모형 제공자 실행 손잡이가 필요합니다."
                 )
-            return entry.state
+            return slot_state
 
 
 @dataclass(frozen=True)
 class _ProviderEntry:
     handle_ref: ReferenceType[LLMProvider]
-    state: _ProviderState
+    state_ref: ReferenceType[_ProviderState]
 
 
 _PROVIDER_STATES: dict[int, _ProviderEntry] = {}
@@ -2407,11 +2649,18 @@ P1의 핵심이다. 채점기준표·예시답안 PDF를 읽어 루브릭 JSON�
 
 ```python
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from app.providers.base import LLMResponse
 from app.services.pdf_extract import PdfExtract, PdfPage
-from app.services.rubric_compiler import CompileResult, compile_rubric
+from app.services.rubric_compiler import (
+    CompileResult,
+    RubricCompileAuthority,
+    compile_rubric,
+)
 from tests.fakes import make_fake_llm_provider
 
 VALID_RUBRIC = {
@@ -2462,14 +2711,102 @@ VALID_RUBRIC = {
 @pytest.fixture
 def extracts():
     page = PdfPage(page_no=1, text="채점기준표 내용", image_png=b"\x89PNG fake")
-    return [PdfExtract(source_path="rubric.pdf", pages=[page])]
+    return [PdfExtract(source_path=Path("rubric.pdf"), pages=[page])]
 
 
-def test_compiles_valid_rubric(extracts):
+@pytest.fixture
+def authority():
+    return RubricCompileAuthority(
+        assessment={
+            "title": "교사 평가명",
+            "subject": "교사 과목",
+            "grade": 6,
+            "total_points": 4,
+        },
+        achievement_standards=[
+            {
+                "id": "AS1",
+                "item_range": [1, 2],
+                "core_standard": "교사 성취기준",
+                "levels": {"1": "기초", "2": "보통", "3": "충분"},
+            }
+        ],
+        level_cutoffs={"3": 4, "2": 2, "1": 0},
+    )
+
+
+def test_authority_can_be_built_from_assessment_and_rejects_bad_cutoffs():
+    record = SimpleNamespace(
+        title="행 평가명",
+        subject="수학",
+        grade=6,
+        total_points=4,
+        achievement_standards=[
+            {
+                "id": "AS1",
+                "item_range": [1, 2],
+                "core_standard": "행 성취기준",
+                "levels": {"1": "기초"},
+            }
+        ],
+        level_cutoffs={"3": 4, "1": 0},
+    )
+
+    built = RubricCompileAuthority.from_assessment(record)
+
+    assert built.assessment.title == "행 평가명"
+    assert built.achievement_standards[0].core_standard == "행 성취기준"
+    with pytest.raises(ValueError, match="총점 범위를 벗어납니다"):
+        RubricCompileAuthority(
+            assessment={
+                "title": "평가",
+                "subject": "수학",
+                "grade": 6,
+                "total_points": 4,
+            },
+            achievement_standards=[],
+            level_cutoffs={"3": 5, "1": 0},
+        )
+
+
+def test_teacher_authority_overrides_all_model_metadata(extracts, authority):
+    changed = json.loads(json.dumps(VALID_RUBRIC, ensure_ascii=False))
+    changed["assessment"] = {
+        "title": "모형 평가명",
+        "subject": "모형 과목",
+        "grade": 99,
+        "total_points": 999,
+    }
+    changed["achievement_standards"] = "잘못된 모양"
+    changed["level_cutoffs"] = {"3": 999}
+    provider, adapter = make_fake_llm_provider(
+        responses=[json.dumps(changed, ensure_ascii=False)]
+    )
+
+    result = compile_rubric(provider, extracts, authority)
+
+    assert result.succeeded
+    assert result.attempts == 1
+    assert result.rubric.assessment.title == "교사 평가명"
+    assert result.rubric.achievement_standards[0].core_standard == "교사 성취기준"
+    assert result.rubric.level_cutoffs == {"3": 4, "2": 2, "1": 0}
+    assert len(adapter.requests) == 1
+
+
+def test_exact_provider_handle_is_required(extracts, authority):
+    class BypassProvider:
+        def complete(self, _request):
+            return LLMResponse(text=json.dumps(VALID_RUBRIC, ensure_ascii=False))
+
+    with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
+        compile_rubric(BypassProvider(), extracts, authority)
+
+
+def test_compiles_valid_rubric(extracts, authority):
     provider, _adapter = make_fake_llm_provider(
         responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
     )
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
 
     assert isinstance(result, CompileResult)
     assert result.succeeded
@@ -2478,14 +2815,14 @@ def test_compiles_valid_rubric(extracts):
     assert result.errors == []
 
 
-def test_strips_markdown_code_fence(extracts):
+def test_strips_markdown_code_fence(extracts, authority):
     fenced = "```json\n" + json.dumps(VALID_RUBRIC, ensure_ascii=False) + "\n```"
     provider, _adapter = make_fake_llm_provider(responses=[fenced])
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
     assert result.succeeded
 
 
-def test_retries_once_with_error_feedback(extracts):
+def test_retries_once_with_error_feedback(extracts, authority):
     broken = json.loads(json.dumps(VALID_RUBRIC))
     broken["items"][0]["points"] = 99  # 배점 합계가 총점과 어긋남
     provider, adapter = make_fake_llm_provider(
@@ -2494,49 +2831,88 @@ def test_retries_once_with_error_feedback(extracts):
             json.dumps(VALID_RUBRIC, ensure_ascii=False),
         ]
     )
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
 
     assert result.succeeded
     assert len(adapter.requests) == 2
     assert "배점 합계" in adapter.requests[1].user_text
 
 
-def test_gives_up_after_second_failure(extracts):
+def test_gives_up_after_second_failure(extracts, authority):
     broken = json.loads(json.dumps(VALID_RUBRIC))
     broken["items"][0]["points"] = 99
     payload = json.dumps(broken, ensure_ascii=False)
     provider, adapter = make_fake_llm_provider(responses=[payload, payload])
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
 
     assert not result.succeeded
     assert any("배점 합계" in e for e in result.errors)
     assert len(adapter.requests) == 2
 
 
-def test_malformed_json_is_reported(extracts):
+def test_malformed_json_is_reported(extracts, authority):
     provider, _adapter = make_fake_llm_provider(
         responses=["이건 JSON 이 아닙니다", "여전히 아닙니다"]
     )
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
     assert not result.succeeded
     assert any("JSON" in e for e in result.errors)
 
 
-def test_warnings_are_returned_alongside_rubric(extracts):
+def test_warnings_are_returned_alongside_rubric(extracts, authority):
     provider, _adapter = make_fake_llm_provider(
         responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
     )
-    result = compile_rubric(provider, extracts, total_points=4)
+    result = compile_rubric(provider, extracts, authority)
     # 2번이 작도 문항이므로 교사 검토 경고가 나와야 한다.
     assert any(w.code == "manual_review_required" for w in result.warnings)
 
 
-def test_images_are_sent_to_llm(extracts):
+def test_images_are_sent_to_llm(extracts, authority):
     provider, adapter = make_fake_llm_provider(
         responses=[json.dumps(VALID_RUBRIC, ensure_ascii=False)]
     )
-    compile_rubric(provider, extracts, total_points=4)
+    compile_rubric(provider, extracts, authority)
     assert adapter.requests[0].images == [b"\x89PNG fake"]
+    assert "rubric.pdf" not in adapter.requests[0].user_text
+
+
+def test_whitespace_required_text_retries_as_schema_error(extracts, authority):
+    broken = json.loads(json.dumps(VALID_RUBRIC, ensure_ascii=False))
+    broken["items"][0]["scoring"][0]["criterion"] = "   "
+    provider, adapter = make_fake_llm_provider(
+        responses=[
+            json.dumps(broken, ensure_ascii=False),
+            json.dumps(VALID_RUBRIC, ensure_ascii=False),
+        ]
+    )
+
+    result = compile_rubric(provider, extracts, authority)
+
+    assert result.succeeded
+    assert "items.0.scoring.0.criterion" in adapter.requests[1].user_text
+
+
+def test_last_structured_result_survives_sanitized_provider_failure(
+    extracts, authority
+):
+    broken = json.loads(json.dumps(VALID_RUBRIC, ensure_ascii=False))
+    broken["items"][0]["points"] = 99
+    broken["items"][0]["title"] = "㉠과 ① 고르기"
+    provider, _adapter = make_fake_llm_provider(
+        responses=[
+            json.dumps(broken, ensure_ascii=False),
+            RuntimeError("비밀 제공자 오류"),
+        ]
+    )
+
+    result = compile_rubric(provider, extracts, authority)
+
+    assert not result.succeeded
+    assert result.rubric is not None
+    assert result.rubric.items[0].title == "㉠과 ① 고르기"
+    assert any(w.code == "symbol_family_mismatch" for w in result.warnings)
+    assert result.errors == ["언어 모형 제공자 호출에 실패했습니다."]
 ```
 
 - [ ] **Step 2: 테스트 실패 확인**
@@ -2556,18 +2932,25 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.rubric_co
 
 import json
 import re
+from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any, Self
 
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import TypeAdapter, ValidationError as PydanticValidationError
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.schemas.rubric import Rubric
+from app.schemas.rubric import AchievementStandard, AssessmentMeta, Rubric
 from app.services.pdf_extract import PdfExtract
-from app.services.rubric_validator import validate_rubric
+from app.services.rubric_validator import validate_level_cutoffs, validate_rubric
 from app.services.rubric_warnings import Warning, detect_warnings
 
 MAX_ATTEMPTS = 2
-_CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_LEVEL_CUTOFFS_ADAPTER = TypeAdapter(dict[str, int])
+_CODE_FENCE = re.compile(
+    r"\A```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```[ \t]*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
 
 SYSTEM_PROMPT = """당신은 한국 초·중등 논술형 평가의 채점기준표를 구조화된 데이터로 변환하는 도구입니다.
 
@@ -2620,6 +3003,107 @@ SYSTEM_PROMPT = """당신은 한국 초·중등 논술형 평가의 채점기준
 JSON 객체 하나만 출력하세요. 설명 문장이나 코드 펜스를 붙이지 마세요."""
 
 
+@dataclass(frozen=True, init=False)
+class RubricCompileAuthority:
+    """교사가 정한 평가 메타자료 전체의 깊은 불변 스냅샷."""
+
+    _snapshot_json: str = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        assessment: AssessmentMeta | Mapping[str, Any],
+        achievement_standards: Iterable[
+            AchievementStandard | Mapping[str, Any]
+        ],
+        level_cutoffs: Mapping[str, int],
+    ) -> None:
+        checked_assessment = AssessmentMeta.model_validate(assessment)
+        checked_standards = [
+            AchievementStandard.model_validate(standard)
+            for standard in achievement_standards
+        ]
+        checked_cutoffs = _LEVEL_CUTOFFS_ADAPTER.validate_python(level_cutoffs)
+        cutoff_errors = validate_level_cutoffs(
+            checked_assessment.total_points,
+            checked_cutoffs,
+        )
+        if cutoff_errors:
+            messages = "; ".join(error.message for error in cutoff_errors)
+            raise ValueError(f"교사 정본 수준 경계값이 올바르지 않습니다. {messages}")
+        snapshot = {
+            "assessment": checked_assessment.model_dump(mode="json"),
+            "achievement_standards": [
+                standard.model_dump(mode="json") for standard in checked_standards
+            ],
+            "level_cutoffs": checked_cutoffs,
+        }
+        object.__setattr__(
+            self,
+            "_snapshot_json",
+            json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+
+    @classmethod
+    def from_assessment(cls, assessment: object) -> Self:
+        checked_assessment = AssessmentMeta.model_validate(
+            assessment, from_attributes=True
+        )
+        return cls(
+            assessment=checked_assessment,
+            achievement_standards=getattr(assessment, "achievement_standards"),
+            level_cutoffs=getattr(assessment, "level_cutoffs"),
+        )
+
+    def _payload(self) -> dict[str, Any]:
+        return json.loads(self._snapshot_json)
+
+    @property
+    def assessment(self) -> AssessmentMeta:
+        return AssessmentMeta.model_validate(self._payload()["assessment"])
+
+    @property
+    def achievement_standards(self) -> list[AchievementStandard]:
+        return [
+            AchievementStandard.model_validate(standard)
+            for standard in self._payload()["achievement_standards"]
+        ]
+
+    @property
+    def level_cutoffs(self) -> dict[str, int]:
+        return _LEVEL_CUTOFFS_ADAPTER.validate_python(
+            self._payload()["level_cutoffs"]
+        )
+
+    @property
+    def total_points(self) -> int:
+        return self.assessment.total_points
+
+    def prompt_json(self) -> str:
+        return json.dumps(
+            self._payload(), ensure_ascii=False, indent=2, sort_keys=True
+        )
+
+    def apply_to(self, rubric: Rubric) -> Rubric:
+        authoritative = rubric.model_copy(deep=True)
+        authoritative.assessment = self.assessment
+        authoritative.achievement_standards = self.achievement_standards
+        authoritative.level_cutoffs = self.level_cutoffs
+        return authoritative
+
+    def overwrite_payload(self, payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        authoritative = deepcopy(payload)
+        authoritative.update(deepcopy(self._payload()))
+        return authoritative
+
+
 @dataclass
 class CompileResult:
     rubric: Rubric | None
@@ -2633,17 +3117,24 @@ class CompileResult:
 
 
 def _strip_code_fence(text: str) -> str:
-    return _CODE_FENCE.sub("", text.strip()).strip()
+    stripped = text.strip()
+    match = _CODE_FENCE.fullmatch(stripped)
+    return match.group("body").strip() if match is not None else stripped
 
 
-def _build_user_text(extracts: list[PdfExtract], total_points: int) -> str:
+def _build_user_text(
+    extracts: list[PdfExtract], authority: RubricCompileAuthority
+) -> str:
     documents = "\n\n".join(
-        f"=== 문서 {index + 1}: {extract.source_path} ===\n{extract.full_text()}"
-        for index, extract in enumerate(extracts)
+        f"=== 문서 {index} ===\n{extract.full_text()}"
+        for index, extract in enumerate(extracts, start=1)
     )
     return (
-        f"다음은 교사가 올린 채점 자료입니다. 총점은 {total_points}점입니다.\n"
-        f"각 문서의 페이지 이미지도 함께 첨부했습니다. 표 구조는 이미지를 보고 판단하세요.\n\n"
+        "아래 교사 정본의 assessment, achievement_standards, level_cutoffs는 "
+        "그대로 사용하고 바꾸지 마세요.\n"
+        f"{authority.prompt_json()}\n\n"
+        f"다음은 교사가 올린 채점 자료입니다. 총점은 {authority.total_points}점입니다.\n"
+        "각 문서의 쪽 이미지도 함께 첨부했습니다. 표 구조는 이미지를 보고 판단하세요.\n\n"
         f"{documents}"
     )
 
@@ -2652,80 +3143,113 @@ def _collect_images(extracts: list[PdfExtract]) -> list[bytes]:
     return [page.image_png for extract in extracts for page in extract.pages]
 
 
-def _parse_and_validate(raw_text: str, total_points: int) -> tuple[Rubric | None, list[str]]:
-    cleaned = _strip_code_fence(raw_text)
+def _schema_errors(error: PydanticValidationError) -> list[str]:
+    messages: list[str] = []
+    for detail in error.errors():
+        path = ".".join(str(part) for part in detail["loc"]) or "루브릭"
+        messages.append(f"{path}: {detail['msg']}")
+    return messages
 
+
+def _parse_and_validate(
+    raw_text: str, authority: RubricCompileAuthority
+) -> tuple[Rubric | None, list[str]]:
     try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        return None, [f"응답을 JSON 으로 읽을 수 없습니다: {exc}"]
+        payload = json.loads(_strip_code_fence(raw_text))
+    except json.JSONDecodeError as error:
+        return None, [
+            "응답을 JSON으로 읽을 수 없습니다. "
+            f"{error.lineno}번째 줄 {error.colno}번째 칸을 확인하세요."
+        ]
 
+    payload = authority.overwrite_payload(payload)
     try:
         rubric = Rubric.model_validate(payload)
-    except PydanticValidationError as exc:
-        messages = [
-            f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
-            for err in exc.errors()
-        ]
-        return None, messages
+    except PydanticValidationError as error:
+        return None, _schema_errors(error)
 
-    # 총점은 교사가 입력한 값이 정본이다.
-    rubric.assessment.total_points = total_points
-
+    rubric = authority.apply_to(rubric)
     errors = [error.message for error in validate_rubric(rubric)]
-    if errors:
-        return rubric, errors
-    return rubric, []
+    return rubric, errors
+
+
+def _retry_user_text(
+    extracts: list[PdfExtract],
+    authority: RubricCompileAuthority,
+    errors: list[str],
+) -> str:
+    feedback = "\n".join(f"- {error}" for error in errors)
+    return (
+        f"{_build_user_text(extracts, authority)}\n\n"
+        "직전 결과에 다음 구조 문제가 있었습니다. 각 문제를 고쳐 다시 출력하세요.\n"
+        f"{feedback}"
+    )
 
 
 def compile_rubric(
     provider: LLMProvider,
     extracts: list[PdfExtract],
-    total_points: int,
+    authority: RubricCompileAuthority,
 ) -> CompileResult:
-    user_text = _build_user_text(extracts, total_points)
-    images = _collect_images(extracts)
+    if type(provider) is not LLMProvider:
+        raise TypeError("정확한 언어 모형 제공자 실행 손잡이가 필요합니다.")
 
+    images = _collect_images(extracts)
     last_rubric: Rubric | None = None
     last_errors: list[str] = []
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        if attempt > 1:
-            joined = "\n".join(f"- {error}" for error in last_errors)
-            user_text = (
-                f"{_build_user_text(extracts, total_points)}\n\n"
-                f"직전 시도의 결과에 다음 문제가 있었습니다. 고쳐서 다시 출력하세요.\n{joined}"
-            )
-
-        response = LLMProvider.complete(
-            provider,
-            LLMRequest(
-                system=SYSTEM_PROMPT,
-                user_text=user_text,
-                images=images,
-                purpose="rubric_compile",
-            ),
+        user_text = (
+            _build_user_text(extracts, authority)
+            if attempt == 1
+            else _retry_user_text(extracts, authority, last_errors)
+        )
+        request = LLMRequest(
+            system=SYSTEM_PROMPT,
+            user_text=user_text,
+            images=images,
+            purpose="rubric_compile",
         )
 
-        last_rubric, last_errors = _parse_and_validate(response.text, total_points)
-        if not last_errors:
+        try:
+            response = LLMProvider.complete(provider, request)
+            raw_text = response.text
+        except Exception:
             return CompileResult(
                 rubric=last_rubric,
-                errors=[],
-                warnings=detect_warnings(last_rubric),
+                errors=["언어 모형 제공자 호출에 실패했습니다."],
+                warnings=(
+                    detect_warnings(last_rubric)
+                    if last_rubric is not None
+                    else []
+                ),
+                attempts=attempt,
+            )
+
+        parsed_rubric, last_errors = _parse_and_validate(raw_text, authority)
+        if parsed_rubric is not None:
+            last_rubric = parsed_rubric
+        if not last_errors:
+            assert parsed_rubric is not None
+            return CompileResult(
+                rubric=parsed_rubric,
+                warnings=detect_warnings(parsed_rubric),
                 attempts=attempt,
             )
 
     warnings = detect_warnings(last_rubric) if last_rubric is not None else []
     return CompileResult(
-        rubric=last_rubric, errors=last_errors, warnings=warnings, attempts=MAX_ATTEMPTS
+        rubric=last_rubric,
+        errors=last_errors,
+        warnings=warnings,
+        attempts=MAX_ATTEMPTS,
     )
 ```
 
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_rubric_compiler.py -v`
-Expected: PASS (7 tests)
+Expected: PASS (12 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -3410,7 +3934,11 @@ from app.providers.gateway import TransmissionGateway
 from app.providers.gemini_llm import create_gemini_provider
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import extract_pdf
-from app.services.rubric_compiler import CompileResult, compile_rubric
+from app.services.rubric_compiler import (
+    CompileResult,
+    RubricCompileAuthority,
+    compile_rubric,
+)
 from app.services.rubric_validator import validate_rubric
 from app.services.rubric_warnings import detect_warnings
 
@@ -3454,6 +3982,7 @@ def run_compile(
             "사용할 모델이 선택되지 않았습니다. 설정 화면에서 고르세요.",
         )
 
+    authority = RubricCompileAuthority.from_assessment(assessment)
     extracts = [extract_pdf(Path(document.stored_path)) for document in documents]
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
@@ -3466,7 +3995,7 @@ def run_compile(
         model=model,
         gateway=gateway,
     )
-    return compile_rubric(provider, extracts, assessment.total_points)
+    return compile_rubric(provider, extracts, authority)
 
 
 def _load_draft(assessment_id: int, session: Session) -> RubricDraft:

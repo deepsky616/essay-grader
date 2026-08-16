@@ -1,5 +1,9 @@
+import gc
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace
+from weakref import ref
 
 import pytest
 from google.genai import types as genai_types
@@ -16,6 +20,46 @@ from app.providers.gateway import (
 )
 from app.providers.gemini_llm import create_gemini_provider
 from tests.fakes import FakeLLMAdapter, make_fake_llm_provider
+
+
+def test_provider_callback_cycles_are_collected_without_state_table_leaks(
+    tmp_path,
+):
+    gc.collect()
+    original_state_keys = set(provider_base._PROVIDER_STATES)
+
+    def make_cyclic_provider(index):
+        provider = None
+
+        def complete_adapter(_request):
+            assert provider is not None
+            return LLMResponse(text="unused")
+
+        def list_models_adapter(_request):
+            assert provider is not None
+            return []
+
+        provider = LLMProvider(
+            TransmissionGateway(
+                tmp_path / f"cyclic-{index}.log", set, "test-provider"
+            ),
+            complete_adapter,
+            list_models_adapter,
+        )
+        return ref(provider)
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        provider_refs = [make_cyclic_provider(index) for index in range(100)]
+        assert all(provider_ref() is not None for provider_ref in provider_refs)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    gc.collect()
+
+    assert all(provider_ref() is None for provider_ref in provider_refs)
+    assert set(provider_base._PROVIDER_STATES) == original_state_keys
 
 
 def test_provider_is_one_exact_concrete_handle_composed_with_adapter(tmp_path):
@@ -93,6 +137,43 @@ def test_provider_rejects_reinitialization_and_keeps_original_composition(tmp_pa
     assert not replacement_audit.exists()
 
 
+def test_two_threads_cannot_initialize_the_same_provider_handle(tmp_path):
+    provider = object.__new__(LLMProvider)
+    adapters = [
+        FakeLLMAdapter(responses=["first"]),
+        FakeLLMAdapter(responses=["second"]),
+    ]
+    workers_ready = Barrier(2)
+
+    def initialize(index):
+        workers_ready.wait()
+        try:
+            LLMProvider.__init__(
+                provider,
+                TransmissionGateway(
+                    tmp_path / f"concurrent-{index}.log",
+                    set,
+                    "test-provider",
+                ),
+                adapters[index].complete,
+                adapters[index].list_models,
+            )
+        except TypeError as error:
+            return str(error)
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(initialize, range(2)))
+
+    assert results.count(None) == 1
+    assert sum("이미 초기화" in result for result in results if result) == 1
+    assert provider.complete(LLMRequest(system="safe", user_text="safe")).text in {
+        "first",
+        "second",
+    }
+    assert sum(len(adapter.requests) for adapter in adapters) == 1
+
+
 def test_provider_init_rejects_equal_hash_foreign_object_without_pollution(
     tmp_path,
 ):
@@ -114,6 +195,7 @@ def test_provider_init_rejects_equal_hash_foreign_object_without_pollution(
             return True
 
     foreign = EqualHashForeign()
+    original_state_keys = set(provider_base._PROVIDER_STATES)
     with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
         LLMProvider.__init__(foreign, object(), object(), object())
 
@@ -130,6 +212,7 @@ def test_provider_init_rejects_equal_hash_foreign_object_without_pollution(
     response = provider.complete(LLMRequest(system="safe", user_text="safe"))
     assert response.text == "original"
     assert replacement_adapter.requests == []
+    assert set(provider_base._PROVIDER_STATES) == original_state_keys
 
 
 def test_provider_states_are_isolated_from_equal_hash_semantics(
@@ -154,22 +237,55 @@ def test_provider_states_are_isolated_from_equal_hash_semantics(
     assert second.complete(LLMRequest(system="safe", user_text="second")).text == "second"
 
 
-def test_stale_weakref_cleanup_does_not_remove_reused_identity_entry():
+def test_late_cleanup_from_collected_owner_keeps_reused_identity_entry(
+    monkeypatch,
+):
     first, _first_adapter = make_fake_llm_provider(responses=[])
     second, _second_adapter = make_fake_llm_provider(responses=[])
 
     assert all(type(key) is int for key in provider_base._PROVIDER_STATES)
     first_identity = id(first)
     first_entry = provider_base._PROVIDER_STATES[first_identity]
-    second_entry = provider_base._PROVIDER_STATES[id(second)]
+    second_identity = id(second)
+    second_entry = provider_base._PROVIDER_STATES[second_identity]
+    pending_cleanups = []
+    real_cleanup = provider_base._cleanup_provider_state
+    monkeypatch.setattr(
+        provider_base,
+        "_cleanup_provider_state",
+        lambda identity, dead_ref: pending_cleanups.append((identity, dead_ref)),
+    )
+    first_ref = ref(first)
+    del first
+    gc.collect()
+
+    assert first_ref() is None
+    matching_cleanups = [
+        cleanup
+        for cleanup in pending_cleanups
+        if cleanup[0] == first_identity
+        and cleanup[1] is first_entry.handle_ref
+    ]
+    assert len(matching_cleanups) == 1
+    cleanup_identity, dead_ref = matching_cleanups[0]
+    assert cleanup_identity == first_identity
+    assert dead_ref is first_entry.handle_ref
+    for pending_cleanup in pending_cleanups:
+        if not (
+            pending_cleanup[0] == cleanup_identity
+            and pending_cleanup[1] is dead_ref
+        ):
+            real_cleanup(*pending_cleanup)
+
     provider_base._PROVIDER_STATES[first_identity] = second_entry
     try:
-        cleanup = first_entry.handle_ref.__callback__
-        assert cleanup is not None
-        cleanup(first_entry.handle_ref)
+        real_cleanup(cleanup_identity, dead_ref)
         assert provider_base._PROVIDER_STATES[first_identity] is second_entry
     finally:
-        provider_base._PROVIDER_STATES[first_identity] = first_entry
+        if provider_base._PROVIDER_STATES.get(first_identity) is second_entry:
+            del provider_base._PROVIDER_STATES[first_identity]
+
+    assert provider_base._PROVIDER_STATES[second_identity] is second_entry
 
 
 @pytest.mark.parametrize("method_name", ["complete", "list_models"])
@@ -194,6 +310,27 @@ def test_provider_composition_cannot_be_rebound_after_creation(
 
     with pytest.raises(AttributeError, match=attribute_name):
         setter(provider, attribute_name, object())
+
+
+def test_provider_rejects_private_state_slot_replacement():
+    provider, original_adapter = make_fake_llm_provider(responses=["original"])
+    replacement, replacement_adapter = make_fake_llm_provider(
+        responses=["replacement"]
+    )
+    original_state = object.__getattribute__(provider, "_LLMProvider__state")
+    replacement_state = object.__getattribute__(
+        replacement, "_LLMProvider__state"
+    )
+
+    object.__setattr__(provider, "_LLMProvider__state", replacement_state)
+    try:
+        with pytest.raises(TypeError, match="초기화된 언어 모형 제공자"):
+            provider.complete(LLMRequest(system="safe", user_text="safe"))
+    finally:
+        object.__setattr__(provider, "_LLMProvider__state", original_state)
+
+    assert original_adapter.requests == []
+    assert replacement_adapter.requests == []
 
 
 @pytest.mark.parametrize(
@@ -241,6 +378,7 @@ def test_provider_subclass_is_unsupported_but_escaped_class_still_fails_exact_gu
 
     adapter = FakeLLMAdapter(responses=["unguarded"])
     provider = object.__new__(escaped_types[0])
+    original_state_keys = set(provider_base._PROVIDER_STATES)
 
     with pytest.raises(TypeError, match="정확한 언어 모형 제공자"):
         LLMProvider.__init__(
@@ -258,6 +396,7 @@ def test_provider_subclass_is_unsupported_but_escaped_class_still_fails_exact_gu
 
     assert adapter.requests == []
     assert not (tmp_path / "audit.log").exists()
+    assert set(provider_base._PROVIDER_STATES) == original_state_keys
 
 
 def test_provider_rejects_transmission_gateway_subclass(tmp_path):
