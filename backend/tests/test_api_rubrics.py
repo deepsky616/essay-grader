@@ -5,6 +5,7 @@ import pytest
 
 from app.config import settings
 from app.models import RubricDraft, SourceDocument
+from app.models.classroom import Classroom, Student
 from app.providers.credentials import CredentialStoreError
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import PdfExtract, PdfPage
@@ -384,6 +385,13 @@ def test_run_compile_uses_bound_runtime_safe_path_and_single_provider(
         else (None, None),
     )
     monkeypatch.setattr(rubrics, "extract_pdf", lambda path: extract)
+    db_session.add(
+        Classroom(
+            name="6-3",
+            students=[Student(number=1, name="김미래")],
+        )
+    )
+    db_session.commit()
 
     def fake_provider(**kwargs):
         seen.update(kwargs)
@@ -408,6 +416,7 @@ def test_run_compile_uses_bound_runtime_safe_path_and_single_provider(
     gateway = seen["gateway"]
     assert gateway._provider == "gemini"
     assert gateway._audit_log_path == settings.audit_log_path()
+    assert gateway._pii_terms_provider() == {"김미래"}
 
 
 @pytest.mark.parametrize(

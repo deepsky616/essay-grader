@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.assessments import load_assessment
 from app.api.settings import get_credential_store, read_llm_runtime
@@ -23,6 +23,7 @@ from app.models.rubric import RubricDraft
 from app.providers.credentials import CredentialStoreError
 from app.providers.gateway import TransmissionGateway
 from app.providers.gemini_llm import create_gemini_provider
+from app.providers.pii_terms import roster_pii_terms
 from app.schemas.rubric import Rubric
 from app.services.pdf_extract import extract_pdf
 from app.services.rubric_compiler import (
@@ -135,7 +136,9 @@ def run_compile(
 
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
-        pii_terms_provider=set,
+        pii_terms_provider=roster_pii_terms(
+            sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        ),
         provider="gemini",
     )
     try:
