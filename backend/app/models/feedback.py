@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -16,6 +16,10 @@ class Feedback(Base, TimestampMixin):
         CheckConstraint(
             "level IS NULL OR level IN ('1', '2', '3')",
             name="ck_feedbacks_level",
+        ),
+        CheckConstraint(
+            "degraded IN (0, 1)",
+            name="ck_feedbacks_degraded",
         ),
         CheckConstraint(
             "length(summary) <= 10000",
@@ -44,6 +48,7 @@ class Feedback(Base, TimestampMixin):
     )
     total_score: Mapped[int] = mapped_column(Integer, nullable=False)
     level: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     item_comments: Mapped[list[dict[str, Any]]] = mapped_column(
         NestedMutableList.as_mutable(JSON),
         nullable=False,
