@@ -8,3 +8,5 @@ Task 2: Ruling: 마커 248과 249는 예약되지 않은 번호로 거절하고,
 Task 2: complete (local fallback review clean, focused 30 passed, backend 382 passed; implementation commit ce96419)
 Task 3: Ruling: 응답 영역과 문서 크기를 그리기 전에 모두 검사하고 마커의 흰 여백과 겹치는 영역은 거절한다. 배부용 PDF는 같은 폴더의 임시 파일에서 완성하고 쪽 수를 다시 확인한 뒤 한 번에 교체한다 — 손상된 인쇄물이나 부분 출력이 원본 또는 마지막 정상 출력으로 둔갑하지 않게 하기 위해서다 — 이 판단이 틀리면 일부 특수 PDF의 저장 기능을 별도로 보강해야 한다.
 Task 3: complete (local fallback review clean, focused 17 passed, backend 399 passed; implementation commit 5f900d6)
+Task 4: Ruling: 완전한 네 마커가 있으면 결정론적 대응점을 우선하고, 양쪽 모두 마커가 없는 기존 양식만 ORB와 RANSAC으로 맞춘다. 일부 마커나 서로 다른 쪽 번호는 더 약한 경로로 숨기지 않는다 — 손상된 쪽을 그럴듯하게 잘못 정합하는 일을 막기 위해서다 — 이 판단이 틀리면 마커가 일부 가려진 현장 자료의 수동 검토량이 늘 수 있다.
+Task 4: complete (local fallback review clean, focused 14 passed, backend 413 passed; implementation commit 29e804e)
