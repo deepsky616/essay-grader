@@ -36,3 +36,5 @@ Task 16: Ruling: 포인터 좌표는 원본 답안지 화소로 바꾸고 이미
 Task 16: complete (local fallback review clean, focused backend 19 passed, backend 596 passed, frontend build and audit passed; implementation commit db979c5)
 Task 17: Ruling: 배치가 시작되면 올리기 당시 학급을 결과 표시의 기준으로 고정하고 상태 조회는 겹치지 않게 이어 간다. 이미 배정된 학생을 고르는 교사 수정은 유일성 오류로 막지 않고 같은 배치 안 두 제출의 학생을 한 트랜잭션에서 맞바꾼다 — 실제 오배정은 두 학생이 서로 뒤바뀐 형태가 흔하고 한쪽만 덮으면 다른 제출이 미배정되기 때문이다 — 이 판단이 틀리면 셋 이상이 순환해 어긋난 배정에는 여러 번의 맞바꾸기가 필요하다.
 Task 17: complete (local fallback review clean, focused scan API 13 passed, backend 596 passed, frontend build and audit passed, responsive browser check passed; implementation commit f646af9)
+Task 18: Ruling: 장비가 없는 환경에서 실물 검출률과 필기구 품질을 추정해 통과로 적지 않고, 합성 자동 검사 결과와 현장 확인표를 분리한다 — 현장 안전 근거를 꾸며 내지 않으면서 뒤 단계 구현을 계속하기 위해서다 — 이 판단이 틀리면 실제 장비 확인 전에는 P3 이후 기능을 시험할 수 없게 된다.
+Task 18: verification guide complete; physical print, handwriting, 300dpi scan, and feed-fault injection remain pending external equipment.
