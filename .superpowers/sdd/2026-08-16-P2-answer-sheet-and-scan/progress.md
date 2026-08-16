@@ -26,3 +26,5 @@ Task 11: Ruling: 모든 입력 계약과 식별정보 겹침을 처리 전에 �
 Task 11: complete (local fallback review clean, focused 18 passed, backend 543 passed; implementation commit cee89c2)
 Task 12: Ruling: 명렬표 붙여넣기와 학급 생성 양쪽에서 학생 수, 이름, 양의 번호와 중복을 검사하고, 잘못된 줄 오류에는 원문 이름을 되돌려 주지 않는다. 학생 수정은 경로의 학급 소속을 함께 확인한다 — 민감한 이름이 오류 응답에 복제되거나 다른 학급 학생이 잘못 수정되는 일을 막기 위해서다 — 이 판단이 틀리면 한 학급 500명 제한을 쓰는 특수 운영은 별도 가져오기 경로가 필요하다.
 Task 12: complete (local fallback review clean, focused 15 passed, backend 558 passed; implementation commit ecd51e1)
+Task 13: Ruling: 원본과 생성 PDF는 안전한 업로드 폴더의 일반 파일만 쓰고, 실제 쪽 수와 200 dpi 렌더 크기를 다시 검사한다. 모든 영역을 검증한 뒤 관계 목록을 원자적으로 교체하고 새 원본이면 기존 영역과 인쇄 참조를 비운다 — 좌표계가 바뀐 영역이나 외부 경로 파일이 정상 템플릿으로 쓰이는 일을 막기 위해서다 — 이 판단이 틀리면 생성 뒤 참조가 끊긴 예전 인쇄 PDF를 정리하는 보관 정책이 필요하다.
+Task 13: complete (local fallback review clean, focused 35 passed, backend 576 passed; implementation commit b0c713d)
