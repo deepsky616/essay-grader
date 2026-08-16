@@ -14,6 +14,7 @@ class LLMRequest:
     max_output_tokens: int = 32000
     json_output: bool = True
     purpose: str = "rubric_compile"
+    anonymous_token: str | None = None
 
 
 @dataclass
@@ -128,6 +129,7 @@ class LLMProvider:
             purpose=request.purpose,
             text_parts=[request.system, request.user_text],
             image_parts=request.images,
+            anonymous_token=request.anonymous_token,
             max_output_tokens=request.max_output_tokens,
             json_output=request.json_output,
         )

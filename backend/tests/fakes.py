@@ -74,6 +74,7 @@ class FakeLLMAdapter:
                 max_output_tokens=request.max_output_tokens,
                 json_output=request.json_output,
                 purpose=request.purpose,
+                anonymous_token=request.anonymous_token,
             )
         )
         if not self._responses:
