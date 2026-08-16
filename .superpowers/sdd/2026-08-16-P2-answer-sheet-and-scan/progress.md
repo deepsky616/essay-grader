@@ -20,3 +20,5 @@ Task 8: Ruling: 식별정보 이미지는 회색 복사본으로 지역 실행 �
 Task 8: complete (local fallback review clean, focused 10 passed, backend 481 passed; implementation commit 6eab307; local tesseract binary unavailable)
 Task 9: Ruling: 식별정보 영역은 페이지 안의 유효한 사각형으로 먼저 검사하고 응답 영역과 한 화소라도 겹치면 크롭 자체를 만들지 않는다. 결과는 원본과 메모리를 나누지 않는 읽기 전용 복사본이다 — 식별정보가 들어간 영상이 뒤 전송 단계까지 존재하지 않게 하기 위해서다 — 이 판단이 틀리면 아주 가까운 경계에서 손글씨가 잘릴 수 있어 영역 지정 화면의 여백 안내가 필요하다.
 Task 9: complete (local fallback review clean, focused 23 passed, backend 504 passed; implementation commit bdf8389)
+Task 10: Ruling: 설계 문서의 소유 관계를 외래 키와 삭제 규칙으로 옮기고 상태, 좌표, 범위, 품질, 경로와 중복에 데이터베이스 제약을 둔다. 원본 답안지 문서 삭제는 템플릿을 없애지 않고 참조만 비운다 — 잘못된 처리 상태와 조용한 중복 저장을 자료 계층에서 막기 위해서다 — 이 판단이 틀리면 현장 자료 이관 때 기존의 느슨한 레코드를 정리하는 이동 절차가 필요하다.
+Task 10: complete (local fallback review clean, focused 21 passed, backend 525 passed; implementation commit 2d95bcf)
