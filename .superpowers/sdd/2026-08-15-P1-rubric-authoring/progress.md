@@ -109,6 +109,8 @@ Task 15: Ruling: API 키와 현재 키에 묶인 모형을 평가 생성 전에 
 Task 15: complete (local fallback review clean, frontend build passed, npm audit 0 vulnerabilities; implementation commit 5a27ddd)
 Task 16: Ruling: 스키마 형태 오류는 정상 초안을 바꾸지 않는 고정 422로 거절하고, 수준 경계값은 평가 정본 API로 저장한다. 정적 서빙은 화면 GET만 뿌리 문서로 되돌리고 알 수 없는 API와 자산은 404를 유지한다 — 프런트 자료형 신뢰와 선생님 정본, API 실패 가시성을 지키기 위해서다 — 이 판단이 틀리면 옛 깨진 초안 이행과 마침표가 든 화면 주소 처리 규칙이 필요하다.
 Task 16: complete (local fallback and browser review clean, backend tests 334 passed, frontend build passed, npm audit 0 vulnerabilities; implementation commit 8a4df83)
+Task 17: Ruling: 저장소와 작업 입력에 예시 PDF, HWPX, 개인 API 키가 없으므로 실제 외부 컴파일 결과를 추정하지 않고, 자동 검사와 격리된 브라우저 검증 증거 및 남은 절차를 기록한다 — 검증 진실성과 개인 자격 정보 경계를 지키기 위해서다 — 이 판단이 틀리면 P1 실제 자료 완료 표시는 입력 제공 때까지 남는다.
+Task 17: complete for available inputs (backend 334 passed, focused 134 passed, frontend build passed, browser QA passed; real sample compile deferred honestly)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
