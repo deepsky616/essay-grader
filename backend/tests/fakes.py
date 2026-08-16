@@ -5,6 +5,11 @@ import numpy as np
 
 from app.providers.base import LLMOutboundRequest, LLMProvider, LLMRequest, LLMResponse
 from app.providers.gateway import OutboundRequest, TransmissionGateway
+from app.schemas.recognition import (
+    RecognitionKind,
+    RecognitionStatus,
+    RecognizedResponse,
+)
 
 
 class FakeLocalOCR:
@@ -23,6 +28,61 @@ class FakeLocalOCR:
         if not self._results:
             return ""
         return self._results.pop(0)
+
+
+class FakeRecognitionProvider:
+    """준비된 지역 시험 결과만 차례대로 돌려주는 인식 대역."""
+
+    def __init__(
+        self,
+        classify_results: list[list[str]] | None = None,
+        transcribe_results: list[str] | None = None,
+        confidence: float = 0.95,
+    ) -> None:
+        self._classify = [list(values) for values in (classify_results or [])]
+        self._transcribe = list(transcribe_results or [])
+        self._confidence = confidence
+        self.calls: list[str] = []
+
+    def classify(
+        self,
+        image: bytes,
+        candidates: list[str],
+        slot_count: int = 1,
+        anonymous_token: str | None = None,
+    ) -> RecognizedResponse:
+        self.calls.append("classify")
+        if not self._classify:
+            return RecognizedResponse(
+                kind=RecognitionKind.CLASSIFY,
+                status=RecognitionStatus.UNREADABLE,
+                confidence=0.0,
+            )
+        return RecognizedResponse(
+            kind=RecognitionKind.CLASSIFY,
+            status=RecognitionStatus.OK,
+            values=self._classify.pop(0),
+            confidence=self._confidence,
+        )
+
+    def transcribe(
+        self,
+        image: bytes,
+        anonymous_token: str | None = None,
+    ) -> RecognizedResponse:
+        self.calls.append("transcribe")
+        if not self._transcribe:
+            return RecognizedResponse(
+                kind=RecognitionKind.TRANSCRIBE,
+                status=RecognitionStatus.UNREADABLE,
+                confidence=0.0,
+            )
+        return RecognizedResponse(
+            kind=RecognitionKind.TRANSCRIBE,
+            status=RecognitionStatus.OK,
+            text=self._transcribe.pop(0),
+            confidence=self._confidence,
+        )
 
 
 class FakeKeyring:
