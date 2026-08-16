@@ -10,3 +10,5 @@ Task 3: Ruling: 응답 영역과 문서 크기를 그리기 전에 모두 검사
 Task 3: complete (local fallback review clean, focused 17 passed, backend 399 passed; implementation commit 5f900d6)
 Task 4: Ruling: 완전한 네 마커가 있으면 결정론적 대응점을 우선하고, 양쪽 모두 마커가 없는 기존 양식만 ORB와 RANSAC으로 맞춘다. 일부 마커나 서로 다른 쪽 번호는 더 약한 경로로 숨기지 않는다 — 손상된 쪽을 그럴듯하게 잘못 정합하는 일을 막기 위해서다 — 이 판단이 틀리면 마커가 일부 가려진 현장 자료의 수동 검토량이 늘 수 있다.
 Task 4: complete (local fallback review clean, focused 14 passed, backend 413 passed; implementation commit 29e804e)
+Task 5: Ruling: 조명 정규화 뒤 템플릿보다 어두워진 부분만 후보로 만들고, 템플릿 인쇄 요소를 작은 정합 오차만큼 부풀려 제외한다. 출력은 이진 읽기 전용 마스크로 고정한다 — 인쇄선과 조명 변화를 학생 필기로 잘못 넘기는 일을 줄이기 위해서다 — 이 판단이 틀리면 인쇄선 위를 지나는 실제 필기의 일부가 함께 사라질 수 있다.
+Task 5: complete (local fallback review clean, focused 15 passed, backend 428 passed; implementation commit 5576016)
