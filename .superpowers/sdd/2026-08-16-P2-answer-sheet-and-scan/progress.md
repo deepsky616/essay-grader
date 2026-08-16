@@ -16,3 +16,5 @@ Task 6: Ruling: 마커 수열을 먼저 훑어 누락과 중복의 첫 어긋난
 Task 6: complete (local fallback review clean, focused 26 passed, backend 454 passed; implementation commit a271309)
 Task 7: Ruling: 유니코드와 공백을 정규화한 뒤 실제 편집 거리로 명렬표 후보를 매기고, 같은 최소 거리 후보가 둘 이상이면 정확 일치라도 배정하지 않는다 — 이름만으로 구분할 수 없는 학생을 임의로 선택하지 않기 위해서다 — 이 판단이 틀리면 같은 이름 학생이 있는 반은 번호를 함께 읽는 뒤 단계가 반드시 필요하다.
 Task 7: complete (local fallback review clean, focused 17 passed, backend 471 passed; implementation commit 6073e40)
+Task 8: Ruling: 식별정보 이미지는 회색 복사본으로 지역 실행 파일에만 전달하고 한국어 한 줄 모드와 10초 제한을 고정한다. 실행 오류 원문과 경로는 버리고 고정 오류만 돌려준다 — 이름과 지역 경로가 오류 사슬이나 외부 제공자로 새지 않게 하기 위해서다 — 이 판단이 틀리면 지역 설치 문제를 자세히 찾을 별도 비식별 진단 수단이 필요하다.
+Task 8: complete (local fallback review clean, focused 10 passed, backend 481 passed; implementation commit 6eab307; local tesseract binary unavailable)
