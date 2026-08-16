@@ -95,6 +95,7 @@ Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 슬롯 강한 �
 Task 9: complete (commits 0ad7480..8f07827, final review clean, backend tests 200 passed)
 
 Task 10: complete (commits 6bf1bcb..a56d167, review clean, backend tests 209 passed)
+Task 11: fix round 1/5 (0 addressed, 3 open — 성취기준 안쪽 알 수 없는 칸과 느슨한 정수 변환, 파일 상태 확인 오류의 열린 삭제, 성취수준 키 영역 미제한; review 2f64a4a)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
 Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
 Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
@@ -103,3 +104,5 @@ Task 11: Ruling: 연결된 `SourceDocument.stored_path`에 실제 파일이나 �
 Task 11: start base b89b3ca — 작업 10 최종 승인 머리와 깨끗한 작업 나무 확인
 Task 11: implementation commit cd491fa — 평가 만들기·최신순 목록·단건 조회·교사 정본 여섯 칸 수정·삭제 API, 엄격 입력 스키마, 공용 수준 경계값 검증, 고정 404·409·422 오류, 실제 파일이 있는 평가 삭제 차단, 누적 라우터 등록
 Task 11: verification — focused 24 passed, backend 233 passed, compileall passed, git diff checks passed
+Task 11: fix round 1/5 (3 addressed, 0 open — AchievementStandard의 안쪽 알 수 없는 칸 거부와 엄격한 두 정수 범위, 수준 설명과 경계값의 1·2·3 키 영역 및 엄격 값, 단일 lstat에서 파일 없음만 허용하는 닫힌 삭제 경계; commit 956e728)
+Task 11: fix round 1 verification — focused 142 passed, backend 286 passed, compileall passed, git diff checks passed
