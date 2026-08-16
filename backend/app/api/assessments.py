@@ -18,6 +18,9 @@ _INTEGRITY_ERROR_DETAIL = "자료 무결성 제약으로 요청을 처리할 수
 _LOCAL_FILES_BLOCK_DELETE_DETAIL = (
     "연결된 로컬 문서 파일을 먼저 안전하게 정리해야 합니다."
 )
+_CONFIRMED_ASSESSMENT_DETAIL = (
+    "확정된 평가는 수정할 수 없습니다. 루브릭 확정을 먼저 해제하세요."
+)
 
 
 def load_assessment(assessment_id: int, session: Session) -> Assessment:
@@ -99,6 +102,11 @@ def update_assessment(
     session: Session = Depends(get_session),
 ) -> Assessment:
     assessment = load_assessment(assessment_id, session)
+    if assessment.status == "confirmed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_CONFIRMED_ASSESSMENT_DETAIL,
+        )
     changes = payload.model_dump(exclude_unset=True, mode="json")
     proposed_total = changes.get("total_points", assessment.total_points)
     proposed_cutoffs = changes.get("level_cutoffs", assessment.level_cutoffs)

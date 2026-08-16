@@ -151,6 +151,15 @@ def read_valid_llm_model(
         return _valid_model_for_key(session, _api_key(store))
 
 
+def read_llm_runtime(
+    session: Session, store: CredentialStore
+) -> tuple[str | None, str | None]:
+    """같은 잠금 구간에서 현재 API 키와 그 키에 묶인 모형을 읽는다."""
+    with _SETTINGS_LOCK:
+        api_key = _api_key(store)
+        return api_key, _valid_model_for_key(session, api_key)
+
+
 def _current(session: Session, store: CredentialStore) -> SettingsOut:
     latest_policy_event = _latest_data_policy_event(session)
     api_key = _api_key(store)
