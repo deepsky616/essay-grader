@@ -12,3 +12,5 @@ Task 4: Ruling: 완전한 네 마커가 있으면 결정론적 대응점을 우�
 Task 4: complete (local fallback review clean, focused 14 passed, backend 413 passed; implementation commit 29e804e)
 Task 5: Ruling: 조명 정규화 뒤 템플릿보다 어두워진 부분만 후보로 만들고, 템플릿 인쇄 요소를 작은 정합 오차만큼 부풀려 제외한다. 출력은 이진 읽기 전용 마스크로 고정한다 — 인쇄선과 조명 변화를 학생 필기로 잘못 넘기는 일을 줄이기 위해서다 — 이 판단이 틀리면 인쇄선 위를 지나는 실제 필기의 일부가 함께 사라질 수 있다.
 Task 5: complete (local fallback review clean, focused 15 passed, backend 428 passed; implementation commit 5576016)
+Task 6: Ruling: 마커 수열을 먼저 훑어 누락과 중복의 첫 어긋난 위치를 찾고, 끝까지 정상일 때만 총 쪽 수와 명렬표 예상 인원을 검사한다. 어떤 실패도 부분 분할 결과를 돌려주지 않는다 — 한 장의 급지 사고가 뒤 학생 전원의 배정으로 전파되는 일을 막기 위해서다 — 이 판단이 틀리면 마지막 구간 누락은 정확한 쪽 위치 대신 총수 오류로만 안내될 수 있다.
+Task 6: complete (local fallback review clean, focused 26 passed, backend 454 passed; implementation commit a271309)
