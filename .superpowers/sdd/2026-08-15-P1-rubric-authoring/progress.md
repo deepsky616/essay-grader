@@ -94,3 +94,6 @@ Task 9: fix round 7 exception (0 addressed, 4 open — 콜백이 손잡이를 �
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 슬롯 강한 상태와 전역표 두 약한 참조, 실제 수거·경쟁·정체성 재사용 시험, P1 작업 3·5·8·9·13 계획 계약 갱신; commits f4e77d4..8f07827)
 Task 9: complete (commits 0ad7480..8f07827, final review clean, backend tests 200 passed)
 Task 9: fix round 7 exception (4 addressed, 0 open — 손잡이 소유 상태와 전역표의 두 약한 참조로 순환 수거 해결, 실제 수거·무오염·동시 초기화·늦은 콜백 회귀 시험 추가, P1 스키마·경고·컴파일러와 뒤 호출 예시를 현재 계약으로 갱신; commit cd8d2d6)
+Task 10: start base 6bf1bcb — 작업 9 승인 머리와 깨끗한 작업 나무 확인
+Task 10: implementation commit 5749c89 — 문서와 루브릭 초안 모델, 양방향 관계, 중첩 JSON 변경 추적, 외래 키와 연쇄 삭제, 평가별 하나 제약, 새 표 등록
+Task 10: verification — focused 14 passed, backend 209 passed, compileall passed, git diff checks passed
