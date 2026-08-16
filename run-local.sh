@@ -27,7 +27,7 @@ fi
 npm run build
 
 cd "$SCRIPT_DIR/backend"
-uv sync
+uv sync --extra dev
 
 echo "논술형 자동채점을 http://127.0.0.1:${APP_PORT} 에서 시작합니다."
 exec uv run uvicorn app.main:app --host 127.0.0.1 --port "$APP_PORT"
