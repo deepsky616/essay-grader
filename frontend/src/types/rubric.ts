@@ -257,3 +257,32 @@ export interface ReviewProgress {
   pending: number;
   complete: boolean;
 }
+
+export interface AccuracyRow {
+  item_no: number | null;
+  item_type: string | null;
+  confirmed: number;
+  agreed: number;
+  agreement_rate: number | null;
+}
+
+export interface AccuracyReportData {
+  by_item: AccuracyRow[];
+  by_type: Record<
+    string,
+    Omit<AccuracyRow, "item_no" | "item_type">
+  >;
+  auto_route_confirmed: number;
+  auto_route_disagreements: number;
+  auto_route_is_safe: boolean;
+}
+
+export interface TotalsRow {
+  submission_id: number;
+  student_number: number;
+  student_name: string;
+  total: number;
+  confirmed: number;
+  pending: number;
+  complete: boolean;
+}

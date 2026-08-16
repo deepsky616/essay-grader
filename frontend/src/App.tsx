@@ -1,5 +1,6 @@
 import { Link, Route, Routes } from "react-router-dom";
 
+import AccuracyReport from "./pages/AccuracyReport";
 import AssessmentList from "./pages/AssessmentList";
 import AssessmentNew from "./pages/AssessmentNew";
 import ClassroomSetup from "./pages/ClassroomSetup";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/assessments/:id/scan" element={<ScanBatch />} />
         <Route path="/batches/:batchId/grading" element={<GradingRun />} />
         <Route path="/runs/:runId/review" element={<ReviewQueue />} />
+        <Route path="/runs/:runId/accuracy" element={<AccuracyReport />} />
         <Route path="/classrooms" element={<ClassroomSetup />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>

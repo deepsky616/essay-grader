@@ -611,6 +611,37 @@ a {
   margin-bottom: 0;
 }
 
+.accuracy-summary h2 {
+  margin-bottom: 8px;
+}
+
+.accuracy-summary p {
+  margin: 6px 0 0;
+}
+
+.accuracy-summary-clear {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.accuracy-summary-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.accuracy-summary-empty {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.accuracy-table {
+  min-width: 560px;
+}
+
+.totals-table {
+  min-width: 480px;
+}
+
 @media (max-width: 520px) {
   .app-shell {
     padding: 16px;

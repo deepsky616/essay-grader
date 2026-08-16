@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  AccuracyReportData,
   Assessment,
   AssessmentInput,
   ClassroomInfo,
@@ -17,6 +18,7 @@ import type {
   SourceDocument,
   SubmissionInfo,
   TemplateInfo,
+  TotalsRow,
 } from "../types/rubric";
 
 const DEFAULT_ERROR = "요청을 처리하지 못했습니다.";
@@ -277,6 +279,14 @@ export const api = {
   cropUrl: (scoreId: number) => `/api/review/scores/${scoreId}/crop`,
 
   fullPageUrl: (scoreId: number) => `/api/review/scores/${scoreId}/page`,
+
+  getAccuracy: (runId: number) =>
+    request<AccuracyReportData>(`/api/review/runs/${runId}/accuracy`),
+
+  getTotals: (runId: number) =>
+    request<{ students: TotalsRow[] }>(
+      `/api/review/runs/${runId}/totals`,
+    ),
 
   getSettings: () => request<AppSettings>("/api/settings"),
 
