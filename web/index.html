@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fffaf0" />
+    <meta
+      name="description"
+      content="채점 기준표, 예시 답안과 학생 답안을 한곳에서 정리하는 교사용 논술형 평가 작업실"
+    />
+    <title>채점결 · 논술형 평가 작업실</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app">본문으로 건너뛰기</a>
+    <header class="topbar">
+      <a class="brand" href="#/" aria-label="채점결 첫 화면">
+        <span class="brand-mark" aria-hidden="true">결</span>
+        <span>
+          <strong>채점결</strong>
+          <small>논술형 평가 작업실</small>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="주요 메뉴">
+        <a href="#/" data-nav="home">오늘</a>
+        <a href="#/assessments" data-nav="assessments">평가</a>
+      </nav>
+      <div class="header-end">
+        <span class="mode-badge">GitHub Pages · 기기 저장</span>
+        <span class="teacher-chip"><span>선</span><strong>선생님</strong></span>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1">
+      <section class="loading-state" aria-live="polite">
+        <span class="loading-dot" aria-hidden="true"></span>
+        <p>평가 보관함을 여는 중입니다.</p>
+      </section>
+    </main>
+
+    <dialog id="notice-dialog" class="notice-dialog">
+      <form method="dialog">
+        <button class="dialog-close" value="close" aria-label="닫기">×</button>
+        <p class="section-kicker">GitHub Pages 작동 방식</p>
+        <h2>파일은 이 브라우저 안에만 저장됩니다.</h2>
+        <p>
+          GitHub Pages는 정적 호스팅이어서 서버 데이터베이스나 비밀 API 키를 둘 수 없습니다.
+          이 버전은 선택한 파일을 브라우저의 IndexedDB에 저장하며 GitHub 저장소로 전송하지 않습니다.
+        </p>
+        <ul>
+          <li>같은 기기와 같은 브라우저에서만 다시 열 수 있습니다.</li>
+          <li>브라우저 데이터를 지우면 저장된 평가도 함께 삭제됩니다.</li>
+          <li>AI 자동 채점은 보호된 별도 서버 API를 연결한 뒤 사용할 수 있습니다.</li>
+        </ul>
+        <button class="primary-action" value="close">확인했습니다</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
+
