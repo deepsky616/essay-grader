@@ -210,7 +210,7 @@ async function renderSettings() {
         <form id="api-key-form" class="api-key-form">
           <label class="model-setting">채점 모델
             <select name="model">
-              ${ChaejeomAI.SUPPORTED_MODELS.map((model) => `<option value="${model.id}" ${knownModel && model.id === savedModel ? "selected" : ""}>${escapeHtml(model.label)} · ${model.id}${model.recommended ? " (권장)" : ""}</option>`).join("")}
+              ${ChaejeomAI.SUPPORTED_MODELS.map((model) => `<option value="${model.id}" ${knownModel && model.id === savedModel ? "selected" : ""}>${escapeHtml(model.label)} · ${escapeHtml(model.note)} · ${model.id}${model.recommended ? " (권장)" : ""}</option>`).join("")}
               <option value="__custom__" ${knownModel ? "" : "selected"}>사용자 지정 모델 ID</option>
             </select>
           </label>
@@ -987,4 +987,3 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-

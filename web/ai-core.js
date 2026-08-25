@@ -7,11 +7,14 @@
 })(typeof globalThis !== "undefined" ? globalThis : window, function createChaejeomAI() {
   const MODEL = "gemini-3.7-flash";
   const SUPPORTED_MODELS = [
-    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", recommended: true },
-    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
-    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
-    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", note: "최신 안정 · 채점 품질 우선", recommended: true },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", note: "안정 · 균형형" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", note: "안정 · 일반 처리" },
+    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", note: "안정 · 비용 절약" },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", note: "안정 · 빠른 처리" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", note: "프리뷰 · 변경 가능" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "안정 · 호환성" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "안정 · 최저 비용" },
   ];
   const MAX_INLINE_BYTES = 18 * 1024 * 1024;
   const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
@@ -284,4 +287,3 @@ ${JSON.stringify(safeMetadata)}
     arrayBufferToBase64,
   };
 });
-
