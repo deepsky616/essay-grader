@@ -117,7 +117,7 @@ async function renderHome() {
           <div class="progress-heading"><span>현재 지원 범위</span><strong>브라우저 저장</strong></div>
           <ol class="progress-list">
             <li><span class="step-index">✓</span><span><strong>실제 파일 선택</strong><small>PDF·JPG·PNG·WEBP</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>성취기준·수준 입력</strong><small>문항 범위별 상·중·하 기록</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>성취기준·수준 입력</strong><small>기준과 수준을 자유롭게 추가·삭제</small></span></li>
             <li><span class="step-index">✓</span><span><strong>평가별 기기 보관</strong><small>입력 내용과 파일 원본 저장</small></span></li>
             <li><span class="step-index">✓</span><span><strong>미리보기·다운로드</strong><small>원본 자료 다시 확인</small></span></li>
           </ol>
@@ -218,7 +218,7 @@ function renderNewAssessment() {
           <label>대상 학급<input name="className" placeholder="예: 6학년 2반" required maxlength="40"></label>
         </div>
 
-        <div class="form-section-heading second-heading"><span>2</span><div><h2>성취기준과 성취수준</h2><p>문항 범위마다 기준을 나누고 상·중·하 수준을 입력하세요. 첨부 문서의 3·2·1수준은 각각 상·중·하로 대응합니다.</p></div></div>
+        <div class="form-section-heading second-heading"><span>2</span><div><h2>성취기준과 성취수준</h2><p>문항 범위마다 기준을 나누세요. 기본 상·중·하는 물론 필요한 수준을 더 만들거나 삭제하고 이름도 바꿀 수 있습니다.</p></div></div>
         <div class="achievement-editor">
           <div class="achievement-groups" data-achievement-groups>
             ${achievementGroupEditor(0)}
@@ -250,6 +250,26 @@ function renderNewAssessment() {
     updateAchievementGroupEditors(container);
   });
   form.addEventListener("click", (event) => {
+    const addLevelButton = event.target.closest("[data-add-achievement-level]");
+    if (addLevelButton) {
+      const group = addLevelButton.closest("[data-achievement-group]");
+      const levelContainer = group.querySelector("[data-achievement-levels]");
+      const nextIndex = levelContainer.children.length;
+      levelContainer.insertAdjacentHTML("beforeend", achievementLevelEditor(nextIndex, `수준 ${nextIndex + 1}`));
+      updateAchievementLevelEditors(group);
+      return;
+    }
+
+    const removeLevelButton = event.target.closest("[data-remove-achievement-level]");
+    if (removeLevelButton) {
+      const group = removeLevelButton.closest("[data-achievement-group]");
+      const levelContainer = group.querySelector("[data-achievement-levels]");
+      if (levelContainer.children.length <= 1) return;
+      removeLevelButton.closest("[data-achievement-level]").remove();
+      updateAchievementLevelEditors(group);
+      return;
+    }
+
     const removeButton = event.target.closest("[data-remove-achievement]");
     if (!removeButton) return;
     const container = form.querySelector("[data-achievement-groups]");
@@ -270,12 +290,24 @@ function achievementGroupEditor(index) {
       </div>
       <label class="achievement-range">문항 범위<input name="achievementRange" placeholder="예: 논술형평가 1~4" required maxlength="60"></label>
       <label>성취기준<textarea name="achievementStandard" rows="3" placeholder="예: 선대칭 도형과 점대칭 도형의 의미와 성질을 이해하고, 대칭인 도형을 그린다." required maxlength="1000"></textarea></label>
-      <div class="achievement-level-grid">
-        <label><span class="level-badge level-high">상</span><textarea name="achievementHigh" rows="4" placeholder="기준을 정확히 이해하고 조건에 맞게 수행할 수 있다." required maxlength="1000"></textarea></label>
-        <label><span class="level-badge level-middle">중</span><textarea name="achievementMiddle" rows="4" placeholder="기준을 이해하고 기본 조건에 맞게 수행할 수 있다." required maxlength="1000"></textarea></label>
-        <label><span class="level-badge level-low">하</span><textarea name="achievementLow" rows="4" placeholder="기준의 일부를 알고 수행을 시도한다." required maxlength="1000"></textarea></label>
+      <div class="achievement-level-grid" data-achievement-levels>
+        ${achievementLevelEditor(0, "상", "기준을 정확히 이해하고 조건에 맞게 수행할 수 있다.")}
+        ${achievementLevelEditor(1, "중", "기준을 이해하고 기본 조건에 맞게 수행할 수 있다.")}
+        ${achievementLevelEditor(2, "하", "기준의 일부를 알고 수행을 시도한다.")}
       </div>
+      <button class="add-level" type="button" data-add-achievement-level>＋ 성취수준 추가</button>
     </section>`;
+}
+
+function achievementLevelEditor(index, label, description = "") {
+  return `
+    <div class="achievement-level-item" data-achievement-level aria-label="성취수준 ${index + 1}">
+      <div class="achievement-level-heading">
+        <label>수준 이름<input name="achievementLevelLabel" value="${escapeHtml(label)}" placeholder="예: 상" required maxlength="30"></label>
+        <button type="button" data-remove-achievement-level>삭제</button>
+      </div>
+      <label>수준 설명<textarea name="achievementLevelDescription" rows="4" placeholder="${escapeHtml(description)}" required maxlength="1000"></textarea></label>
+    </div>`;
 }
 
 function updateAchievementGroupEditors(container) {
@@ -285,6 +317,15 @@ function updateAchievementGroupEditors(container) {
     group.setAttribute("aria-label", `성취기준 ${index + 1}`);
     const removeButton = group.querySelector("[data-remove-achievement]");
     removeButton.hidden = groups.length === 1;
+    updateAchievementLevelEditors(group);
+  });
+}
+
+function updateAchievementLevelEditors(group) {
+  const levels = Array.from(group.querySelectorAll("[data-achievement-level]"));
+  levels.forEach((level, index) => {
+    level.setAttribute("aria-label", `성취수준 ${index + 1}`);
+    level.querySelector("[data-remove-achievement-level]").hidden = levels.length === 1;
   });
 }
 
@@ -327,9 +368,11 @@ async function submitAssessment(event) {
       id: crypto.randomUUID(),
       itemRange: group.querySelector('[name="achievementRange"]').value.trim(),
       standard: group.querySelector('[name="achievementStandard"]').value.trim(),
-      high: group.querySelector('[name="achievementHigh"]').value.trim(),
-      middle: group.querySelector('[name="achievementMiddle"]').value.trim(),
-      low: group.querySelector('[name="achievementLow"]').value.trim(),
+      levels: Array.from(group.querySelectorAll("[data-achievement-level]")).map((level) => ({
+        id: crypto.randomUUID(),
+        label: level.querySelector('[name="achievementLevelLabel"]').value.trim(),
+        description: level.querySelector('[name="achievementLevelDescription"]').value.trim(),
+      })),
     }));
     validateFiles(groups.map(({ file }) => file));
     button.disabled = true;
@@ -421,15 +464,23 @@ async function renderAssessment(id) {
 }
 
 function achievementSummary(group, index) {
+  const levels = normalizeAchievementLevels(group);
   return `
     <article class="achievement-summary">
       <div class="achievement-summary-heading"><span>${index + 1}</span><div><small>${escapeHtml(group.itemRange)}</small><strong>${escapeHtml(group.standard)}</strong></div></div>
       <dl class="achievement-levels">
-        <div><dt class="level-badge level-high">상</dt><dd>${escapeHtml(group.high)}</dd></div>
-        <div><dt class="level-badge level-middle">중</dt><dd>${escapeHtml(group.middle)}</dd></div>
-        <div><dt class="level-badge level-low">하</dt><dd>${escapeHtml(group.low)}</dd></div>
+        ${levels.map((level, levelIndex) => `<div><dt class="level-badge level-tone-${levelIndex % 4}">${escapeHtml(level.label)}</dt><dd>${escapeHtml(level.description)}</dd></div>`).join("")}
       </dl>
     </article>`;
+}
+
+function normalizeAchievementLevels(group) {
+  if (Array.isArray(group.levels) && group.levels.length) return group.levels;
+  return [
+    { label: "상", description: group.high || "" },
+    { label: "중", description: group.middle || "" },
+    { label: "하", description: group.low || "" },
+  ];
 }
 
 function fileRow(file) {
