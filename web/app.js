@@ -1,8 +1,12 @@
 "use strict";
 
 const DB_NAME = "chaejeomgyeol-pages";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "assessments";
+const SETTINGS_STORE = "settings";
+const GEMINI_SECRET_SETTING = "gemini-api-key";
+const GEMINI_CRYPTO_SETTING = "gemini-crypto-key";
+const GEMINI_STATUS_SETTING = "gemini-key-status";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES = 60 * 1024 * 1024;
 const ACCEPTED_TYPES = new Set([
@@ -23,6 +27,7 @@ const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const noticeDialog = document.querySelector("#notice-dialog");
 let toastTimer = 0;
+let geminiApiKeyCache = "";
 
 window.addEventListener("hashchange", renderRoute);
 document.addEventListener("click", (event) => {
@@ -43,6 +48,7 @@ async function renderRoute() {
     if (path === "/") return renderHome();
     if (path === "/assessments") return renderAssessments();
     if (path === "/assessments/new") return renderNewAssessment();
+    if (path === "/settings") return renderSettings();
     const detail = path.match(/^\/assessments\/([^/]+)$/);
     if (detail) return renderAssessment(decodeURIComponent(detail[1]));
     renderNotFound();
@@ -65,7 +71,11 @@ function navigate(path) {
 
 function setCurrentNavigation(path) {
   document.querySelectorAll("[data-nav]").forEach((link) => {
-    const current = link.dataset.nav === "home" ? path === "/" : path.startsWith("/assessments");
+    const current = link.dataset.nav === "home"
+      ? path === "/"
+      : link.dataset.nav === "settings"
+        ? path === "/settings"
+        : path.startsWith("/assessments");
     link.classList.toggle("is-current", current);
     if (current) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
@@ -84,7 +94,7 @@ async function renderHome() {
         <div class="hero-copy">
           <p class="eyebrow">${escapeHtml(today)} · 오늘의 작업</p>
           <h1>평가 자료는 한곳에,<span>검토 흐름은 가볍게.</span></h1>
-          <p class="hero-description">채점 기준표와 예시 답안, 학생 답안을 실제로 선택하고 이 브라우저 안에서 평가별로 정리하세요.</p>
+          <p class="hero-description">채점 기준표와 예시 답안, 학생 답안을 정리하고 개인 Gemini API 키로 학생별 점수와 피드백을 작성하세요.</p>
         </div>
         <aside class="day-note" aria-label="오늘의 안내">
           <span class="note-pin" aria-hidden="true"></span>
@@ -114,12 +124,12 @@ async function renderHome() {
           </div>
         </div>
         <div class="progress-panel">
-          <div class="progress-heading"><span>현재 지원 범위</span><strong>브라우저 저장</strong></div>
+          <div class="progress-heading"><span>현재 지원 범위</span><strong>Gemini 자동 채점</strong></div>
           <ol class="progress-list">
             <li><span class="step-index">✓</span><span><strong>실제 파일 선택</strong><small>PDF·JPG·PNG·WEBP</small></span></li>
             <li><span class="step-index">✓</span><span><strong>성취기준·수준 입력</strong><small>기준과 수준을 자유롭게 추가·삭제</small></span></li>
             <li><span class="step-index">✓</span><span><strong>평가별 기기 보관</strong><small>입력 내용과 파일 원본 저장</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>미리보기·다운로드</strong><small>원본 자료 다시 확인</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>AI 점수·피드백</strong><small>학생별 결과 저장 및 검토</small></span></li>
           </ol>
         </div>
       </section>
@@ -174,6 +184,95 @@ async function renderAssessments() {
       </section>
       <section class="archive-note"><span>파일 하나당 최대 20MB, 평가 전체 최대 60MB</span><strong>PDF · JPG · PNG · WEBP 지원</strong></section>
     </div>`;
+}
+
+async function renderSettings() {
+  const encryptedSecret = await getSetting(GEMINI_SECRET_SETTING);
+  const keyStatus = await getSetting(GEMINI_STATUS_SETTING);
+  const hasSavedKey = Boolean(encryptedSecret?.ciphertext && encryptedSecret?.iv);
+  app.innerHTML = `
+    <div class="page-shell narrow-page">
+      <section class="page-intro settings-intro">
+        <div>
+          <p class="eyebrow">개인 설정</p>
+          <h1>내 API 키로,<br><span>안전하게 연결하세요.</span></h1>
+          <p>각 교사가 자신의 Gemini API 키를 등록합니다. 키는 GitHub 저장소나 평가 파일에 포함되지 않습니다.</p>
+        </div>
+      </section>
+      <section class="settings-card" aria-labelledby="gemini-settings-title">
+        <div class="settings-card-heading">
+          <div><p class="section-kicker">Gemini 연결</p><h2 id="gemini-settings-title">자동 채점 API 키</h2></div>
+          <span class="connection-status ${hasSavedKey ? "is-connected" : ""}">${hasSavedKey ? "저장됨" : "미설정"}</span>
+        </div>
+        <form id="api-key-form" class="api-key-form">
+          <label>Gemini API 키
+            <span class="secret-input-row">
+              <input name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${hasSavedKey ? "저장된 키를 다시 테스트하려면 비워 두세요" : "Google AI Studio에서 발급한 키를 입력하세요"}">
+              <button type="button" data-toggle-secret aria-label="API 키 표시">보기</button>
+            </span>
+          </label>
+          <label class="save-key-choice"><input name="persistKey" type="checkbox" checked> 이 브라우저에 암호화하여 저장</label>
+          <p class="settings-status" id="api-key-status" role="status">
+            ${keyStatus?.testedAt ? `${escapeHtml(keyStatus.model || ChaejeomAI.MODEL)} · ${formatDateTime(keyStatus.testedAt)} 테스트 성공` : "키를 저장하기 전에 Gemini 3.7 Flash 접근 권한을 테스트합니다."}
+          </p>
+          <div class="settings-actions">
+            <button class="primary-action" type="submit">키 테스트 후 저장</button>
+            ${hasSavedKey ? `<button class="secondary-action danger-action" type="button" data-delete-api-key>저장된 키 삭제</button>` : ""}
+          </div>
+        </form>
+      </section>
+      <section class="key-safety-grid">
+        <article><span>1</span><div><strong>저장 위치</strong><p>현재 브라우저의 IndexedDB에서 Web Crypto로 암호화합니다. 다른 기기와 동기화되지 않습니다.</p></div></article>
+        <article><span>2</span><div><strong>전송 범위</strong><p>자동 채점할 때 API 키와 선택 자료가 HTTPS로 Google Gemini API에 직접 전송됩니다.</p></div></article>
+        <article><span>3</span><div><strong>주의 사항</strong><p>브라우저 확장 프로그램이나 기기 사용자가 키에 접근할 가능성은 남습니다. 공용 PC에서는 저장을 해제하세요.</p></div></article>
+      </section>
+      <section class="settings-footnote">
+        <strong>API 키는 비밀번호처럼 관리하세요.</strong>
+        <p>Google AI Studio에서 Gemini API 전용 제한과 사용량 알림을 설정하고, 노출이 의심되면 즉시 키를 폐기해 주세요.</p>
+      </section>
+    </div>`;
+
+  const form = app.querySelector("#api-key-form");
+  const input = form.elements.apiKey;
+  const status = form.querySelector("#api-key-status");
+  form.querySelector("[data-toggle-secret]").addEventListener("click", (event) => {
+    const reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    event.currentTarget.textContent = reveal ? "숨기기" : "보기";
+    event.currentTarget.setAttribute("aria-label", reveal ? "API 키 숨기기" : "API 키 표시");
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    button.textContent = "Gemini 연결 테스트 중…";
+    status.classList.remove("is-error", "is-success");
+    try {
+      const key = input.value.trim() || await loadGeminiApiKey();
+      if (!key) throw new Error("테스트할 Gemini API 키를 입력해 주세요.");
+      const result = await ChaejeomAI.testApiKey(key);
+      geminiApiKeyCache = key;
+      if (form.elements.persistKey.checked) await saveGeminiApiKey(key);
+      else await deleteSetting(GEMINI_SECRET_SETTING);
+      await putSetting(GEMINI_STATUS_SETTING, { testedAt: new Date().toISOString(), model: result.model });
+      status.textContent = `${result.displayName} 연결 테스트에 성공했습니다.`;
+      status.classList.add("is-success");
+      input.value = "";
+      showToast("Gemini API 키를 확인하고 저장했습니다.");
+      window.setTimeout(renderSettings, 700);
+    } catch (error) {
+      status.textContent = friendlyError(error);
+      status.classList.add("is-error");
+      button.disabled = false;
+      button.textContent = "키 테스트 후 저장";
+    }
+  });
+  form.querySelector("[data-delete-api-key]")?.addEventListener("click", async () => {
+    if (!window.confirm("이 브라우저에 저장된 Gemini API 키를 삭제할까요?")) return;
+    await removeGeminiApiKey();
+    showToast("저장된 Gemini API 키를 삭제했습니다.");
+    renderSettings();
+  });
 }
 
 function assessmentRow(assessment, index) {
@@ -421,6 +520,7 @@ function validateFiles(files) {
 async function renderAssessment(id) {
   const assessment = await getAssessment(id);
   if (!assessment) return renderNotFound();
+  const hasApiKey = Boolean(await loadGeminiApiKey());
 
   app.innerHTML = `
     <div class="page-shell narrow-page">
@@ -439,13 +539,10 @@ async function renderAssessment(id) {
           ? `<div class="achievement-summary-list">${assessment.achievementGroups.map(achievementSummary).join("")}</div>`
           : `<p class="achievement-empty-copy">이 평가는 성취기준 입력 기능이 추가되기 전에 저장되었습니다.</p>`}
       </section>
+      ${gradingPanel(assessment, hasApiKey)}
       <section class="processing-note">
         <span aria-hidden="true">✓</span>
-        <div><strong>GitHub Pages 안에서 파일 보관 기능이 동작합니다.</strong><p>파일 바이트는 현재 브라우저의 IndexedDB에 저장되며 GitHub 저장소에는 들어가지 않습니다.</p></div>
-      </section>
-      <section class="processing-note ai-note">
-        <span aria-hidden="true">!</span>
-        <div><strong>AI 자동 채점 서버는 아직 연결되지 않았습니다.</strong><p>채점 기준표와 예시 답안 분석, 학생 답안 인식, 점수 제안에는 API 키를 안전하게 보관하는 별도 서버가 필요합니다. GitHub Pages 코드에 API 키를 넣지 않습니다.</p></div>
+        <div><strong>원본 파일과 채점 결과는 현재 브라우저에 저장됩니다.</strong><p>자동 채점을 실행할 때만 기준표·예시답안·학생 답안이 등록한 Gemini API 키와 함께 Google로 전송됩니다.</p></div>
       </section>
       <section class="danger-zone">
         <div><strong>이 평가를 삭제할까요?</strong><p>현재 브라우저에 저장된 메타데이터와 파일 원본이 함께 삭제되며 복구할 수 없습니다.</p></div>
@@ -455,12 +552,188 @@ async function renderAssessment(id) {
 
   app.querySelectorAll("[data-open-file]").forEach((button) => button.addEventListener("click", () => openStoredFile(assessment, button.dataset.openFile)));
   app.querySelectorAll("[data-download-file]").forEach((button) => button.addEventListener("click", () => downloadStoredFile(assessment, button.dataset.downloadFile)));
+  app.querySelector("[data-start-grading]")?.addEventListener("click", () => startAutomaticGrading(assessment));
+  app.querySelector("[data-download-results]")?.addEventListener("click", () => downloadGradingResults(assessment));
   app.querySelector("[data-delete-assessment]").addEventListener("click", async () => {
     if (!window.confirm(`‘${assessment.title}’ 평가와 파일을 이 브라우저에서 완전히 삭제할까요?`)) return;
     await removeAssessment(assessment.id);
     showToast("평가와 파일을 삭제했습니다.");
     navigate("/assessments");
   });
+}
+
+function gradingPanel(assessment, hasApiKey) {
+  const grading = assessment.grading || {};
+  const results = Array.isArray(grading.results) ? grading.results : [];
+  const errors = Array.isArray(grading.errors) ? grading.errors : [];
+  const answers = assessment.files.filter((file) => file.kind === "answers");
+  const missingKinds = ["rubric", "example", "answers"].filter((kind) => !assessment.files.some((file) => file.kind === kind));
+  const isRunning = grading.status === "running";
+  const statusLabel = ({ running: "채점 중", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[grading.status] || "채점 전";
+  const progress = answers.length ? Math.round(((grading.completedCount || 0) / answers.length) * 100) : 0;
+  return `
+    <section class="grading-library" aria-labelledby="grading-title">
+      <div class="board-toolbar grading-toolbar">
+        <div><p class="section-kicker">Gemini 3.7 Flash</p><h2 id="grading-title">AI 자동 채점과 피드백</h2></div>
+        <span class="grading-state state-${escapeHtml(grading.status || "idle")}" data-grading-state>${statusLabel}</span>
+      </div>
+      <div class="grading-control">
+        ${hasApiKey ? `
+          <div><strong>${answers.length}개 학생 답안을 순서대로 채점합니다.</strong><p>채점기준표를 우선 적용하고 예시답안·성취수준을 참고해 점수와 피드백을 작성합니다.</p></div>
+          <button class="primary-action" type="button" data-start-grading ${missingKinds.length || isRunning ? "disabled" : ""}>${results.length ? "전체 다시 채점" : "자동 채점 시작"} →</button>`
+          : `<div><strong>먼저 개인 Gemini API 키를 연결해 주세요.</strong><p>키 테스트가 완료되면 이 평가에서 자동 채점 버튼이 활성화됩니다.</p></div><a class="primary-action" href="#/settings">API 키 설정 →</a>`}
+      </div>
+      ${missingKinds.length ? `<p class="grading-warning">자동 채점에 필요한 파일이 없습니다: ${missingKinds.map((kind) => kindLabels[kind]).join(", ")}</p>` : ""}
+      <div class="grading-progress" ${isRunning ? "" : "hidden"} data-grading-progress>
+        <div><span>학생 답안 처리 중</span><strong data-grading-progress-copy>${grading.completedCount || 0} / ${answers.length}</strong></div>
+        <span class="grading-progress-track"><i style="width:${progress}%" data-grading-progress-bar></i></span>
+      </div>
+      ${results.length ? `
+        <div class="grading-results-heading"><div><strong>학생별 결과</strong><small>${results.length}개 완료 · 교사 검토 후 확정</small></div><button type="button" data-download-results>JSON 내려받기 ↓</button></div>
+        <div class="grading-results">${results.map(gradingResultCard).join("")}</div>` : `<div class="grading-empty"><span>AI</span><div><strong>아직 채점 결과가 없습니다.</strong><p>자동 채점을 시작하면 학생별 점수 근거와 피드백이 여기에 저장됩니다.</p></div></div>`}
+      ${errors.length ? `<div class="grading-errors"><strong>처리하지 못한 답안</strong><ul>${errors.map((error) => `<li>${escapeHtml(error.fileName)} · ${escapeHtml(error.message)}</li>`).join("")}</ul></div>` : ""}
+    </section>`;
+}
+
+function gradingResultCard(result, index) {
+  const questionResults = Array.isArray(result.questionResults) ? result.questionResults : [];
+  const confidenceLabels = { high: "높음", medium: "보통", low: "낮음" };
+  return `
+    <details class="grading-result" ${index === 0 ? "open" : ""}>
+      <summary>
+        <span class="result-number">${String(index + 1).padStart(2, "0")}</span>
+        <span class="result-student"><strong>${escapeHtml(result.studentIdentifier || result.sourceFileName)}</strong><small>${escapeHtml(result.sourceFileName)}</small></span>
+        <span class="result-level">${escapeHtml(result.overallAchievementLevel || "검토 필요")}</span>
+        <span class="result-score"><strong>${formatScore(result.totalScore)}</strong><small>/ ${formatScore(result.maxScore)}</small></span>
+        ${result.needsTeacherReview ? `<span class="review-pill">검토 필요</span>` : `<span class="review-pill is-clear">자동 검증</span>`}
+      </summary>
+      <div class="result-body">
+        <p class="result-summary">${escapeHtml(result.summary)}</p>
+        <div class="feedback-columns">
+          ${feedbackList("강점", result.strengths)}
+          ${feedbackList("개선점", result.improvements)}
+          ${feedbackList("다음 학습", result.nextSteps)}
+        </div>
+        <div class="question-result-list">
+          <div class="question-result-head"><span>문항</span><span>점수</span><span>판단 근거와 피드백</span><span>확신도</span></div>
+          ${questionResults.map((question) => `
+            <article>
+              <strong>${escapeHtml(question.questionNumber)}</strong>
+              <span>${formatScore(question.score)} / ${formatScore(question.maxScore)}</span>
+              <div><small>${escapeHtml(question.criterion)}</small><p>${escapeHtml(question.evidence)}</p><em>${escapeHtml(question.feedback)}</em></div>
+              <span class="confidence confidence-${escapeHtml(question.confidence)}">${confidenceLabels[question.confidence] || "낮음"}</span>
+            </article>`).join("")}
+        </div>
+        ${result.reviewReasons?.length ? `<div class="teacher-review-note"><strong>교사 확인 사항</strong><ul>${result.reviewReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
+        <p class="result-meta">${escapeHtml(result.model || ChaejeomAI.MODEL)} · ${formatDateTime(result.gradedAt)}</p>
+      </div>
+    </details>`;
+}
+
+function feedbackList(title, items) {
+  const list = Array.isArray(items) ? items : [];
+  return `<article><strong>${title}</strong>${list.length ? `<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>기록 없음</p>`}</article>`;
+}
+
+async function startAutomaticGrading(assessment) {
+  const apiKey = await loadGeminiApiKey();
+  if (!apiKey) { navigate("/settings"); return; }
+  const answerFiles = assessment.files.filter((file) => file.kind === "answers");
+  const rubric = assessment.files.find((file) => file.kind === "rubric");
+  const example = assessment.files.find((file) => file.kind === "example");
+  const blank = assessment.files.find((file) => file.kind === "blank");
+  if (!rubric || !example || !answerFiles.length) {
+    showToast("채점 기준표, 예시답안, 학생 답안을 모두 준비해 주세요.");
+    return;
+  }
+  const largestRequest = Math.max(...answerFiles.map((answer) => rubric.size + example.size + (blank?.size || 0) + answer.size));
+  if (largestRequest > ChaejeomAI.MAX_INLINE_BYTES) {
+    showToast(`한 학생 기준 AI 입력 합계가 18MB를 넘습니다. 파일을 압축하거나 학생별로 나눠 주세요.`);
+    return;
+  }
+  const regrading = assessment.grading?.results?.length;
+  const confirmed = window.confirm(`${answerFiles.length}개 학생 답안을 Google Gemini API로 전송해 ${regrading ? "다시 " : ""}채점할까요? AI 점수는 반드시 교사가 검토한 뒤 확정해 주세요.`);
+  if (!confirmed) return;
+
+  assessment.grading = {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completedCount: 0,
+    totalCount: answerFiles.length,
+    results: [],
+    errors: [],
+    model: ChaejeomAI.MODEL,
+  };
+  await putAssessment(assessment);
+  setGradingProgress(0, answerFiles.length);
+  const startButton = app.querySelector("[data-start-grading]");
+  if (startButton) { startButton.disabled = true; startButton.textContent = "채점 중…"; }
+
+  const metadata = {
+    title: assessment.title,
+    subject: assessment.subject,
+    grade: assessment.grade,
+    totalScore: assessment.totalScore,
+    achievementGroups: assessment.achievementGroups || [],
+  };
+
+  for (const answer of answerFiles) {
+    try {
+      const files = [
+        { role: "rubric", file: namedBlob(rubric.blob, rubric.name) },
+        { role: "example", file: namedBlob(example.blob, example.name) },
+        ...(blank ? [{ role: "blank", file: namedBlob(blank.blob, blank.name) }] : []),
+        { role: "studentAnswer", file: namedBlob(answer.blob, answer.name) },
+      ];
+      const result = await ChaejeomAI.gradeAnswer({ apiKey, metadata, files });
+      assessment.grading.results.push({ ...result, sourceFileId: answer.id, sourceFileName: answer.name });
+    } catch (error) {
+      assessment.grading.errors.push({ sourceFileId: answer.id, fileName: answer.name, message: friendlyError(error) });
+    }
+    assessment.grading.completedCount += 1;
+    await putAssessment(assessment);
+    setGradingProgress(assessment.grading.completedCount, answerFiles.length);
+  }
+
+  assessment.grading.finishedAt = new Date().toISOString();
+  assessment.grading.status = assessment.grading.results.length === answerFiles.length
+    ? "complete"
+    : assessment.grading.results.length
+      ? "partial"
+      : "failed";
+  await putAssessment(assessment);
+  showToast(assessment.grading.status === "complete" ? "모든 학생 답안의 AI 채점을 완료했습니다." : "일부 답안을 처리하지 못했습니다. 결과와 오류를 확인해 주세요.");
+  await renderAssessment(assessment.id);
+}
+
+function namedBlob(blob, name) {
+  if (blob instanceof File && blob.name === name) return blob;
+  return new File([blob], name || "upload", { type: blob.type || "application/octet-stream" });
+}
+
+function setGradingProgress(completed, total) {
+  const progress = app.querySelector("[data-grading-progress]");
+  if (!progress) return;
+  progress.hidden = false;
+  progress.querySelector("[data-grading-progress-copy]").textContent = `${completed} / ${total}`;
+  progress.querySelector("[data-grading-progress-bar]").style.width = `${total ? Math.round((completed / total) * 100) : 0}%`;
+  const state = app.querySelector("[data-grading-state]");
+  if (state) { state.textContent = "채점 중"; state.className = "grading-state state-running"; }
+}
+
+function downloadGradingResults(assessment) {
+  const payload = {
+    assessment: { title: assessment.title, subject: assessment.subject, grade: assessment.grade, totalScore: assessment.totalScore },
+    grading: assessment.grading,
+  };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${assessment.title.replace(/[\\/:*?"<>|]/g, "_")}_AI채점결과.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 function achievementSummary(group, index) {
@@ -545,6 +818,7 @@ function openDatabase() {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+      if (!db.objectStoreNames.contains(SETTINGS_STORE)) db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error("IndexedDB를 열 수 없습니다."));
@@ -575,6 +849,78 @@ function getAssessment(id) { return withStore("readonly", (store) => store.get(i
 function putAssessment(assessment) { return withStore("readwrite", (store) => store.put(assessment)); }
 function removeAssessment(id) { return withStore("readwrite", (store) => store.delete(id)); }
 
+async function withSettingsStore(mode, operation) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(SETTINGS_STORE, mode);
+    const store = transaction.objectStore(SETTINGS_STORE);
+    let request;
+    try { request = operation(store); } catch (error) { db.close(); reject(error); return; }
+    transaction.oncomplete = () => { db.close(); resolve(request?.result); };
+    transaction.onerror = () => { db.close(); reject(transaction.error || new Error("설정을 저장하지 못했습니다.")); };
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error("설정 저장이 중단되었습니다.")); };
+  });
+}
+
+async function getSetting(key) {
+  const record = await withSettingsStore("readonly", (store) => store.get(key));
+  return record?.value;
+}
+
+function putSetting(key, value) {
+  return withSettingsStore("readwrite", (store) => store.put({ key, value }));
+}
+
+function deleteSetting(key) {
+  return withSettingsStore("readwrite", (store) => store.delete(key));
+}
+
+async function getOrCreateGeminiCryptoKey() {
+  let encryptionKey = await getSetting(GEMINI_CRYPTO_SETTING);
+  if (encryptionKey) return encryptionKey;
+  encryptionKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  await putSetting(GEMINI_CRYPTO_SETTING, encryptionKey);
+  return encryptionKey;
+}
+
+async function saveGeminiApiKey(apiKey) {
+  const encryptionKey = await getOrCreateGeminiCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(apiKey);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, encryptionKey, encoded);
+  await putSetting(GEMINI_SECRET_SETTING, {
+    iv: Array.from(iv),
+    ciphertext: Array.from(new Uint8Array(ciphertext)),
+  });
+}
+
+async function loadGeminiApiKey() {
+  if (geminiApiKeyCache) return geminiApiKeyCache;
+  const encrypted = await getSetting(GEMINI_SECRET_SETTING);
+  if (!encrypted?.iv || !encrypted?.ciphertext) return "";
+  try {
+    const encryptionKey = await getSetting(GEMINI_CRYPTO_SETTING);
+    if (!encryptionKey) return "";
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: new Uint8Array(encrypted.iv) },
+      encryptionKey,
+      new Uint8Array(encrypted.ciphertext),
+    );
+    geminiApiKeyCache = new TextDecoder().decode(decrypted);
+    return geminiApiKeyCache;
+  } catch {
+    await deleteSetting(GEMINI_SECRET_SETTING);
+    await deleteSetting(GEMINI_STATUS_SETTING);
+    return "";
+  }
+}
+
+async function removeGeminiApiKey() {
+  geminiApiKeyCache = "";
+  await deleteSetting(GEMINI_SECRET_SETTING);
+  await deleteSetting(GEMINI_STATUS_SETTING);
+}
+
 function showToast(message) {
   window.clearTimeout(toastTimer);
   toast.textContent = message;
@@ -595,6 +941,12 @@ function formatDateTime(value) {
 function formatBytes(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function formatScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return Number.isInteger(number) ? String(number) : String(Math.round(number * 100) / 100);
 }
 
 function friendlyError(error) {
