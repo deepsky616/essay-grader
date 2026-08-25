@@ -117,9 +117,9 @@ async function renderHome() {
           <div class="progress-heading"><span>현재 지원 범위</span><strong>브라우저 저장</strong></div>
           <ol class="progress-list">
             <li><span class="step-index">✓</span><span><strong>실제 파일 선택</strong><small>PDF·JPG·PNG·WEBP</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>평가별 기기 보관</strong><small>IndexedDB에 파일 원본 저장</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>성취기준·수준 입력</strong><small>문항 범위별 상·중·하 기록</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>평가별 기기 보관</strong><small>입력 내용과 파일 원본 저장</small></span></li>
             <li><span class="step-index">✓</span><span><strong>미리보기·다운로드</strong><small>원본 자료 다시 확인</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>완전 삭제</strong><small>평가와 파일을 함께 삭제</small></span></li>
           </ol>
         </div>
       </section>
@@ -218,7 +218,16 @@ function renderNewAssessment() {
           <label>대상 학급<input name="className" placeholder="예: 6학년 2반" required maxlength="40"></label>
         </div>
 
-        <div class="form-section-heading second-heading"><span>2</span><div><h2>평가 자료 선택</h2><p>채점 기준과 예시 답안을 함께 넣어야 이후 AI 채점 서버가 같은 기준을 적용할 수 있습니다.</p></div></div>
+        <div class="form-section-heading second-heading"><span>2</span><div><h2>성취기준과 성취수준</h2><p>문항 범위마다 기준을 나누고 상·중·하 수준을 입력하세요. 첨부 문서의 3·2·1수준은 각각 상·중·하로 대응합니다.</p></div></div>
+        <div class="achievement-editor">
+          <div class="achievement-groups" data-achievement-groups>
+            ${achievementGroupEditor(0)}
+          </div>
+          <button class="add-achievement" type="button" data-add-achievement>＋ 성취기준 세트 추가</button>
+          <p class="achievement-helper">같은 평가에서도 문항 범위별 성취기준이 다르면 세트를 추가하세요. 저장한 내용은 이후 AI 피드백의 판단 근거로 사용할 수 있습니다.</p>
+        </div>
+
+        <div class="form-section-heading second-heading"><span>3</span><div><h2>평가 자료 선택</h2><p>채점 기준과 예시 답안을 함께 넣어야 이후 AI 채점 서버가 같은 기준을 적용할 수 있습니다.</p></div></div>
         <div class="upload-grid">
           ${uploadField("rubric", "채점 기준표", "필수 · PDF/JPG/PNG/WEBP", false, true)}
           ${uploadField("example", "예시 답안", "필수 · 채점 근거 보완", false, true)}
@@ -235,7 +244,48 @@ function renderNewAssessment() {
 
   const form = app.querySelector("#assessment-form");
   form.querySelectorAll("input[type=file]").forEach((input) => input.addEventListener("change", updateUploadSummary));
+  form.querySelector("[data-add-achievement]").addEventListener("click", () => {
+    const container = form.querySelector("[data-achievement-groups]");
+    container.insertAdjacentHTML("beforeend", achievementGroupEditor(container.children.length));
+    updateAchievementGroupEditors(container);
+  });
+  form.addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-remove-achievement]");
+    if (!removeButton) return;
+    const container = form.querySelector("[data-achievement-groups]");
+    if (container.children.length <= 1) return;
+    removeButton.closest("[data-achievement-group]").remove();
+    updateAchievementGroupEditors(container);
+  });
+  updateAchievementGroupEditors(form.querySelector("[data-achievement-groups]"));
   form.addEventListener("submit", submitAssessment);
+}
+
+function achievementGroupEditor(index) {
+  return `
+    <section class="achievement-group" data-achievement-group aria-label="성취기준 ${index + 1}">
+      <div class="achievement-group-heading">
+        <strong data-achievement-title>성취기준 ${index + 1}</strong>
+        <button type="button" data-remove-achievement>이 세트 삭제</button>
+      </div>
+      <label class="achievement-range">문항 범위<input name="achievementRange" placeholder="예: 논술형평가 1~4" required maxlength="60"></label>
+      <label>성취기준<textarea name="achievementStandard" rows="3" placeholder="예: 선대칭 도형과 점대칭 도형의 의미와 성질을 이해하고, 대칭인 도형을 그린다." required maxlength="1000"></textarea></label>
+      <div class="achievement-level-grid">
+        <label><span class="level-badge level-high">상</span><textarea name="achievementHigh" rows="4" placeholder="기준을 정확히 이해하고 조건에 맞게 수행할 수 있다." required maxlength="1000"></textarea></label>
+        <label><span class="level-badge level-middle">중</span><textarea name="achievementMiddle" rows="4" placeholder="기준을 이해하고 기본 조건에 맞게 수행할 수 있다." required maxlength="1000"></textarea></label>
+        <label><span class="level-badge level-low">하</span><textarea name="achievementLow" rows="4" placeholder="기준의 일부를 알고 수행을 시도한다." required maxlength="1000"></textarea></label>
+      </div>
+    </section>`;
+}
+
+function updateAchievementGroupEditors(container) {
+  const groups = Array.from(container.querySelectorAll("[data-achievement-group]"));
+  groups.forEach((group, index) => {
+    group.querySelector("[data-achievement-title]").textContent = `성취기준 ${index + 1}`;
+    group.setAttribute("aria-label", `성취기준 ${index + 1}`);
+    const removeButton = group.querySelector("[data-remove-achievement]");
+    removeButton.hidden = groups.length === 1;
+  });
 }
 
 function uploadField(name, label, description, multiple, required) {
@@ -273,6 +323,14 @@ async function submitAssessment(event) {
     const groups = ["rubric", "example", "blank", "answers"].flatMap((kind) =>
       Array.from(form.elements[kind].files || []).map((file) => ({ kind, file })),
     );
+    const achievementGroups = Array.from(form.querySelectorAll("[data-achievement-group]")).map((group) => ({
+      id: crypto.randomUUID(),
+      itemRange: group.querySelector('[name="achievementRange"]').value.trim(),
+      standard: group.querySelector('[name="achievementStandard"]').value.trim(),
+      high: group.querySelector('[name="achievementHigh"]').value.trim(),
+      middle: group.querySelector('[name="achievementMiddle"]').value.trim(),
+      low: group.querySelector('[name="achievementLow"]').value.trim(),
+    }));
     validateFiles(groups.map(({ file }) => file));
     button.disabled = true;
     button.textContent = "이 기기에 저장 중…";
@@ -284,6 +342,7 @@ async function submitAssessment(event) {
       grade: Number(form.elements.grade.value),
       totalScore: Number(form.elements.totalScore.value),
       className: form.elements.className.value.trim(),
+      achievementGroups,
       status: "uploaded",
       createdAt: new Date().toISOString(),
       files: groups.map(({ kind, file }) => ({
@@ -331,6 +390,12 @@ async function renderAssessment(id) {
         <div class="board-toolbar"><div><p class="section-kicker">선택 자료</p><h2 id="file-title">원본 파일</h2></div><small>${formatDateTime(assessment.createdAt)} 저장</small></div>
         <div class="file-list">${assessment.files.map(fileRow).join("")}</div>
       </section>
+      <section class="achievement-library" aria-labelledby="achievement-title">
+        <div class="board-toolbar"><div><p class="section-kicker">피드백 기준</p><h2 id="achievement-title">성취기준과 성취수준</h2></div><small>${(assessment.achievementGroups || []).length}개 세트</small></div>
+        ${(assessment.achievementGroups || []).length
+          ? `<div class="achievement-summary-list">${assessment.achievementGroups.map(achievementSummary).join("")}</div>`
+          : `<p class="achievement-empty-copy">이 평가는 성취기준 입력 기능이 추가되기 전에 저장되었습니다.</p>`}
+      </section>
       <section class="processing-note">
         <span aria-hidden="true">✓</span>
         <div><strong>GitHub Pages 안에서 파일 보관 기능이 동작합니다.</strong><p>파일 바이트는 현재 브라우저의 IndexedDB에 저장되며 GitHub 저장소에는 들어가지 않습니다.</p></div>
@@ -353,6 +418,18 @@ async function renderAssessment(id) {
     showToast("평가와 파일을 삭제했습니다.");
     navigate("/assessments");
   });
+}
+
+function achievementSummary(group, index) {
+  return `
+    <article class="achievement-summary">
+      <div class="achievement-summary-heading"><span>${index + 1}</span><div><small>${escapeHtml(group.itemRange)}</small><strong>${escapeHtml(group.standard)}</strong></div></div>
+      <dl class="achievement-levels">
+        <div><dt class="level-badge level-high">상</dt><dd>${escapeHtml(group.high)}</dd></div>
+        <div><dt class="level-badge level-middle">중</dt><dd>${escapeHtml(group.middle)}</dd></div>
+        <div><dt class="level-badge level-low">하</dt><dd>${escapeHtml(group.low)}</dd></div>
+      </dl>
+    </article>`;
 }
 
 function fileRow(file) {
