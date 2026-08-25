@@ -7,6 +7,7 @@ const SETTINGS_STORE = "settings";
 const GEMINI_SECRET_SETTING = "gemini-api-key";
 const GEMINI_CRYPTO_SETTING = "gemini-crypto-key";
 const GEMINI_STATUS_SETTING = "gemini-key-status";
+const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES = 60 * 1024 * 1024;
 const ACCEPTED_TYPES = new Set([
@@ -189,6 +190,8 @@ async function renderAssessments() {
 async function renderSettings() {
   const encryptedSecret = await getSetting(GEMINI_SECRET_SETTING);
   const keyStatus = await getSetting(GEMINI_STATUS_SETTING);
+  const savedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
+  const knownModel = ChaejeomAI.SUPPORTED_MODELS.some((model) => model.id === savedModel);
   const hasSavedKey = Boolean(encryptedSecret?.ciphertext && encryptedSecret?.iv);
   app.innerHTML = `
     <div class="page-shell narrow-page">
@@ -205,6 +208,16 @@ async function renderSettings() {
           <span class="connection-status ${hasSavedKey ? "is-connected" : ""}">${hasSavedKey ? "저장됨" : "미설정"}</span>
         </div>
         <form id="api-key-form" class="api-key-form">
+          <label class="model-setting">채점 모델
+            <select name="model">
+              ${ChaejeomAI.SUPPORTED_MODELS.map((model) => `<option value="${model.id}" ${knownModel && model.id === savedModel ? "selected" : ""}>${escapeHtml(model.label)} · ${model.id}${model.recommended ? " (권장)" : ""}</option>`).join("")}
+              <option value="__custom__" ${knownModel ? "" : "selected"}>사용자 지정 모델 ID</option>
+            </select>
+          </label>
+          <label class="custom-model-setting" ${knownModel ? "hidden" : ""}>사용자 지정 모델 ID
+            <input name="customModel" value="${knownModel ? "" : escapeHtml(savedModel)}" placeholder="예: gemini-3.7-flash" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="model-helper"><code>gemini-3.0-flash</code>는 공식 모델 ID가 아닙니다. Gemini 3 Flash 프리뷰를 뜻한다면 <code>gemini-3-flash-preview</code>를 선택할 수 있지만, 실제 채점에는 안정 버전인 <code>gemini-3.7-flash</code>를 권장합니다.</p>
           <label>Gemini API 키
             <span class="secret-input-row">
               <input name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${hasSavedKey ? "저장된 키를 다시 테스트하려면 비워 두세요" : "Google AI Studio에서 발급한 키를 입력하세요"}">
@@ -235,6 +248,11 @@ async function renderSettings() {
   const form = app.querySelector("#api-key-form");
   const input = form.elements.apiKey;
   const status = form.querySelector("#api-key-status");
+  const customModelField = form.querySelector(".custom-model-setting");
+  form.elements.model.addEventListener("change", () => {
+    customModelField.hidden = form.elements.model.value !== "__custom__";
+    if (!customModelField.hidden) form.elements.customModel.focus();
+  });
   form.querySelector("[data-toggle-secret]").addEventListener("click", (event) => {
     const reveal = input.type === "password";
     input.type = reveal ? "text" : "password";
@@ -250,10 +268,15 @@ async function renderSettings() {
     try {
       const key = input.value.trim() || await loadGeminiApiKey();
       if (!key) throw new Error("테스트할 Gemini API 키를 입력해 주세요.");
-      const result = await ChaejeomAI.testApiKey(key);
+      const selectedModel = form.elements.model.value === "__custom__"
+        ? form.elements.customModel.value.trim()
+        : form.elements.model.value;
+      if (!selectedModel) throw new Error("사용할 Gemini 모델 ID를 입력해 주세요.");
+      const result = await ChaejeomAI.testApiKey(key, { model: selectedModel });
       geminiApiKeyCache = key;
       if (form.elements.persistKey.checked) await saveGeminiApiKey(key);
       else await deleteSetting(GEMINI_SECRET_SETTING);
+      await putSetting(GEMINI_MODEL_SETTING, result.model);
       await putSetting(GEMINI_STATUS_SETTING, { testedAt: new Date().toISOString(), model: result.model });
       status.textContent = `${result.displayName} 연결 테스트에 성공했습니다.`;
       status.classList.add("is-success");
@@ -521,6 +544,7 @@ async function renderAssessment(id) {
   const assessment = await getAssessment(id);
   if (!assessment) return renderNotFound();
   const hasApiKey = Boolean(await loadGeminiApiKey());
+  const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
 
   app.innerHTML = `
     <div class="page-shell narrow-page">
@@ -539,7 +563,7 @@ async function renderAssessment(id) {
           ? `<div class="achievement-summary-list">${assessment.achievementGroups.map(achievementSummary).join("")}</div>`
           : `<p class="achievement-empty-copy">이 평가는 성취기준 입력 기능이 추가되기 전에 저장되었습니다.</p>`}
       </section>
-      ${gradingPanel(assessment, hasApiKey)}
+      ${gradingPanel(assessment, hasApiKey, selectedModel)}
       <section class="processing-note">
         <span aria-hidden="true">✓</span>
         <div><strong>원본 파일과 채점 결과는 현재 브라우저에 저장됩니다.</strong><p>자동 채점을 실행할 때만 기준표·예시답안·학생 답안이 등록한 Gemini API 키와 함께 Google로 전송됩니다.</p></div>
@@ -562,7 +586,7 @@ async function renderAssessment(id) {
   });
 }
 
-function gradingPanel(assessment, hasApiKey) {
+function gradingPanel(assessment, hasApiKey, selectedModel) {
   const grading = assessment.grading || {};
   const results = Array.isArray(grading.results) ? grading.results : [];
   const errors = Array.isArray(grading.errors) ? grading.errors : [];
@@ -574,7 +598,7 @@ function gradingPanel(assessment, hasApiKey) {
   return `
     <section class="grading-library" aria-labelledby="grading-title">
       <div class="board-toolbar grading-toolbar">
-        <div><p class="section-kicker">Gemini 3.7 Flash</p><h2 id="grading-title">AI 자동 채점과 피드백</h2></div>
+        <div><p class="section-kicker">${escapeHtml(selectedModel)}</p><h2 id="grading-title">AI 자동 채점과 피드백</h2></div>
         <span class="grading-state state-${escapeHtml(grading.status || "idle")}" data-grading-state>${statusLabel}</span>
       </div>
       <div class="grading-control">
@@ -638,6 +662,7 @@ function feedbackList(title, items) {
 async function startAutomaticGrading(assessment) {
   const apiKey = await loadGeminiApiKey();
   if (!apiKey) { navigate("/settings"); return; }
+  const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
   const answerFiles = assessment.files.filter((file) => file.kind === "answers");
   const rubric = assessment.files.find((file) => file.kind === "rubric");
   const example = assessment.files.find((file) => file.kind === "example");
@@ -662,7 +687,7 @@ async function startAutomaticGrading(assessment) {
     totalCount: answerFiles.length,
     results: [],
     errors: [],
-    model: ChaejeomAI.MODEL,
+    model: selectedModel,
   };
   await putAssessment(assessment);
   setGradingProgress(0, answerFiles.length);
@@ -685,7 +710,7 @@ async function startAutomaticGrading(assessment) {
         ...(blank ? [{ role: "blank", file: namedBlob(blank.blob, blank.name) }] : []),
         { role: "studentAnswer", file: namedBlob(answer.blob, answer.name) },
       ];
-      const result = await ChaejeomAI.gradeAnswer({ apiKey, metadata, files });
+      const result = await ChaejeomAI.gradeAnswer({ apiKey, metadata, files, model: selectedModel });
       assessment.grading.results.push({ ...result, sourceFileId: answer.id, sourceFileName: answer.name });
     } catch (error) {
       assessment.grading.errors.push({ sourceFileId: answer.id, fileName: answer.name, message: friendlyError(error) });

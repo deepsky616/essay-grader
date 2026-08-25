@@ -59,6 +59,19 @@ test("testApiKey explains an invalid key response", async () => {
   );
 });
 
+test("testApiKey tests the selected model id", async () => {
+  let calledUrl = "";
+  const result = await AI.testApiKey(VALID_KEY, {
+    model: "gemini-3-flash-preview",
+    fetchImpl: async (url) => {
+      calledUrl = url;
+      return new Response(JSON.stringify({ name: "models/gemini-3-flash-preview", displayName: "Gemini 3 Flash" }), { status: 200 });
+    },
+  });
+  assert.match(calledUrl, /models\/gemini-3-flash-preview$/);
+  assert.equal(result.model, "gemini-3-flash-preview");
+});
+
 test("gradeAnswer sends structured schema and normalizes the response", async () => {
   const fakeFile = (name, type, value) => {
     const bytes = new TextEncoder().encode(value);

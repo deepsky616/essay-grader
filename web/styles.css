@@ -293,6 +293,13 @@ a { color: inherit; text-decoration: none; }
 .connection-status.is-connected { background: var(--mint); color: #27634c; }
 .api-key-form { display: grid; gap: 16px; padding: 28px 29px 30px; }
 .api-key-form > label:first-child { display: grid; gap: 8px; color: var(--muted); font-size: 9px; font-weight: 900; }
+.api-key-form > label { color: var(--muted); font-size: 9px; font-weight: 900; }
+.model-setting, .custom-model-setting { display: grid; gap: 8px; }
+.model-setting select, .custom-model-setting input { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; color: var(--ink); font-size: 11px; }
+.model-setting select:focus, .custom-model-setting input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 84, 214, 0.12); }
+.custom-model-setting[hidden] { display: none; }
+.model-helper { margin: -5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.65; }
+.model-helper code { padding: 2px 4px; border-radius: 4px; background: rgba(24, 33, 56, 0.07); color: var(--blue); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 8px; }
 .secret-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: white; }
 .secret-input-row:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49, 84, 214, 0.12); }
 .secret-input-row input { min-width: 0; min-height: 48px; padding: 11px 13px; border: 0; outline: 0; background: transparent; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }

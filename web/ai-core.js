@@ -6,6 +6,13 @@
   root.ChaejeomAI = api;
 })(typeof globalThis !== "undefined" ? globalThis : window, function createChaejeomAI() {
   const MODEL = "gemini-3.7-flash";
+  const SUPPORTED_MODELS = [
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", recommended: true },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)" },
+  ];
   const MAX_INLINE_BYTES = 18 * 1024 * 1024;
   const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -54,11 +61,13 @@
     ],
   };
 
-  async function testApiKey(apiKey, fetchImpl = fetch) {
+  async function testApiKey(apiKey, options = {}) {
     const key = validateApiKey(apiKey);
+    const fetchImpl = typeof options === "function" ? options : options.fetchImpl || fetch;
+    const model = validateModelId(typeof options === "object" ? options.model : MODEL);
     let response;
     try {
-      response = await fetchImpl(`${API_ROOT}/models/${MODEL}`, {
+      response = await fetchImpl(`${API_ROOT}/models/${model}`, {
         method: "GET",
         headers: { "x-goog-api-key": key },
       });
@@ -66,16 +75,17 @@
       throw new Error(`Gemini 서버에 연결하지 못했습니다. 네트워크 또는 브라우저의 외부 요청 차단 설정을 확인해 주세요. (${error.message})`);
     }
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(geminiErrorMessage(response.status, body));
+    if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, model));
     return {
       ok: true,
-      model: body.name?.replace(/^models\//, "") || MODEL,
-      displayName: body.displayName || "Gemini 3.7 Flash",
+      model: body.name?.replace(/^models\//, "") || model,
+      displayName: body.displayName || model,
     };
   }
 
-  async function gradeAnswer({ apiKey, metadata, files, fetchImpl = fetch }) {
+  async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch }) {
     const key = validateApiKey(apiKey);
+    const selectedModel = validateModelId(model);
     const normalizedFiles = Array.isArray(files) ? files.filter((item) => item?.file) : [];
     const requiredRoles = new Set(normalizedFiles.map((item) => item.role));
     for (const role of ["rubric", "example", "studentAnswer"]) {
@@ -95,7 +105,7 @@
 
     let response;
     try {
-      response = await fetchImpl(`${API_ROOT}/models/${MODEL}:generateContent`, {
+      response = await fetchImpl(`${API_ROOT}/models/${selectedModel}:generateContent`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -114,7 +124,7 @@
     }
 
     const body = await readResponseBody(response);
-    if (!response.ok) throw new Error(geminiErrorMessage(response.status, body));
+    if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, selectedModel));
     const text = body.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim();
     if (!text) {
       const blockReason = body.promptFeedback?.blockReason;
@@ -127,7 +137,7 @@
     } catch {
       throw new Error("Gemini가 반환한 채점 결과를 JSON으로 해석하지 못했습니다. 다시 채점해 주세요.");
     }
-    return normalizeGradingResult(parsed, metadata);
+    return normalizeGradingResult(parsed, metadata, selectedModel);
   }
 
   function buildPrompt(metadata = {}, answerFileName = "학생 답안") {
@@ -161,7 +171,7 @@ ${JSON.stringify(safeMetadata)}
 반드시 지정된 JSON 스키마로만 응답하세요.`;
   }
 
-  function normalizeGradingResult(raw, metadata = {}) {
+  function normalizeGradingResult(raw, metadata = {}, model = MODEL) {
     if (!raw || typeof raw !== "object") throw new Error("채점 결과 형식이 올바르지 않습니다.");
     const assessmentMax = positiveNumber(metadata.totalScore, positiveNumber(raw.maxScore, 0));
     const reviewReasons = textList(raw.reviewReasons);
@@ -199,7 +209,7 @@ ${JSON.stringify(safeMetadata)}
       questionResults,
       needsTeacherReview: Boolean(raw.needsTeacherReview) || reviewReasons.length > 0 || questionResults.some((item) => item.confidence === "low"),
       reviewReasons: Array.from(new Set(reviewReasons)),
-      model: MODEL,
+      model: validateModelId(model),
       gradedAt: new Date().toISOString(),
     };
   }
@@ -227,15 +237,22 @@ ${JSON.stringify(safeMetadata)}
     return key;
   }
 
+  function validateModelId(value) {
+    const model = String(value || MODEL).trim();
+    if (!/^[a-z0-9][a-z0-9._-]{2,80}$/i.test(model)) throw new Error("Gemini 모델 ID 형식을 확인해 주세요.");
+    return model;
+  }
+
   async function readResponseBody(response) {
     const raw = await response.text();
     if (!raw) return {};
     try { return JSON.parse(raw); } catch { return { raw }; }
   }
 
-  function geminiErrorMessage(status, body) {
+  function geminiErrorMessage(status, body, model = MODEL) {
     const message = body?.error?.message || body?.raw || "알 수 없는 오류";
     if (/api key|API_KEY_INVALID|key not valid/i.test(message)) return `Gemini API 키가 유효하지 않습니다. Google AI Studio에서 키 상태와 사용 제한을 확인해 주세요. (${message})`;
+    if (status === 404) return `선택한 Gemini 모델 ‘${model}’을 사용할 수 없습니다. 공식 모델 ID를 확인해 주세요. (${message})`;
     if (status === 400) return `Gemini가 요청을 처리하지 못했습니다. 파일 크기와 형식을 확인해 주세요. (${message})`;
     if (status === 401 || status === 403) return `API 키가 유효하지 않거나 Gemini API 사용 권한이 없습니다. (${message})`;
     if (status === 429) return `Gemini 사용량 또는 요청 횟수 한도를 초과했습니다. 잠시 후 다시 시도해 주세요. (${message})`;
@@ -257,6 +274,7 @@ ${JSON.stringify(safeMetadata)}
 
   return {
     MODEL,
+    SUPPORTED_MODELS,
     MAX_INLINE_BYTES,
     gradingSchema,
     testApiKey,
