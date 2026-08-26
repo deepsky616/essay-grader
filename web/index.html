@@ -9,12 +9,12 @@
       content="채점 기준표, 예시 답안과 학생 답안을 한곳에서 정리하는 교사용 논술형 평가 작업실"
     />
     <title>채점결 · 논술형 평가 작업실</title>
-    <link rel="stylesheet" href="./styles.css?v=20260826-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260826-2" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" defer></script>
-    <script src="./student-workflow.js?v=20260826-1" defer></script>
-    <script src="./ai-core.js?v=20260826-1" defer></script>
-    <script src="./app.js?v=20260826-1" defer></script>
+    <script src="./student-workflow.js?v=20260826-2" defer></script>
+    <script src="./ai-core.js?v=20260826-2" defer></script>
+    <script src="./app.js?v=20260826-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#app">본문으로 건너뛰기</a>
@@ -57,7 +57,9 @@
           <li>같은 기기와 같은 브라우저에서만 다시 열 수 있습니다.</li>
           <li>브라우저 데이터를 지우면 저장된 평가도 함께 삭제됩니다.</li>
           <li>Gemini API 키는 테스트 성공 후 이 브라우저에 암호화 저장할 수 있습니다.</li>
-          <li>페이지 분석과 자동 채점 시 학생 명단, 평가 자료와 학생 답안이 Google Gemini API로 전송됩니다.</li>
+          <li>재사용 학생 명단은 현재 브라우저 안에 암호화하여 저장하며 다른 기기와 동기화되지 않습니다.</li>
+          <li>개인정보 최소 전송 모드에서는 페이지 분석 명단에서 이름을 제외하고, 채점에는 익명 번호만 사용합니다.</li>
+          <li>단, 스캔 답안에 보이는 이름과 평가 자료·학생 답안은 페이지 분석 및 자동 채점 시 Google Gemini API로 전송됩니다.</li>
         </ul>
         <button class="primary-action" value="close">확인했습니다</button>
       </form>
@@ -66,3 +68,4 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </body>
 </html>
+

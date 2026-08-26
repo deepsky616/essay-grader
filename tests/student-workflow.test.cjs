@@ -40,3 +40,19 @@ test("validatePageAssignments catches duplicate and unmatched pages", () => {
 test("rosterIdentity formats grade, class, number, and name", () => {
   assert.equal(Workflow.rosterIdentity({ grade: 6, className: 2, number: 7, name: "한별" }), "6학년 2반 7번 한별");
 });
+
+test("createPrivateRoster removes names but keeps page-matching fields", () => {
+  assert.deepEqual(Workflow.createPrivateRoster([
+    { id: "local-a", grade: 6, className: 2, number: 7, name: "한별" },
+  ]), [
+    { id: "local-a", grade: "6", className: "2", number: "7", name: "" },
+  ]);
+});
+
+test("createAnonymousStudent exposes only a grading code", () => {
+  assert.deepEqual(
+    Workflow.createAnonymousStudent({ id: "local-a", grade: 6, className: 2, number: 7, name: "한별" }, 4),
+    { id: "S005", name: "익명 학생 S005" },
+  );
+});
+

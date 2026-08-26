@@ -143,6 +143,24 @@
     ].filter(Boolean).join(" ");
   }
 
+  function createPrivateRoster(students) {
+    return normalizeRoster(students).map((student, index) => ({
+      id: student.id || `student-${String(index + 1).padStart(3, "0")}`,
+      grade: student.grade,
+      className: student.className,
+      number: student.number,
+      name: "",
+    }));
+  }
+
+  function createAnonymousStudent(student, index = 0) {
+    const code = `S${String(index + 1).padStart(3, "0")}`;
+    return {
+      id: code,
+      name: `익명 학생 ${code}`,
+    };
+  }
+
   function dedupeStudents(students) {
     const seen = new Set();
     return students.filter((student) => {
@@ -179,5 +197,8 @@
     parsePageNumbers,
     validatePageAssignments,
     rosterIdentity,
+    createPrivateRoster,
+    createAnonymousStudent,
   };
 });
+

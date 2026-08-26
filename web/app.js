@@ -8,6 +8,8 @@ const GEMINI_SECRET_SETTING = "gemini-api-key";
 const GEMINI_CRYPTO_SETTING = "gemini-crypto-key";
 const GEMINI_STATUS_SETTING = "gemini-key-status";
 const GEMINI_MODEL_SETTING = "gemini-model";
+const ROSTER_PROFILES_SETTING = "student-roster-profiles";
+const LOCAL_DATA_CRYPTO_SETTING = "local-data-crypto-key";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES = 60 * 1024 * 1024;
 const MAX_ROSTER_STUDENTS = 500;
@@ -321,7 +323,14 @@ function emptyAssessments() {
     </div>`;
 }
 
-function renderNewAssessment() {
+async function renderNewAssessment() {
+  let rosterProfiles = await loadRosterProfiles();
+  const initialProfile = rosterProfiles[0] || null;
+  const initialStudents = initialProfile?.students?.length ? initialProfile.students : [{}];
+  const initialGrade = initialStudents[0]?.grade || "6";
+  const initialClassName = initialStudents[0]?.className
+    ? `${initialGrade}학년 ${initialStudents[0].className}반`
+    : "";
   app.innerHTML = `
     <div class="page-shell narrow-page">
       <section class="page-intro">
@@ -336,9 +345,9 @@ function renderNewAssessment() {
         <div class="form-grid">
           <label class="wide-field">평가 이름<input name="title" placeholder="예: 도형의 대칭 수행평가" required maxlength="80"></label>
           <label>교과<select name="subject"><option>수학</option><option>국어</option><option>사회</option><option>과학</option><option>영어</option><option>기타</option></select></label>
-          <label>학년<select name="grade">${[1,2,3,4,5,6].map((grade) => `<option value="${grade}" ${grade === 6 ? "selected" : ""}>${grade}학년</option>`).join("")}</select></label>
+          <label>학년<select name="grade">${[1,2,3,4,5,6].map((grade) => `<option value="${grade}" ${String(grade) === String(initialGrade) ? "selected" : ""}>${grade}학년</option>`).join("")}</select></label>
           <label>총점<input name="totalScore" type="number" inputmode="numeric" min="1" max="1000" value="20" required></label>
-          <label>대상 학급<input name="className" placeholder="예: 6학년 2반" required maxlength="40"></label>
+          <label>대상 학급<input name="className" value="${escapeHtml(initialClassName)}" placeholder="예: 6학년 2반" required maxlength="40"></label>
         </div>
 
         <div class="form-section-heading second-heading"><span>2</span><div><h2>성취기준과 성취수준</h2><p>문항 범위마다 기준을 나누세요. 기본 상·중·하는 물론 필요한 수준을 더 만들거나 삭제하고 이름도 바꿀 수 있습니다.</p></div></div>
@@ -352,6 +361,17 @@ function renderNewAssessment() {
 
         <div class="form-section-heading second-heading"><span>3</span><div><h2>학생 명단</h2><p>학년·반·번호·이름을 직접 입력하거나 Excel·CSV·TSV 명단을 불러오세요.</p></div></div>
         <div class="roster-editor">
+          <div class="saved-roster-row">
+            <label>저장된 명단
+              <select name="savedRoster" data-saved-roster-select>
+                ${savedRosterOptions(rosterProfiles, initialProfile?.id)}
+              </select>
+            </label>
+            <button type="button" data-load-saved-roster ${initialProfile ? "" : "disabled"}>선택 명단 불러오기</button>
+            <button type="button" data-save-current-roster>현재 명단 저장</button>
+            <button type="button" class="danger-action" data-delete-saved-roster ${initialProfile ? "" : "disabled"}>저장 명단 삭제</button>
+            <span data-roster-save-status>${initialProfile ? `최근 명단 ‘${escapeHtml(initialProfile.name)}’을 자동으로 불러왔습니다.` : "저장한 명단은 이 브라우저에서 다음 평가에도 사용할 수 있습니다."}</span>
+          </div>
           <div class="roster-import-row">
             <label class="roster-import">명단 파일 불러오기
               <input type="file" name="rosterFile" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
@@ -361,10 +381,15 @@ function renderNewAssessment() {
           </div>
           <div class="roster-table" data-roster-table>
             <div class="roster-table-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
-            <div class="roster-rows" data-roster-rows>${rosterEditorRow(0)}</div>
+            <div class="roster-rows" data-roster-rows>${initialStudents.map((student, index) => rosterEditorRow(index, student)).join("")}</div>
           </div>
           <div class="roster-actions"><button type="button" data-add-student>＋ 학생 추가</button><strong data-roster-count>0명</strong></div>
-          <p class="achievement-helper">명단 정보는 답안 페이지를 학생별로 구분하고 결과를 정확한 학생에게 연결할 때 사용됩니다. 자동 분석 시 명단과 답안 스캔이 Gemini API로 전송됩니다.</p>
+          <label class="privacy-mode-choice"><input name="privacyMode" type="checkbox" checked> <span><strong>개인정보 최소 전송 모드 사용(권장)</strong><small>페이지 분석에는 이름을 제외하고, 채점에는 S001 같은 익명 번호만 전송합니다.</small></span></label>
+          <div class="privacy-guidance">
+            <strong>스캔 답안 자체에 적힌 이름은 AI가 볼 수 있습니다.</strong>
+            <p>가장 안전한 운영 방식은 답안지에 이름 대신 무작위 채점번호나 QR을 인쇄하고, 이름 대응표는 학교 관리 기기의 이 브라우저에만 두는 것입니다.</p>
+          </div>
+          <p class="achievement-helper">재사용 명단은 이 브라우저의 IndexedDB에 암호화하여 저장합니다. 브라우저 데이터 삭제 시 사라지며 다른 기기에는 동기화되지 않습니다.</p>
         </div>
 
         <div class="form-section-heading second-heading"><span>4</span><div><h2>평가 자료 선택</h2><p>채점 기준표·예시답안·빈 답안지와 전체 학생의 합본 답안 PDF를 준비하세요.</p></div></div>
@@ -386,6 +411,45 @@ function renderNewAssessment() {
   form.querySelectorAll(".upload-control input[type=file]").forEach((input) => input.addEventListener("change", updateUploadSummary));
   form.elements.rosterFile.addEventListener("change", (event) => importRosterFile(form, event.currentTarget.files?.[0]));
   form.querySelector("[data-download-roster-template]").addEventListener("click", downloadRosterTemplate);
+  const savedRosterSelect = form.querySelector("[data-saved-roster-select]");
+  const rosterSaveStatus = form.querySelector("[data-roster-save-status]");
+  const refreshSavedRosterControls = (selectedId = "") => {
+    savedRosterSelect.innerHTML = savedRosterOptions(rosterProfiles, selectedId);
+    const hasSelection = rosterProfiles.some((profile) => profile.id === savedRosterSelect.value);
+    form.querySelector("[data-load-saved-roster]").disabled = !hasSelection;
+    form.querySelector("[data-delete-saved-roster]").disabled = !hasSelection;
+  };
+  form.querySelector("[data-load-saved-roster]").addEventListener("click", () => {
+    const profile = rosterProfiles.find((item) => item.id === savedRosterSelect.value);
+    if (!profile) return;
+    replaceRosterRows(form, profile.students);
+    syncAssessmentFieldsWithRoster(form, profile.students);
+    rosterSaveStatus.textContent = `‘${profile.name}’ 명단 ${profile.students.length}명을 불러왔습니다.`;
+    rosterSaveStatus.classList.add("is-success");
+  });
+  form.querySelector("[data-save-current-roster]").addEventListener("click", async () => {
+    try {
+      const students = collectStudentsFromForm(form);
+      const saved = await upsertRosterProfile(students);
+      rosterProfiles = saved.profiles;
+      refreshSavedRosterControls(saved.profile.id);
+      rosterSaveStatus.textContent = `‘${saved.profile.name}’ 명단 ${saved.profile.students.length}명을 암호화하여 저장했습니다.`;
+      rosterSaveStatus.classList.add("is-success");
+      showToast("현재 학생 명단을 다음 평가에서도 사용할 수 있게 저장했습니다.");
+    } catch (error) {
+      rosterSaveStatus.textContent = friendlyError(error);
+      rosterSaveStatus.classList.remove("is-success");
+    }
+  });
+  form.querySelector("[data-delete-saved-roster]").addEventListener("click", async () => {
+    const profile = rosterProfiles.find((item) => item.id === savedRosterSelect.value);
+    if (!profile || !window.confirm(`저장된 ‘${profile.name}’ 명단을 이 브라우저에서 삭제할까요? 이미 만든 평가의 명단은 삭제되지 않습니다.`)) return;
+    rosterProfiles = rosterProfiles.filter((item) => item.id !== profile.id);
+    await saveRosterProfiles(rosterProfiles);
+    refreshSavedRosterControls(rosterProfiles[0]?.id || "");
+    rosterSaveStatus.textContent = `저장된 ‘${profile.name}’ 명단을 삭제했습니다.`;
+    rosterSaveStatus.classList.remove("is-success");
+  });
   form.querySelector("[data-add-student]").addEventListener("click", () => {
     const rows = form.querySelector("[data-roster-rows]");
     if (rows.children.length >= MAX_ROSTER_STUDENTS) { showToast(`학생은 최대 ${MAX_ROSTER_STUDENTS}명까지 입력할 수 있습니다.`); return; }
@@ -502,6 +566,26 @@ function rosterEditorRow(index, student = {}) {
       <label><span>이름</span><input name="studentName" value="${escapeHtml(student.name || "")}" placeholder="홍길동" required maxlength="40"></label>
       <button type="button" data-remove-student aria-label="이 학생 삭제">삭제</button>
     </div>`;
+}
+
+function savedRosterOptions(profiles, selectedId = "") {
+  if (!profiles.length) return '<option value="">저장된 명단 없음</option>';
+  return profiles.map((profile) => `<option value="${escapeHtml(profile.id)}" ${profile.id === selectedId ? "selected" : ""}>${escapeHtml(profile.name)} · ${profile.students.length}명 · ${formatDate(profile.updatedAt)}</option>`).join("");
+}
+
+function replaceRosterRows(form, students) {
+  const normalized = StudentWorkflow.normalizeRoster(students || []);
+  form.querySelector("[data-roster-rows]").innerHTML = (normalized.length ? normalized : [{}])
+    .map((student, index) => rosterEditorRow(index, student))
+    .join("");
+  updateRosterEditors(form);
+}
+
+function syncAssessmentFieldsWithRoster(form, students) {
+  const first = students?.[0];
+  if (!first) return;
+  if (Array.from(form.elements.grade.options).some((option) => option.value === String(first.grade))) form.elements.grade.value = String(first.grade);
+  form.elements.className.value = first.className ? `${first.grade}학년 ${first.className}반` : form.elements.className.value;
 }
 
 function updateRosterEditors(form) {
@@ -642,6 +726,7 @@ async function submitAssessment(event) {
       className: form.elements.className.value.trim(),
       achievementGroups,
       students,
+      privacyMode: form.elements.privacyMode.checked,
       status: "uploaded",
       createdAt: new Date().toISOString(),
       files: groups.map(({ kind, file }) => ({
@@ -653,6 +738,7 @@ async function submitAssessment(event) {
         blob: file,
       })),
     };
+    await upsertRosterProfile(students);
     await putAssessment(assessment);
     showToast("평가와 파일을 이 브라우저에 저장했습니다.");
     navigate(`/assessments/${assessment.id}`);
@@ -699,9 +785,9 @@ async function renderAssessment(id) {
           : `<p class="achievement-empty-copy">이 평가는 성취기준 입력 기능이 추가되기 전에 저장되었습니다.</p>`}
       </section>
       ${gradingPanel(assessment, hasApiKey, selectedModel)}
-      <section class="processing-note">
+      <section class="processing-note ${assessment.privacyMode !== false ? "privacy-active-note" : "ai-note"}">
         <span aria-hidden="true">✓</span>
-        <div><strong>학생 명단, 원본 파일과 채점 결과는 현재 브라우저에 저장됩니다.</strong><p>페이지 분석과 자동 채점을 실행할 때만 학생 명단·기준표·예시답안·빈 답안지·학생 답안이 등록한 Gemini API 키와 함께 Google로 전송됩니다.</p></div>
+        <div><strong>${assessment.privacyMode !== false ? "개인정보 최소 전송 모드가 켜져 있습니다." : "개인정보 최소 전송 모드가 꺼져 있습니다."}</strong><p>${assessment.privacyMode !== false ? "페이지 분석에는 이름을 제외하고, 자동 채점에는 익명 번호만 보냅니다. 단, 스캔 이미지에 인쇄·필기된 이름은 Gemini가 볼 수 있습니다." : "페이지 분석과 채점에 저장된 학생 정보가 포함될 수 있습니다. 다음 평가에서는 최소 전송 모드 사용을 권장합니다."}</p></div>
       </section>
       <section class="danger-zone">
         <div><strong>이 평가를 삭제할까요?</strong><p>현재 브라우저에 저장된 메타데이터와 파일 원본이 함께 삭제되며 복구할 수 없습니다.</p></div>
@@ -733,6 +819,7 @@ function studentRosterPanel(assessment, hasApiKey, selectedModel) {
   const assignmentMap = new Map(assignments.map((assignment) => [assignment.studentId, assignment]));
   const confidenceLabels = { high: "높음", medium: "보통", low: "낮음" };
   const stateLabel = ({ running: "분석 중", complete: "분할 준비", failed: "분석 실패" })[segmentation.status] || "분석 전";
+  const privacyMode = assessment.privacyMode !== false;
   if (!students.length) {
     return `
       <section class="roster-library" aria-labelledby="roster-title">
@@ -754,8 +841,8 @@ function studentRosterPanel(assessment, hasApiKey, selectedModel) {
       </div>
       <div class="segmentation-control">
         <div>
-          <strong>합본 답안의 학년·반·번호·이름을 명단과 대조합니다.</strong>
-          <p>빈 답안지는 인쇄 영역과 문항 위치를 구분하는 참고자료로 사용합니다. 분석 후 페이지 번호와 낮은 확신도를 반드시 확인하세요.</p>
+          <strong>${privacyMode ? "이름을 제외한 학년·반·번호로 합본 답안 페이지를 대조합니다." : "합본 답안의 학년·반·번호·이름을 명단과 대조합니다."}</strong>
+          <p>빈 답안지는 인쇄 영역과 문항 위치를 구분하는 참고자료로 사용합니다. ${privacyMode ? "구조화된 명단에서는 이름이 제외되지만 PDF에 보이는 이름은 전송됩니다. " : ""}분석 후 페이지 번호와 낮은 확신도를 반드시 확인하세요.</p>
         </div>
         ${hasApiKey
           ? `<button class="primary-action" type="button" data-analyze-pages ${!source || segmentation.status === "running" ? "disabled" : ""}>${assignments.length ? "페이지 다시 분석" : "페이지 자동 분석"} →</button>`
@@ -798,7 +885,11 @@ async function runPageAnalysis(assessment) {
     showToast("합본 답안과 빈 답안지의 합계가 페이지 분석 한도 18MB를 넘습니다. PDF를 압축해 주세요.");
     return;
   }
-  const confirmed = window.confirm(`학생 ${students.length}명의 학년·반·번호·이름 명단과 합본 답안 PDF를 Google Gemini API로 전송해 페이지를 자동 분석할까요? 분석 결과는 반드시 교사가 확인해 주세요.`);
+  const privacyMode = assessment.privacyMode !== false;
+  const privacyCopy = privacyMode
+    ? "구조화된 명단에서는 이름을 제외하고 학년·반·번호만 보냅니다. 단, 합본 PDF에 적힌 이름은 Google Gemini API에서 보일 수 있습니다."
+    : "학년·반·번호·이름 명단이 Google Gemini API로 전송됩니다.";
+  const confirmed = window.confirm(`학생 ${students.length}명의 합본 답안 PDF를 페이지 자동 분석할까요? ${privacyCopy} 분석 결과는 반드시 교사가 확인해 주세요.`);
   if (!confirmed) return;
   const button = app.querySelector("[data-analyze-pages]");
   if (button) { button.disabled = true; button.textContent = "페이지 분석 중…"; }
@@ -814,7 +905,7 @@ async function runPageAnalysis(assessment) {
     const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
     const result = await ChaejeomAI.matchAnswerPages({
       apiKey,
-      roster: students,
+      roster: privacyMode ? StudentWorkflow.createPrivateRoster(students) : students,
       pageCount,
       answerFile: namedBlob(source.blob, source.name),
       blankFile: blank ? namedBlob(blank.blob, blank.name) : undefined,
@@ -892,6 +983,7 @@ function gradingPanel(assessment, hasApiKey, selectedModel) {
   const statusLabel = ({ running: "채점 중", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[grading.status] || "채점 전";
   const progressTotal = grading.totalCount || targetCount;
   const progress = progressTotal ? Math.round(((grading.completedCount || 0) / progressTotal) * 100) : 0;
+  const privacyMode = assessment.privacyMode !== false;
   return `
     <section class="grading-library" aria-labelledby="grading-title">
       <div class="board-toolbar grading-toolbar">
@@ -900,7 +992,7 @@ function gradingPanel(assessment, hasApiKey, selectedModel) {
       </div>
       <div class="grading-control">
         ${hasApiKey ? `
-          <div><strong>${targetCount}명 학생 답안을 순서대로 채점합니다.</strong><p>학생별로 분할된 답안에 채점기준표를 우선 적용하고 예시답안·빈 답안지·성취수준을 참고해 점수와 피드백을 작성합니다.</p></div>
+          <div><strong>${targetCount}명 학생 답안을 순서대로 채점합니다.</strong><p>학생별로 분할된 답안에 채점기준표를 우선 적용하고 예시답안·빈 답안지·성취수준을 참고해 점수와 피드백을 작성합니다. ${privacyMode ? "명단의 실제 이름 대신 S001 같은 익명 번호를 전송합니다." : ""}</p></div>
           <button class="primary-action" type="button" data-start-grading ${missingKinds.length || isRunning || !segmentationReady || !targetCount ? "disabled" : ""}>${results.length ? "전체 다시 채점" : "학생별 자동 채점"} →</button>`
           : `<div><strong>먼저 개인 Gemini API 키를 연결해 주세요.</strong><p>키 테스트가 완료되면 이 평가에서 자동 채점 버튼이 활성화됩니다.</p></div><a class="primary-action" href="#/settings">API 키 설정 →</a>`}
       </div>
@@ -1009,8 +1101,12 @@ async function startAutomaticGrading(assessment) {
     return;
   }
   const regrading = assessment.grading?.results?.length;
+  const privacyMode = assessment.privacyMode !== false;
   const unmatchedCopy = assessment.segmentation?.unmatchedPages?.length ? ` 미매칭 페이지 ${assessment.segmentation.unmatchedPages.join(", ")}쪽은 채점에서 제외됩니다.` : "";
-  const confirmed = window.confirm(`학생 ${targets.length}명의 명단 정보와 분할 답안, 채점기준표, 예시답안${blank ? ", 빈 답안지" : ""}를 Google Gemini API로 전송해 ${regrading ? "다시 " : ""}채점할까요?${unmatchedCopy} AI 점수는 반드시 교사가 검토한 뒤 확정해 주세요.`);
+  const identityCopy = privacyMode
+    ? "실제 이름·학년·반·번호 대신 익명 채점번호를 사용합니다. 단, 분할 답안 PDF에 보이는 이름은 전송됩니다."
+    : "저장된 학생 명단 정보가 함께 전송됩니다.";
+  const confirmed = window.confirm(`학생 ${targets.length}명의 분할 답안, 채점기준표, 예시답안${blank ? ", 빈 답안지" : ""}를 Google Gemini API로 전송해 ${regrading ? "다시 " : ""}채점할까요? ${identityCopy}${unmatchedCopy} AI 점수는 반드시 교사가 검토한 뒤 확정해 주세요.`);
   if (!confirmed) return;
 
   assessment.grading = {
@@ -1035,7 +1131,7 @@ async function startAutomaticGrading(assessment) {
     achievementGroups: assessment.achievementGroups || [],
   };
 
-  for (const target of targets) {
+  for (const [targetIndex, target] of targets.entries()) {
     try {
       const files = [
         { role: "rubric", file: namedBlob(rubric.blob, rubric.name) },
@@ -1045,15 +1141,18 @@ async function startAutomaticGrading(assessment) {
       ];
       const metadata = {
         ...baseMetadata,
-        student: target.student ? {
-          ...target.student,
-          pageNumbers: target.pageNumbers,
-          matchConfidence: target.matchConfidence,
-        } : null,
+        student: target.student
+          ? {
+            ...(privacyMode ? StudentWorkflow.createAnonymousStudent(target.student, targetIndex) : target.student),
+            pageNumbers: target.pageNumbers,
+            matchConfidence: target.matchConfidence,
+          }
+          : null,
       };
       const result = await ChaejeomAI.gradeAnswer({ apiKey, metadata, files, model: selectedModel });
       assessment.grading.results.push({
         ...result,
+        studentIdentifier: target.student ? StudentWorkflow.rosterIdentity(target.student) : result.studentIdentifier,
         studentId: target.student?.id || "",
         pageNumbers: target.pageNumbers,
         sourceFileId: target.sourceFileId,
@@ -1093,15 +1192,14 @@ async function createStudentAnswerTargets(assessment, source) {
   const sourceDocument = await PDFLib.PDFDocument.load(await source.blob.arrayBuffer(), { ignoreEncryption: false, updateMetadata: false });
   if (sourceDocument.getPageCount() !== segmentation.pageCount) throw new Error("저장된 페이지 분석 결과와 현재 합본 PDF의 페이지 수가 다릅니다. 페이지를 다시 분석해 주세요.");
   const targets = [];
-  for (const assignment of validation.assignments.filter((item) => item.pageNumbers.length)) {
+  for (const [targetIndex, assignment] of validation.assignments.filter((item) => item.pageNumbers.length).entries()) {
     const student = students.get(assignment.studentId);
     if (!student) continue;
     const studentDocument = await PDFLib.PDFDocument.create();
     const copiedPages = await studentDocument.copyPages(sourceDocument, assignment.pageNumbers.map((page) => page - 1));
     copiedPages.forEach((page) => studentDocument.addPage(page));
     const bytes = await studentDocument.save({ useObjectStreams: true, addDefaultPage: false });
-    const identity = StudentWorkflow.rosterIdentity(student).replace(/[\\/:*?"<>|]/g, "_");
-    const name = `${identity || "학생"}_${assignment.pageNumbers.join("-")}쪽.pdf`;
+    const name = `student-${String(targetIndex + 1).padStart(3, "0")}_pages-${assignment.pageNumbers.join("-")}.pdf`;
     targets.push({
       student,
       file: new File([bytes], name, { type: "application/pdf" }),
@@ -1286,6 +1384,114 @@ function deleteSetting(key) {
   return withSettingsStore("readwrite", (store) => store.delete(key));
 }
 
+async function getOrCreateLocalDataCryptoKey() {
+  let encryptionKey = await getSetting(LOCAL_DATA_CRYPTO_SETTING);
+  if (encryptionKey) return encryptionKey;
+  encryptionKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  await putSetting(LOCAL_DATA_CRYPTO_SETTING, encryptionKey);
+  return encryptionKey;
+}
+
+async function encryptLocalJson(value) {
+  const encryptionKey = await getOrCreateLocalDataCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(JSON.stringify(value));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, encryptionKey, encoded);
+  return {
+    version: 1,
+    iv: Array.from(iv),
+    ciphertext: Array.from(new Uint8Array(ciphertext)),
+  };
+}
+
+async function decryptLocalJson(record) {
+  if (!record?.iv || !record?.ciphertext) throw new Error("저장된 명단의 암호화 형식이 올바르지 않습니다.");
+  const encryptionKey = await getSetting(LOCAL_DATA_CRYPTO_SETTING);
+  if (!encryptionKey) throw new Error("저장된 명단을 해독할 기기 키가 없습니다. 브라우저 데이터가 일부 삭제되었는지 확인해 주세요.");
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: new Uint8Array(record.iv) },
+    encryptionKey,
+    new Uint8Array(record.ciphertext),
+  );
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+async function loadRosterProfiles() {
+  const encrypted = await getSetting(ROSTER_PROFILES_SETTING);
+  if (encrypted !== undefined) {
+    const profiles = await decryptLocalJson(encrypted);
+    return (Array.isArray(profiles) ? profiles : []).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  }
+
+  const assessments = await listAssessments();
+  const profiles = [];
+  const signatures = new Set();
+  for (const assessment of assessments) {
+    const students = reusableRosterStudents(assessment.students);
+    if (!students.length) continue;
+    const signature = rosterProfileSignature(students);
+    if (signatures.has(signature)) continue;
+    signatures.add(signature);
+    profiles.push(createRosterProfile(students, { updatedAt: assessment.createdAt }));
+  }
+  await saveRosterProfiles(profiles);
+  return profiles;
+}
+
+async function saveRosterProfiles(profiles) {
+  const normalized = (Array.isArray(profiles) ? profiles : []).slice(0, 30);
+  await putSetting(ROSTER_PROFILES_SETTING, await encryptLocalJson(normalized));
+}
+
+async function upsertRosterProfile(students) {
+  const reusableStudents = reusableRosterStudents(students);
+  if (!reusableStudents.length) throw new Error("저장할 학생 명단이 없습니다.");
+  const profiles = await loadRosterProfiles();
+  const scopeKey = rosterProfileScopeKey(reusableStudents);
+  const existing = profiles.find((profile) => (profile.scopeKey || rosterProfileScopeKey(profile.students)) === scopeKey);
+  const profile = createRosterProfile(reusableStudents, { id: existing?.id });
+  const updated = [profile, ...profiles.filter((item) => item.id !== existing?.id)]
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, 30);
+  await saveRosterProfiles(updated);
+  return { profile, profiles: updated };
+}
+
+function reusableRosterStudents(students) {
+  return StudentWorkflow.normalizeRoster(Array.isArray(students) ? students : []).map((student) => ({
+    grade: student.grade,
+    className: student.className,
+    number: student.number,
+    name: student.name,
+  }));
+}
+
+function rosterProfileSignature(students) {
+  return reusableRosterStudents(students)
+    .map((student) => [student.grade, student.className, student.number, student.name].join("|"))
+    .sort((a, b) => a.localeCompare(b, "ko-KR", { numeric: true }))
+    .join("\n");
+}
+
+function rosterProfileScopeKey(students) {
+  return Array.from(new Set(reusableRosterStudents(students).map((student) => `${student.grade}|${student.className}`)))
+    .sort((a, b) => a.localeCompare(b, "ko-KR", { numeric: true }))
+    .join(";");
+}
+
+function createRosterProfile(students, options = {}) {
+  const reusableStudents = reusableRosterStudents(students);
+  const groups = Array.from(new Set(reusableStudents.map((student) => `${student.grade}학년 ${student.className}반`)));
+  return {
+    id: options.id || crypto.randomUUID(),
+    name: groups.length > 1 ? `${groups[0]} 외 ${groups.length - 1}개 학급` : groups[0] || "학생 명단",
+    scopeKey: rosterProfileScopeKey(reusableStudents),
+    signature: rosterProfileSignature(reusableStudents),
+    students: reusableStudents,
+    updatedAt: options.updatedAt || new Date().toISOString(),
+  };
+}
+
 async function getOrCreateGeminiCryptoKey() {
   let encryptionKey = await getSetting(GEMINI_CRYPTO_SETTING);
   if (encryptionKey) return encryptionKey;
@@ -1373,3 +1579,4 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+

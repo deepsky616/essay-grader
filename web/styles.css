@@ -249,6 +249,13 @@ a { color: inherit; text-decoration: none; }
 .achievement-helper { margin: 10px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
 
 .roster-editor { margin: 23px 0 0 57px; }
+.saved-roster-row { display: grid; grid-template-columns: minmax(190px, 1fr) auto auto auto; gap: 9px; align-items: end; margin-bottom: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 13px; background: rgba(185, 234, 210, 0.18); }
+.saved-roster-row label { display: grid; gap: 6px; color: var(--muted); font-size: 8px; font-weight: 900; }
+.saved-roster-row select { min-height: 39px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font-size: 9px; }
+.saved-roster-row button { min-height: 39px; padding: 8px 11px; border: 1px solid var(--ink); border-radius: 9px; background: white; color: var(--blue); cursor: pointer; font-size: 8px; font-weight: 900; }
+.saved-roster-row button:disabled { cursor: not-allowed; opacity: 0.45; }
+.saved-roster-row > span { grid-column: 1 / -1; color: var(--muted); font-size: 8px; line-height: 1.5; }
+.saved-roster-row > span.is-success { color: #27634c; font-weight: 850; }
 .roster-import-row { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; margin-bottom: 14px; }
 .roster-import { position: relative; overflow: hidden; padding: 10px 13px; border: 1px solid var(--ink); border-radius: 10px; background: var(--ink); color: white; cursor: pointer; font-size: 9px; font-weight: 900; }
 .roster-import input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
@@ -266,6 +273,14 @@ a { color: inherit; text-decoration: none; }
 .roster-row button { border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 8px; font-weight: 900; }
 .roster-actions { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 11px; }
 .roster-actions strong { color: var(--blue); font-size: 10px; }
+.privacy-mode-choice { display: flex; gap: 10px; align-items: flex-start; margin-top: 15px; padding: 14px 15px; border: 1px solid #72aa90; border-radius: 12px; background: rgba(185, 234, 210, 0.24); cursor: pointer; }
+.privacy-mode-choice input { flex: none; width: 17px; height: 17px; margin-top: 1px; accent-color: #27634c; }
+.privacy-mode-choice span { display: grid; gap: 4px; }
+.privacy-mode-choice strong { font-size: 10px; }
+.privacy-mode-choice small { color: var(--muted); font-size: 8px; line-height: 1.55; }
+.privacy-guidance { margin-top: 10px; padding: 13px 15px; border-left: 3px solid #a13e2d; border-radius: 8px; background: #fff0eb; }
+.privacy-guidance strong { color: #812d1e; font-size: 9px; }
+.privacy-guidance p { margin: 5px 0 0; color: #6f3b32; font-size: 8px; line-height: 1.6; }
 
 .upload-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin: 22px 0 0 57px; }
 .upload-control { position: relative; display: grid; min-height: 145px; align-content: center; justify-items: center; padding: 18px; border: 1px dashed rgba(24, 33, 56, 0.42); border-radius: 16px; background: rgba(233, 239, 255, 0.42); cursor: pointer; text-align: center; }
@@ -460,6 +475,8 @@ a { color: inherit; text-decoration: none; }
 .processing-note p, .danger-zone p { margin: 4px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
 .ai-note { background: rgba(242, 217, 167, 0.34); }
 .ai-note > span { background: var(--sand); }
+.privacy-active-note { background: rgba(185, 234, 210, 0.28); }
+.privacy-active-note > span { background: var(--mint); }
 .danger-zone { align-items: center; justify-content: space-between; background: rgba(255, 182, 167, 0.16); }
 .danger-zone button { flex: none; padding: 9px 12px; border: 1px solid #a13e2d; border-radius: 9px; background: white; color: #8b2e20; cursor: pointer; font-size: 9px; font-weight: 900; }
 
@@ -508,6 +525,8 @@ a { color: inherit; text-decoration: none; }
   .assessment-form { padding: 25px 19px; }
   .form-grid, .upload-grid { grid-template-columns: 1fr; margin-left: 0; }
   .achievement-editor, .roster-editor { margin-left: 0; }
+  .saved-roster-row { grid-template-columns: 1fr; align-items: stretch; }
+  .saved-roster-row > span { grid-column: auto; }
   .achievement-level-grid { grid-template-columns: 1fr; }
   .form-grid .wide-field { grid-column: auto; }
   .form-submit-row, .form-error { margin-left: 0; }
@@ -533,3 +552,4 @@ a { color: inherit; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
