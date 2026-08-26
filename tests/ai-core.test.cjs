@@ -41,6 +41,51 @@ test("normalizeGradingResult recomputes totals and flags invalid scores", () => 
   assert.ok(result.reviewReasons.length >= 2);
 });
 
+test("normalizeGradingResult validates achievement levels and keeps roster identity", () => {
+  const result = AI.normalizeGradingResult({
+    studentIdentifier: "다른 학생",
+    totalScore: 1,
+    maxScore: 2,
+    overallAchievementLevel: "중",
+    summary: "기본 개념을 적용했습니다.",
+    strengths: [],
+    improvements: [],
+    nextSteps: [],
+    achievementResults: [{ achievementStandardId: "a1", itemRange: "1번", achievementLevel: "최상", evidence: "풀이", feedback: "조건을 다시 확인하세요.", confidence: "medium" }],
+    questionResults: [{ questionNumber: "1", criterion: "기준", score: 1, maxScore: 2, evidence: "풀이", feedback: "확인", confidence: "high" }],
+    needsTeacherReview: false,
+    reviewReasons: [],
+  }, {
+    totalScore: 2,
+    student: { id: "s1", grade: 6, className: 2, number: 7, name: "한별", pageNumbers: [3, 4], matchConfidence: "high" },
+    achievementGroups: [{ id: "a1", itemRange: "1번", standard: "문제를 해결한다", levels: [{ label: "상" }, { label: "중" }, { label: "하" }] }],
+  });
+  assert.equal(result.studentIdentifier, "6학년 2반 7번 한별");
+  assert.equal(result.achievementResults[0].achievementLevel, "검토 필요");
+  assert.equal(result.needsTeacherReview, true);
+});
+
+test("normalizePageAssignments rejects duplicate pages and fills unmatched students", () => {
+  const result = AI.normalizePageAssignments({
+    reportedPageCount: 4,
+    assignments: [
+      { studentId: "s1", pageNumbers: [1, 2], identifierEvidence: "1쪽 이름", confidence: "high", reviewReason: "" },
+      { studentId: "s2", pageNumbers: [2, 3], identifierEvidence: "3쪽 번호", confidence: "medium", reviewReason: "이름 흐림" },
+    ],
+    unmatchedPages: [],
+    warnings: [],
+  }, [
+    { id: "s1", grade: "6", className: "2", number: "1", name: "김하늘" },
+    { id: "s2", grade: "6", className: "2", number: "2", name: "이바다" },
+    { id: "s3", grade: "6", className: "2", number: "3", name: "박구름" },
+  ], 4);
+  assert.deepEqual(result.assignments[0].pageNumbers, [1, 2]);
+  assert.deepEqual(result.assignments[1].pageNumbers, [3]);
+  assert.deepEqual(result.assignments[2].pageNumbers, []);
+  assert.deepEqual(result.unmatchedPages, [4]);
+  assert.equal(result.needsTeacherReview, true);
+});
+
 test("testApiKey validates model access without generating content", async () => {
   let calledUrl = "";
   const result = await AI.testApiKey(VALID_KEY, async (url, options) => {
@@ -111,3 +156,27 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
   assert.equal(result.model, "gemini-3.7-flash");
 });
 
+test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = { name: "combined.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
+  const result = await AI.matchAnswerPages({
+    apiKey: VALID_KEY,
+    roster: [{ id: "s1", grade: "6", className: "2", number: "1", name: "김하늘" }],
+    pageCount: 2,
+    answerFile: file,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.generationConfig.temperature, 0.1);
+      assert.equal(body.generationConfig.responseSchema.type, "object");
+      assert.match(body.contents[0].parts[0].text, /학생 명단/);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        reportedPageCount: 2,
+        assignments: [{ studentId: "s1", pageNumbers: [1, 2], identifierEvidence: "1쪽 이름", confidence: "high", reviewReason: "" }],
+        unmatchedPages: [],
+        warnings: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.deepEqual(result.assignments[0].pageNumbers, [1, 2]);
+  assert.equal(result.needsTeacherReview, false);
+});

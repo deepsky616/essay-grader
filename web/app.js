@@ -10,6 +10,7 @@ const GEMINI_STATUS_SETTING = "gemini-key-status";
 const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES = 60 * 1024 * 1024;
+const MAX_ROSTER_STUDENTS = 500;
 const ACCEPTED_TYPES = new Set([
   "application/pdf",
   "image/jpeg",
@@ -21,7 +22,7 @@ const kindLabels = {
   rubric: "채점 기준표",
   example: "예시 답안",
   blank: "빈 답안지",
-  answers: "학생 답안",
+  answers: "합본 학생 답안",
 };
 
 const app = document.querySelector("#app");
@@ -95,7 +96,7 @@ async function renderHome() {
         <div class="hero-copy">
           <p class="eyebrow">${escapeHtml(today)} · 오늘의 작업</p>
           <h1>평가 자료는 한곳에,<span>검토 흐름은 가볍게.</span></h1>
-          <p class="hero-description">채점 기준표와 예시 답안, 학생 답안을 정리하고 개인 Gemini API 키로 학생별 점수와 피드백을 작성하세요.</p>
+          <p class="hero-description">학생 명단과 합본 답안, 채점 기준표와 예시답안을 정리하고 개인 Gemini API 키로 학생별 점수와 성취기준 피드백을 작성하세요.</p>
         </div>
         <aside class="day-note" aria-label="오늘의 안내">
           <span class="note-pin" aria-hidden="true"></span>
@@ -129,8 +130,8 @@ async function renderHome() {
           <ol class="progress-list">
             <li><span class="step-index">✓</span><span><strong>실제 파일 선택</strong><small>PDF·JPG·PNG·WEBP</small></span></li>
             <li><span class="step-index">✓</span><span><strong>성취기준·수준 입력</strong><small>기준과 수준을 자유롭게 추가·삭제</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>평가별 기기 보관</strong><small>입력 내용과 파일 원본 저장</small></span></li>
-            <li><span class="step-index">✓</span><span><strong>AI 점수·피드백</strong><small>학생별 결과 저장 및 검토</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>명단·합본 답안 분할</strong><small>학년·반·번호·이름으로 페이지 매칭</small></span></li>
+            <li><span class="step-index">✓</span><span><strong>AI 점수·피드백</strong><small>성취기준별 학생 결과 저장 및 검토</small></span></li>
           </ol>
         </div>
       </section>
@@ -349,12 +350,29 @@ function renderNewAssessment() {
           <p class="achievement-helper">같은 평가에서도 문항 범위별 성취기준이 다르면 세트를 추가하세요. 저장한 내용은 이후 AI 피드백의 판단 근거로 사용할 수 있습니다.</p>
         </div>
 
-        <div class="form-section-heading second-heading"><span>3</span><div><h2>평가 자료 선택</h2><p>채점 기준과 예시 답안을 함께 넣어야 이후 AI 채점 서버가 같은 기준을 적용할 수 있습니다.</p></div></div>
+        <div class="form-section-heading second-heading"><span>3</span><div><h2>학생 명단</h2><p>학년·반·번호·이름을 직접 입력하거나 Excel·CSV·TSV 명단을 불러오세요.</p></div></div>
+        <div class="roster-editor">
+          <div class="roster-import-row">
+            <label class="roster-import">명단 파일 불러오기
+              <input type="file" name="rosterFile" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            </label>
+            <button type="button" data-download-roster-template>명단 양식 CSV 받기</button>
+            <span data-roster-import-status>첫 행에 학년, 반, 번호, 이름 열을 사용해 주세요.</span>
+          </div>
+          <div class="roster-table" data-roster-table>
+            <div class="roster-table-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
+            <div class="roster-rows" data-roster-rows>${rosterEditorRow(0)}</div>
+          </div>
+          <div class="roster-actions"><button type="button" data-add-student>＋ 학생 추가</button><strong data-roster-count>0명</strong></div>
+          <p class="achievement-helper">명단 정보는 답안 페이지를 학생별로 구분하고 결과를 정확한 학생에게 연결할 때 사용됩니다. 자동 분석 시 명단과 답안 스캔이 Gemini API로 전송됩니다.</p>
+        </div>
+
+        <div class="form-section-heading second-heading"><span>4</span><div><h2>평가 자료 선택</h2><p>채점 기준표·예시답안·빈 답안지와 전체 학생의 합본 답안 PDF를 준비하세요.</p></div></div>
         <div class="upload-grid">
           ${uploadField("rubric", "채점 기준표", "필수 · PDF/JPG/PNG/WEBP", false, true)}
           ${uploadField("example", "예시 답안", "필수 · 채점 근거 보완", false, true)}
-          ${uploadField("blank", "빈 답안지", "선택 · 문항 위치 확인용", false, false)}
-          ${uploadField("answers", "학생 답안", "필수 · 여러 파일 선택 가능", true, true)}
+          ${uploadField("blank", "빈 답안지", "권장 · 문항 위치와 인쇄 영역 확인", false, false)}
+          ${uploadField("answers", "전체 학생 합본 답안", "필수 · 자동 분할은 PDF 1개 권장", true, true)}
         </div>
         <p class="form-error" id="form-error" role="alert" hidden></p>
         <div class="form-submit-row">
@@ -365,13 +383,35 @@ function renderNewAssessment() {
     </div>`;
 
   const form = app.querySelector("#assessment-form");
-  form.querySelectorAll("input[type=file]").forEach((input) => input.addEventListener("change", updateUploadSummary));
+  form.querySelectorAll(".upload-control input[type=file]").forEach((input) => input.addEventListener("change", updateUploadSummary));
+  form.elements.rosterFile.addEventListener("change", (event) => importRosterFile(form, event.currentTarget.files?.[0]));
+  form.querySelector("[data-download-roster-template]").addEventListener("click", downloadRosterTemplate);
+  form.querySelector("[data-add-student]").addEventListener("click", () => {
+    const rows = form.querySelector("[data-roster-rows]");
+    if (rows.children.length >= MAX_ROSTER_STUDENTS) { showToast(`학생은 최대 ${MAX_ROSTER_STUDENTS}명까지 입력할 수 있습니다.`); return; }
+    rows.insertAdjacentHTML("beforeend", rosterEditorRow(rows.children.length, {
+      grade: form.elements.grade.value,
+      className: classNumberFromValue(form.elements.className.value),
+    }));
+    updateRosterEditors(form);
+  });
   form.querySelector("[data-add-achievement]").addEventListener("click", () => {
     const container = form.querySelector("[data-achievement-groups]");
     container.insertAdjacentHTML("beforeend", achievementGroupEditor(container.children.length));
     updateAchievementGroupEditors(container);
   });
   form.addEventListener("click", (event) => {
+    const removeStudentButton = event.target.closest("[data-remove-student]");
+    if (removeStudentButton) {
+      const rows = form.querySelector("[data-roster-rows]");
+      if (rows.children.length <= 1) {
+        rows.firstElementChild.querySelectorAll("input").forEach((input) => { input.value = ""; });
+      } else {
+        removeStudentButton.closest("[data-roster-row]").remove();
+      }
+      updateRosterEditors(form);
+      return;
+    }
     const addLevelButton = event.target.closest("[data-add-achievement-level]");
     if (addLevelButton) {
       const group = addLevelButton.closest("[data-achievement-group]");
@@ -400,6 +440,8 @@ function renderNewAssessment() {
     updateAchievementGroupEditors(container);
   });
   updateAchievementGroupEditors(form.querySelector("[data-achievement-groups]"));
+  form.querySelector("[data-roster-rows]").addEventListener("input", () => updateRosterEditors(form));
+  updateRosterEditors(form);
   form.addEventListener("submit", submitAssessment);
 }
 
@@ -451,6 +493,96 @@ function updateAchievementLevelEditors(group) {
   });
 }
 
+function rosterEditorRow(index, student = {}) {
+  return `
+    <div class="roster-row" data-roster-row aria-label="학생 ${index + 1}">
+      <label><span>학년</span><input name="studentGrade" value="${escapeHtml(student.grade || "")}" inputmode="numeric" placeholder="6" required maxlength="10"></label>
+      <label><span>반</span><input name="studentClass" value="${escapeHtml(student.className || "")}" inputmode="numeric" placeholder="2" required maxlength="20"></label>
+      <label><span>번호</span><input name="studentNumber" value="${escapeHtml(student.number || "")}" inputmode="numeric" placeholder="1" required maxlength="20"></label>
+      <label><span>이름</span><input name="studentName" value="${escapeHtml(student.name || "")}" placeholder="홍길동" required maxlength="40"></label>
+      <button type="button" data-remove-student aria-label="이 학생 삭제">삭제</button>
+    </div>`;
+}
+
+function updateRosterEditors(form) {
+  const rows = Array.from(form.querySelectorAll("[data-roster-row]"));
+  let completed = 0;
+  rows.forEach((row, index) => {
+    row.setAttribute("aria-label", `학생 ${index + 1}`);
+    row.querySelector("[data-remove-student]").hidden = rows.length === 1 && !Array.from(row.querySelectorAll("input")).some((input) => input.value.trim());
+    if (Array.from(row.querySelectorAll("input")).every((input) => input.value.trim())) completed += 1;
+  });
+  form.querySelector("[data-roster-count]").textContent = `${completed}명`;
+}
+
+async function importRosterFile(form, file) {
+  if (!file) return;
+  const status = form.querySelector("[data-roster-import-status]");
+  status.textContent = `${file.name} 읽는 중…`;
+  try {
+    let rows;
+    if (/\.xlsx?$/i.test(file.name)) {
+      if (!window.XLSX) throw new Error("Excel 읽기 도구를 불러오지 못했습니다. 인터넷 연결을 확인하거나 CSV로 저장해 주세요.");
+      const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      rows = window.XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, defval: "" });
+    } else {
+      rows = StudentWorkflow.parseDelimited(await file.text());
+    }
+    const students = StudentWorkflow.parseRosterRows(rows, {
+      grade: form.elements.grade.value,
+      className: classNumberFromValue(form.elements.className.value),
+    });
+    if (!students.length) throw new Error("명단에서 학생을 찾지 못했습니다. 학년, 반, 번호, 이름 열을 확인해 주세요.");
+    if (students.length > MAX_ROSTER_STUDENTS) throw new Error(`학생 명단은 최대 ${MAX_ROSTER_STUDENTS}명까지 불러올 수 있습니다.`);
+    const container = form.querySelector("[data-roster-rows]");
+    container.innerHTML = students.map((student, index) => rosterEditorRow(index, student)).join("");
+    updateRosterEditors(form);
+    status.textContent = `${file.name}에서 학생 ${students.length}명을 불러왔습니다.`;
+    status.classList.add("is-success");
+  } catch (error) {
+    status.textContent = friendlyError(error);
+    status.classList.remove("is-success");
+  }
+}
+
+function collectStudentsFromForm(form) {
+  const students = Array.from(form.querySelectorAll("[data-roster-row]")).map((row) => ({
+    grade: row.querySelector('[name="studentGrade"]').value,
+    className: row.querySelector('[name="studentClass"]').value,
+    number: row.querySelector('[name="studentNumber"]').value,
+    name: row.querySelector('[name="studentName"]').value,
+  })).filter((student) => Object.values(student).some((value) => String(value).trim()));
+  if (!students.length) throw new Error("학생 명단을 한 명 이상 입력해 주세요.");
+  if (students.some((student) => Object.values(student).some((value) => !String(value).trim()))) throw new Error("학생 명단의 학년, 반, 번호, 이름을 모두 입력해 주세요.");
+  const normalized = StudentWorkflow.normalizeRoster(students);
+  if (normalized.length !== students.length) throw new Error("학생 명단에 학년·반·번호·이름이 완전히 같은 중복 행이 있습니다.");
+  const numberKeys = new Set();
+  for (const student of normalized) {
+    const key = [student.grade, student.className, student.number].join("|");
+    if (numberKeys.has(key)) throw new Error(`${student.grade}학년 ${student.className}반 ${student.number}번이 두 번 입력되었습니다.`);
+    numberKeys.add(key);
+  }
+  return normalized.map((student) => ({ ...student, id: crypto.randomUUID() }));
+}
+
+function downloadRosterTemplate() {
+  const csv = "\uFEFF학년,반,번호,이름\r\n6,2,1,홍길동\r\n6,2,2,김하늘\r\n";
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "학생명단_양식.csv";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+function classNumberFromValue(value) {
+  const match = String(value || "").match(/(\d+)\s*반/);
+  return match?.[1] || "";
+}
+
 function uploadField(name, label, description, multiple, required) {
   return `
     <label class="upload-control" data-upload="${name}">
@@ -496,6 +628,7 @@ async function submitAssessment(event) {
         description: level.querySelector('[name="achievementLevelDescription"]').value.trim(),
       })),
     }));
+    const students = collectStudentsFromForm(form);
     validateFiles(groups.map(({ file }) => file));
     button.disabled = true;
     button.textContent = "이 기기에 저장 중…";
@@ -508,6 +641,7 @@ async function submitAssessment(event) {
       totalScore: Number(form.elements.totalScore.value),
       className: form.elements.className.value.trim(),
       achievementGroups,
+      students,
       status: "uploaded",
       createdAt: new Date().toISOString(),
       files: groups.map(({ kind, file }) => ({
@@ -557,6 +691,7 @@ async function renderAssessment(id) {
         <div class="board-toolbar"><div><p class="section-kicker">선택 자료</p><h2 id="file-title">원본 파일</h2></div><small>${formatDateTime(assessment.createdAt)} 저장</small></div>
         <div class="file-list">${assessment.files.map(fileRow).join("")}</div>
       </section>
+      ${studentRosterPanel(assessment, hasApiKey, selectedModel)}
       <section class="achievement-library" aria-labelledby="achievement-title">
         <div class="board-toolbar"><div><p class="section-kicker">피드백 기준</p><h2 id="achievement-title">성취기준과 성취수준</h2></div><small>${(assessment.achievementGroups || []).length}개 세트</small></div>
         ${(assessment.achievementGroups || []).length
@@ -566,7 +701,7 @@ async function renderAssessment(id) {
       ${gradingPanel(assessment, hasApiKey, selectedModel)}
       <section class="processing-note">
         <span aria-hidden="true">✓</span>
-        <div><strong>원본 파일과 채점 결과는 현재 브라우저에 저장됩니다.</strong><p>자동 채점을 실행할 때만 기준표·예시답안·학생 답안이 등록한 Gemini API 키와 함께 Google로 전송됩니다.</p></div>
+        <div><strong>학생 명단, 원본 파일과 채점 결과는 현재 브라우저에 저장됩니다.</strong><p>페이지 분석과 자동 채점을 실행할 때만 학생 명단·기준표·예시답안·빈 답안지·학생 답안이 등록한 Gemini API 키와 함께 Google로 전송됩니다.</p></div>
       </section>
       <section class="danger-zone">
         <div><strong>이 평가를 삭제할까요?</strong><p>현재 브라우저에 저장된 메타데이터와 파일 원본이 함께 삭제되며 복구할 수 없습니다.</p></div>
@@ -576,6 +711,8 @@ async function renderAssessment(id) {
 
   app.querySelectorAll("[data-open-file]").forEach((button) => button.addEventListener("click", () => openStoredFile(assessment, button.dataset.openFile)));
   app.querySelectorAll("[data-download-file]").forEach((button) => button.addEventListener("click", () => downloadStoredFile(assessment, button.dataset.downloadFile)));
+  app.querySelector("[data-analyze-pages]")?.addEventListener("click", () => runPageAnalysis(assessment));
+  app.querySelector("[data-save-page-map]")?.addEventListener("click", () => savePageMap(assessment));
   app.querySelector("[data-start-grading]")?.addEventListener("click", () => startAutomaticGrading(assessment));
   app.querySelector("[data-download-results]")?.addEventListener("click", () => downloadGradingResults(assessment));
   app.querySelector("[data-delete-assessment]").addEventListener("click", async () => {
@@ -586,15 +723,175 @@ async function renderAssessment(id) {
   });
 }
 
+function studentRosterPanel(assessment, hasApiKey, selectedModel) {
+  const students = Array.isArray(assessment.students) ? assessment.students : [];
+  const answerFiles = assessment.files.filter((file) => file.kind === "answers");
+  const source = answerFiles.length === 1 && answerFiles[0].type === "application/pdf" ? answerFiles[0] : null;
+  const segmentation = assessment.segmentation || {};
+  const currentAnalysis = segmentation.sourceFileId === source?.id;
+  const assignments = currentAnalysis && Array.isArray(segmentation.assignments) ? segmentation.assignments : [];
+  const assignmentMap = new Map(assignments.map((assignment) => [assignment.studentId, assignment]));
+  const confidenceLabels = { high: "높음", medium: "보통", low: "낮음" };
+  const stateLabel = ({ running: "분석 중", complete: "분할 준비", failed: "분석 실패" })[segmentation.status] || "분석 전";
+  if (!students.length) {
+    return `
+      <section class="roster-library" aria-labelledby="roster-title">
+        <div class="board-toolbar"><div><p class="section-kicker">학생 연결</p><h2 id="roster-title">학생 명단과 답안 페이지</h2></div><span class="grading-state">이전 평가</span></div>
+        <div class="roster-empty"><strong>저장된 학생 명단이 없습니다.</strong><p>이 평가는 명단 기능 추가 전에 만들어졌습니다. 기존처럼 답안 파일별 채점은 가능하며, 새 평가에서는 합본 PDF 자동 분할을 사용할 수 있습니다.</p></div>
+      </section>`;
+  }
+
+  return `
+    <section class="roster-library" aria-labelledby="roster-title">
+      <div class="board-toolbar grading-toolbar">
+        <div><p class="section-kicker">${escapeHtml(selectedModel)}</p><h2 id="roster-title">학생 명단과 답안 페이지</h2></div>
+        <span class="grading-state state-${escapeHtml(segmentation.status || "idle")}">${stateLabel}</span>
+      </div>
+      <div class="roster-overview">
+        <div><strong>${students.length}명</strong><span>학생 명단</span></div>
+        <div><strong>${segmentation.pageCount || "—"}</strong><span>합본 PDF 쪽</span></div>
+        <div><strong>${assignments.filter((item) => item.pageNumbers?.length).length}명</strong><span>페이지 매칭</span></div>
+      </div>
+      <div class="segmentation-control">
+        <div>
+          <strong>합본 답안의 학년·반·번호·이름을 명단과 대조합니다.</strong>
+          <p>빈 답안지는 인쇄 영역과 문항 위치를 구분하는 참고자료로 사용합니다. 분석 후 페이지 번호와 낮은 확신도를 반드시 확인하세요.</p>
+        </div>
+        ${hasApiKey
+          ? `<button class="primary-action" type="button" data-analyze-pages ${!source || segmentation.status === "running" ? "disabled" : ""}>${assignments.length ? "페이지 다시 분석" : "페이지 자동 분석"} →</button>`
+          : `<a class="primary-action" href="#/settings">API 키 설정 →</a>`}
+      </div>
+      ${!source ? `<p class="grading-warning">자동 분할에는 학생 답안 PDF가 정확히 1개 필요합니다. 현재 ${answerFiles.length}개 파일이 선택되어 있습니다.</p>` : ""}
+      ${segmentation.status === "failed" ? `<p class="grading-warning">${escapeHtml(segmentation.error || "페이지 분석에 실패했습니다.")}</p>` : ""}
+      <div class="roster-detail-list">
+        ${students.map((student, index) => {
+          const assignment = assignmentMap.get(student.id);
+          const pageCopy = assignment?.pageNumbers?.length ? assignment.pageNumbers.join(", ") : "";
+          return `
+            <article class="roster-detail-row">
+              <span class="result-number">${String(index + 1).padStart(2, "0")}</span>
+              <div class="roster-identity"><strong>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</strong><small>${escapeHtml(assignment?.identifierEvidence || "아직 페이지를 분석하지 않았습니다.")}</small></div>
+              <label>답안 쪽<input data-page-assignment="${escapeHtml(student.id)}" value="${escapeHtml(pageCopy)}" placeholder="예: 1-4" ${assignments.length ? "" : "disabled"}></label>
+              <span class="confidence confidence-${escapeHtml(assignment?.confidence || "low")}">${assignments.length ? confidenceLabels[assignment?.confidence] || "낮음" : "대기"}</span>
+              ${assignment?.reviewReasons?.length ? `<small class="match-review">${escapeHtml(assignment.reviewReasons.join(" / "))}</small>` : ""}
+            </article>`;
+        }).join("")}
+      </div>
+      ${assignments.length ? `
+        <div class="segmentation-review">
+          <div><strong>미매칭 페이지: ${segmentation.unmatchedPages?.length ? segmentation.unmatchedPages.join(", ") : "없음"}</strong><p>${segmentation.warnings?.length ? escapeHtml(segmentation.warnings.join(" / ")) : "페이지 번호를 수정한 뒤 저장할 수 있습니다."}</p></div>
+          <button type="button" data-save-page-map>수정한 페이지 배정 저장</button>
+        </div>` : ""}
+    </section>`;
+}
+
+async function runPageAnalysis(assessment) {
+  const apiKey = await loadGeminiApiKey();
+  if (!apiKey) { navigate("/settings"); return; }
+  const students = Array.isArray(assessment.students) ? assessment.students : [];
+  const answerFiles = assessment.files.filter((file) => file.kind === "answers");
+  const source = answerFiles.length === 1 && answerFiles[0].type === "application/pdf" ? answerFiles[0] : null;
+  const blank = assessment.files.find((file) => file.kind === "blank");
+  if (!students.length || !source) { showToast("학생 명단과 합본 학생 답안 PDF 1개를 준비해 주세요."); return; }
+  if (!window.PDFLib?.PDFDocument) { showToast("PDF 분할 도구를 불러오지 못했습니다. 인터넷 연결 후 페이지를 새로고침해 주세요."); return; }
+  if (source.size + (blank?.size || 0) > ChaejeomAI.MAX_INLINE_BYTES) {
+    showToast("합본 답안과 빈 답안지의 합계가 페이지 분석 한도 18MB를 넘습니다. PDF를 압축해 주세요.");
+    return;
+  }
+  const confirmed = window.confirm(`학생 ${students.length}명의 학년·반·번호·이름 명단과 합본 답안 PDF를 Google Gemini API로 전송해 페이지를 자동 분석할까요? 분석 결과는 반드시 교사가 확인해 주세요.`);
+  if (!confirmed) return;
+  const button = app.querySelector("[data-analyze-pages]");
+  if (button) { button.disabled = true; button.textContent = "페이지 분석 중…"; }
+  assessment.segmentation = {
+    status: "running",
+    sourceFileId: source.id,
+    startedAt: new Date().toISOString(),
+    assignments: [],
+  };
+  await putAssessment(assessment);
+  try {
+    const pageCount = await getPdfPageCount(source.blob);
+    const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
+    const result = await ChaejeomAI.matchAnswerPages({
+      apiKey,
+      roster: students,
+      pageCount,
+      answerFile: namedBlob(source.blob, source.name),
+      blankFile: blank ? namedBlob(blank.blob, blank.name) : undefined,
+      model: selectedModel,
+    });
+    assessment.segmentation = {
+      ...result,
+      status: "complete",
+      sourceFileId: source.id,
+      sourceFileName: source.name,
+      startedAt: assessment.segmentation.startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+    await putAssessment(assessment);
+    showToast(result.needsTeacherReview ? "페이지 분석을 마쳤습니다. 미매칭과 낮은 확신도를 확인해 주세요." : "모든 학생의 답안 페이지를 자동으로 매칭했습니다.");
+  } catch (error) {
+    assessment.segmentation = {
+      ...assessment.segmentation,
+      status: "failed",
+      error: friendlyError(error),
+      finishedAt: new Date().toISOString(),
+    };
+    await putAssessment(assessment);
+    showToast(friendlyError(error));
+  }
+  await renderAssessment(assessment.id);
+}
+
+async function savePageMap(assessment) {
+  const segmentation = assessment.segmentation;
+  if (!segmentation?.assignments?.length || !segmentation.pageCount) return;
+  const edited = segmentation.assignments.map((assignment) => ({
+    ...assignment,
+    pageNumbers: app.querySelector(`[data-page-assignment="${CSS.escape(assignment.studentId)}"]`)?.value || "",
+  }));
+  const validation = StudentWorkflow.validatePageAssignments(edited, segmentation.pageCount);
+  if (!validation.ok) { showToast(validation.errors[0]); return; }
+  segmentation.assignments = validation.assignments.map((assignment) => ({
+    ...assignment,
+    confidence: assignment.pageNumbers.length ? assignment.confidence : "low",
+    manuallyReviewed: true,
+  }));
+  segmentation.unmatchedPages = validation.unmatchedPages;
+  segmentation.unassignedStudentIds = segmentation.assignments.filter((assignment) => !assignment.pageNumbers.length).map((assignment) => assignment.studentId);
+  segmentation.needsTeacherReview = Boolean(segmentation.unmatchedPages.length || segmentation.unassignedStudentIds.length);
+  segmentation.updatedAt = new Date().toISOString();
+  await putAssessment(assessment);
+  showToast("학생별 페이지 배정을 저장했습니다.");
+  await renderAssessment(assessment.id);
+}
+
+async function getPdfPageCount(blob) {
+  const document = await PDFLib.PDFDocument.load(await blob.arrayBuffer(), { ignoreEncryption: false, updateMetadata: false });
+  return document.getPageCount();
+}
+
 function gradingPanel(assessment, hasApiKey, selectedModel) {
   const grading = assessment.grading || {};
   const results = Array.isArray(grading.results) ? grading.results : [];
   const errors = Array.isArray(grading.errors) ? grading.errors : [];
   const answers = assessment.files.filter((file) => file.kind === "answers");
+  const students = Array.isArray(assessment.students) ? assessment.students : [];
+  const segmentation = assessment.segmentation || {};
+  const segmentationReady = !students.length || (
+    answers.length === 1
+    && segmentation.status === "complete"
+    && segmentation.sourceFileId === answers[0].id
+    && segmentation.assignments?.some((assignment) => assignment.pageNumbers?.length)
+  );
+  const targetCount = students.length
+    ? (segmentation.assignments || []).filter((assignment) => assignment.pageNumbers?.length).length
+    : answers.length;
   const missingKinds = ["rubric", "example", "answers"].filter((kind) => !assessment.files.some((file) => file.kind === kind));
   const isRunning = grading.status === "running";
   const statusLabel = ({ running: "채점 중", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[grading.status] || "채점 전";
-  const progress = answers.length ? Math.round(((grading.completedCount || 0) / answers.length) * 100) : 0;
+  const progressTotal = grading.totalCount || targetCount;
+  const progress = progressTotal ? Math.round(((grading.completedCount || 0) / progressTotal) * 100) : 0;
   return `
     <section class="grading-library" aria-labelledby="grading-title">
       <div class="board-toolbar grading-toolbar">
@@ -603,13 +900,14 @@ function gradingPanel(assessment, hasApiKey, selectedModel) {
       </div>
       <div class="grading-control">
         ${hasApiKey ? `
-          <div><strong>${answers.length}개 학생 답안을 순서대로 채점합니다.</strong><p>채점기준표를 우선 적용하고 예시답안·성취수준을 참고해 점수와 피드백을 작성합니다.</p></div>
-          <button class="primary-action" type="button" data-start-grading ${missingKinds.length || isRunning ? "disabled" : ""}>${results.length ? "전체 다시 채점" : "자동 채점 시작"} →</button>`
+          <div><strong>${targetCount}명 학생 답안을 순서대로 채점합니다.</strong><p>학생별로 분할된 답안에 채점기준표를 우선 적용하고 예시답안·빈 답안지·성취수준을 참고해 점수와 피드백을 작성합니다.</p></div>
+          <button class="primary-action" type="button" data-start-grading ${missingKinds.length || isRunning || !segmentationReady || !targetCount ? "disabled" : ""}>${results.length ? "전체 다시 채점" : "학생별 자동 채점"} →</button>`
           : `<div><strong>먼저 개인 Gemini API 키를 연결해 주세요.</strong><p>키 테스트가 완료되면 이 평가에서 자동 채점 버튼이 활성화됩니다.</p></div><a class="primary-action" href="#/settings">API 키 설정 →</a>`}
       </div>
       ${missingKinds.length ? `<p class="grading-warning">자동 채점에 필요한 파일이 없습니다: ${missingKinds.map((kind) => kindLabels[kind]).join(", ")}</p>` : ""}
+      ${students.length && !segmentationReady ? `<p class="grading-warning">먼저 위에서 합본 답안의 학생별 페이지를 자동 분석하고, 미매칭 페이지를 확인해 주세요.</p>` : ""}
       <div class="grading-progress" ${isRunning ? "" : "hidden"} data-grading-progress>
-        <div><span>학생 답안 처리 중</span><strong data-grading-progress-copy>${grading.completedCount || 0} / ${answers.length}</strong></div>
+        <div><span>학생 답안 처리 중</span><strong data-grading-progress-copy>${grading.completedCount || 0} / ${progressTotal}</strong></div>
         <span class="grading-progress-track"><i style="width:${progress}%" data-grading-progress-bar></i></span>
       </div>
       ${results.length ? `
@@ -621,12 +919,13 @@ function gradingPanel(assessment, hasApiKey, selectedModel) {
 
 function gradingResultCard(result, index) {
   const questionResults = Array.isArray(result.questionResults) ? result.questionResults : [];
+  const achievementResults = Array.isArray(result.achievementResults) ? result.achievementResults : [];
   const confidenceLabels = { high: "높음", medium: "보통", low: "낮음" };
   return `
     <details class="grading-result" ${index === 0 ? "open" : ""}>
       <summary>
         <span class="result-number">${String(index + 1).padStart(2, "0")}</span>
-        <span class="result-student"><strong>${escapeHtml(result.studentIdentifier || result.sourceFileName)}</strong><small>${escapeHtml(result.sourceFileName)}</small></span>
+        <span class="result-student"><strong>${escapeHtml(result.studentIdentifier || result.sourceFileName)}</strong><small>${escapeHtml(result.pageNumbers?.length ? `${result.sourceFileName} · ${result.pageNumbers.join(", ")}쪽` : result.sourceFileName)}</small></span>
         <span class="result-level">${escapeHtml(result.overallAchievementLevel || "검토 필요")}</span>
         <span class="result-score"><strong>${formatScore(result.totalScore)}</strong><small>/ ${formatScore(result.maxScore)}</small></span>
         ${result.needsTeacherReview ? `<span class="review-pill">검토 필요</span>` : `<span class="review-pill is-clear">자동 검증</span>`}
@@ -638,6 +937,17 @@ function gradingResultCard(result, index) {
           ${feedbackList("개선점", result.improvements)}
           ${feedbackList("다음 학습", result.nextSteps)}
         </div>
+        ${achievementResults.length ? `
+          <div class="achievement-result-list">
+            <div class="achievement-result-head"><span>성취기준</span><span>수준</span><span>답안 근거와 개별 피드백</span><span>확신도</span></div>
+            ${achievementResults.map((achievement) => `
+              <article>
+                <div><small>${escapeHtml(achievement.itemRange)}</small><strong>${escapeHtml(achievement.standard)}</strong></div>
+                <span class="result-level">${escapeHtml(achievement.achievementLevel)}</span>
+                <div><p>${escapeHtml(achievement.evidence)}</p><em>${escapeHtml(achievement.feedback)}</em></div>
+                <span class="confidence confidence-${escapeHtml(achievement.confidence)}">${confidenceLabels[achievement.confidence] || "낮음"}</span>
+              </article>`).join("")}
+          </div>` : ""}
         <div class="question-result-list">
           <div class="question-result-head"><span>문항</span><span>점수</span><span>판단 근거와 피드백</span><span>확신도</span></div>
           ${questionResults.map((question) => `
@@ -667,34 +977,57 @@ async function startAutomaticGrading(assessment) {
   const rubric = assessment.files.find((file) => file.kind === "rubric");
   const example = assessment.files.find((file) => file.kind === "example");
   const blank = assessment.files.find((file) => file.kind === "blank");
+  const students = Array.isArray(assessment.students) ? assessment.students : [];
   if (!rubric || !example || !answerFiles.length) {
     showToast("채점 기준표, 예시답안, 학생 답안을 모두 준비해 주세요.");
     return;
   }
-  const largestRequest = Math.max(...answerFiles.map((answer) => rubric.size + example.size + (blank?.size || 0) + answer.size));
+
+  let targets;
+  try {
+    if (students.length) {
+      if (answerFiles.length !== 1 || answerFiles[0].type !== "application/pdf") throw new Error("학생 명단 채점에는 합본 학생 답안 PDF 1개가 필요합니다.");
+      if (assessment.segmentation?.status !== "complete" || assessment.segmentation.sourceFileId !== answerFiles[0].id) throw new Error("먼저 합본 답안의 학생별 페이지를 자동 분석해 주세요.");
+      targets = await createStudentAnswerTargets(assessment, answerFiles[0]);
+    } else {
+      targets = answerFiles.map((answer) => ({
+        file: namedBlob(answer.blob, answer.name),
+        sourceFileId: answer.id,
+        sourceFileName: answer.name,
+        pageNumbers: [],
+        student: null,
+      }));
+    }
+  } catch (error) {
+    showToast(friendlyError(error));
+    return;
+  }
+  if (!targets.length) { showToast("채점할 학생 답안 페이지가 없습니다."); return; }
+  const largestRequest = Math.max(...targets.map((target) => rubric.size + example.size + (blank?.size || 0) + target.file.size));
   if (largestRequest > ChaejeomAI.MAX_INLINE_BYTES) {
     showToast(`한 학생 기준 AI 입력 합계가 18MB를 넘습니다. 파일을 압축하거나 학생별로 나눠 주세요.`);
     return;
   }
   const regrading = assessment.grading?.results?.length;
-  const confirmed = window.confirm(`${answerFiles.length}개 학생 답안을 Google Gemini API로 전송해 ${regrading ? "다시 " : ""}채점할까요? AI 점수는 반드시 교사가 검토한 뒤 확정해 주세요.`);
+  const unmatchedCopy = assessment.segmentation?.unmatchedPages?.length ? ` 미매칭 페이지 ${assessment.segmentation.unmatchedPages.join(", ")}쪽은 채점에서 제외됩니다.` : "";
+  const confirmed = window.confirm(`학생 ${targets.length}명의 명단 정보와 분할 답안, 채점기준표, 예시답안${blank ? ", 빈 답안지" : ""}를 Google Gemini API로 전송해 ${regrading ? "다시 " : ""}채점할까요?${unmatchedCopy} AI 점수는 반드시 교사가 검토한 뒤 확정해 주세요.`);
   if (!confirmed) return;
 
   assessment.grading = {
     status: "running",
     startedAt: new Date().toISOString(),
     completedCount: 0,
-    totalCount: answerFiles.length,
+    totalCount: targets.length,
     results: [],
     errors: [],
     model: selectedModel,
   };
   await putAssessment(assessment);
-  setGradingProgress(0, answerFiles.length);
+  setGradingProgress(0, targets.length);
   const startButton = app.querySelector("[data-start-grading]");
   if (startButton) { startButton.disabled = true; startButton.textContent = "채점 중…"; }
 
-  const metadata = {
+  const baseMetadata = {
     title: assessment.title,
     subject: assessment.subject,
     grade: assessment.grade,
@@ -702,26 +1035,46 @@ async function startAutomaticGrading(assessment) {
     achievementGroups: assessment.achievementGroups || [],
   };
 
-  for (const answer of answerFiles) {
+  for (const target of targets) {
     try {
       const files = [
         { role: "rubric", file: namedBlob(rubric.blob, rubric.name) },
         { role: "example", file: namedBlob(example.blob, example.name) },
         ...(blank ? [{ role: "blank", file: namedBlob(blank.blob, blank.name) }] : []),
-        { role: "studentAnswer", file: namedBlob(answer.blob, answer.name) },
+        { role: "studentAnswer", file: target.file },
       ];
+      const metadata = {
+        ...baseMetadata,
+        student: target.student ? {
+          ...target.student,
+          pageNumbers: target.pageNumbers,
+          matchConfidence: target.matchConfidence,
+        } : null,
+      };
       const result = await ChaejeomAI.gradeAnswer({ apiKey, metadata, files, model: selectedModel });
-      assessment.grading.results.push({ ...result, sourceFileId: answer.id, sourceFileName: answer.name });
+      assessment.grading.results.push({
+        ...result,
+        studentId: target.student?.id || "",
+        pageNumbers: target.pageNumbers,
+        sourceFileId: target.sourceFileId,
+        sourceFileName: target.sourceFileName,
+        matchEvidence: target.identifierEvidence || "",
+      });
     } catch (error) {
-      assessment.grading.errors.push({ sourceFileId: answer.id, fileName: answer.name, message: friendlyError(error) });
+      assessment.grading.errors.push({
+        studentId: target.student?.id || "",
+        sourceFileId: target.sourceFileId,
+        fileName: target.student ? StudentWorkflow.rosterIdentity(target.student) : target.sourceFileName,
+        message: friendlyError(error),
+      });
     }
     assessment.grading.completedCount += 1;
     await putAssessment(assessment);
-    setGradingProgress(assessment.grading.completedCount, answerFiles.length);
+    setGradingProgress(assessment.grading.completedCount, targets.length);
   }
 
   assessment.grading.finishedAt = new Date().toISOString();
-  assessment.grading.status = assessment.grading.results.length === answerFiles.length
+  assessment.grading.status = assessment.grading.results.length === targets.length
     ? "complete"
     : assessment.grading.results.length
       ? "partial"
@@ -729,6 +1082,37 @@ async function startAutomaticGrading(assessment) {
   await putAssessment(assessment);
   showToast(assessment.grading.status === "complete" ? "모든 학생 답안의 AI 채점을 완료했습니다." : "일부 답안을 처리하지 못했습니다. 결과와 오류를 확인해 주세요.");
   await renderAssessment(assessment.id);
+}
+
+async function createStudentAnswerTargets(assessment, source) {
+  if (!window.PDFLib?.PDFDocument) throw new Error("PDF 분할 도구를 불러오지 못했습니다. 인터넷 연결 후 페이지를 새로고침해 주세요.");
+  const segmentation = assessment.segmentation || {};
+  const validation = StudentWorkflow.validatePageAssignments(segmentation.assignments, segmentation.pageCount);
+  if (!validation.ok) throw new Error(validation.errors[0]);
+  const students = new Map((assessment.students || []).map((student) => [student.id, student]));
+  const sourceDocument = await PDFLib.PDFDocument.load(await source.blob.arrayBuffer(), { ignoreEncryption: false, updateMetadata: false });
+  if (sourceDocument.getPageCount() !== segmentation.pageCount) throw new Error("저장된 페이지 분석 결과와 현재 합본 PDF의 페이지 수가 다릅니다. 페이지를 다시 분석해 주세요.");
+  const targets = [];
+  for (const assignment of validation.assignments.filter((item) => item.pageNumbers.length)) {
+    const student = students.get(assignment.studentId);
+    if (!student) continue;
+    const studentDocument = await PDFLib.PDFDocument.create();
+    const copiedPages = await studentDocument.copyPages(sourceDocument, assignment.pageNumbers.map((page) => page - 1));
+    copiedPages.forEach((page) => studentDocument.addPage(page));
+    const bytes = await studentDocument.save({ useObjectStreams: true, addDefaultPage: false });
+    const identity = StudentWorkflow.rosterIdentity(student).replace(/[\\/:*?"<>|]/g, "_");
+    const name = `${identity || "학생"}_${assignment.pageNumbers.join("-")}쪽.pdf`;
+    targets.push({
+      student,
+      file: new File([bytes], name, { type: "application/pdf" }),
+      pageNumbers: assignment.pageNumbers,
+      matchConfidence: assignment.confidence,
+      identifierEvidence: assignment.identifierEvidence,
+      sourceFileId: source.id,
+      sourceFileName: source.name,
+    });
+  }
+  return targets;
 }
 
 function namedBlob(blob, name) {
@@ -749,6 +1133,8 @@ function setGradingProgress(completed, total) {
 function downloadGradingResults(assessment) {
   const payload = {
     assessment: { title: assessment.title, subject: assessment.subject, grade: assessment.grade, totalScore: assessment.totalScore },
+    students: assessment.students || [],
+    segmentation: assessment.segmentation || null,
     grading: assessment.grading,
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
