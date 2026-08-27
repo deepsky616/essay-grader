@@ -4,6 +4,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const Workflow = require("../student-workflow.js");
 
+test("decodeTextBytes automatically reads a Windows Korean CP949 roster", () => {
+  const cp949Bytes = Buffer.from("C7D0B3E22CB9DD2CB9F8C8A32CC0CCB8A70D0A362C312C312CB0ADBFACBFEC0D0A", "hex");
+  assert.equal(Workflow.decodeTextBytes(cp949Bytes), "학년,반,번호,이름\r\n6,1,1,강연우\r\n");
+});
+
+test("decodeTextBytes keeps UTF-8 Korean names intact", () => {
+  const utf8Bytes = Buffer.from("\uFEFF학년,반,번호,이름\r\n6,1,1,김하늘\r\n", "utf8");
+  assert.equal(Workflow.decodeTextBytes(utf8Bytes), "학년,반,번호,이름\r\n6,1,1,김하늘\r\n");
+});
+
 test("parseDelimited and parseRosterRows load a Korean CSV roster", () => {
   const rows = Workflow.parseDelimited('학년,반,번호,이름\n6,2,1,"김,하늘"\n6,2,2,이바다');
   const roster = Workflow.parseRosterRows(rows);

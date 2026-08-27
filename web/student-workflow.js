@@ -12,6 +12,22 @@
     name: ["이름", "성명", "학생명", "name"],
   };
 
+  function decodeTextBytes(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || 0);
+    if (!bytes.length) return "";
+    if (bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder("utf-16le").decode(bytes);
+    if (bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder("utf-16be").decode(bytes);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      try {
+        return new TextDecoder("euc-kr", { fatal: true }).decode(bytes);
+      } catch {
+        return new TextDecoder("utf-8").decode(bytes);
+      }
+    }
+  }
+
   function parseDelimited(text) {
     const source = String(text || "").replace(/^\uFEFF/, "");
     const firstLine = source.split(/\r?\n/, 1)[0] || "";
@@ -191,6 +207,7 @@
   function countDelimiter(line, delimiter) { return line.split(delimiter).length - 1; }
 
   return {
+    decodeTextBytes,
     parseDelimited,
     parseRosterRows,
     normalizeRoster,

@@ -201,7 +201,12 @@ async function renderCourseForm(courseId = "") {
 
 async function renderStudentManagement() {
   const students = await listStudents();
-  const classes = Array.from(new Set(students.map((student) => student.className))).sort(numericSort);
+  const studentGroups = Array.from(students.reduce((groups, student) => {
+    const key = `${student.grade}|${student.className}`;
+    if (!groups.has(key)) groups.set(key, { grade: student.grade, className: student.className, students: [] });
+    groups.get(key).students.push(student);
+    return groups;
+  }, new Map()).values()).sort((a, b) => numericSort(a.grade, b.grade) || numericSort(a.className, b.className));
   app.innerHTML = `
     <div class="page-shell school-shell">
       <section class="page-intro student-intro">
@@ -225,9 +230,9 @@ async function renderStudentManagement() {
         </div>
       </section>
       <section class="student-list-card">
-        <div class="board-toolbar"><div><p class="section-kicker">STUDENT ROSTER</p><h2>학생 목록</h2></div><strong>${students.length}명</strong></div>
+        <div class="board-toolbar"><div><p class="section-kicker">STUDENT ROSTER</p><h2>학생 목록</h2></div><div class="student-list-actions"><strong>${students.length}명</strong>${students.length ? `<button class="secondary-action danger-action" type="button" data-delete-all-students>학생 전체 삭제</button>` : ""}</div></div>
         ${students.length ? `
-          <div class="student-class-summary">${classes.map((className) => `<span>6학년 ${escapeHtml(className)}반 · ${students.filter((item) => item.className === className).length}명</span>`).join("")}</div>
+          <div class="student-class-summary">${studentGroups.map((group) => `<div><span>${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반 · ${group.students.length}명</span><button type="button" data-delete-student-group="${escapeHtml(group.grade)}|${escapeHtml(group.className)}">이 학년·반 전체 삭제</button></div>`).join("")}</div>
           <div class="student-management-table">
             <div class="student-management-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
             ${students.map((student) => `<div class="student-management-row"><span>${escapeHtml(student.grade)}학년</span><span>${escapeHtml(student.className)}반</span><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><button type="button" data-delete-student="${escapeHtml(student.id)}">삭제</button></div>`).join("")}
@@ -251,12 +256,43 @@ async function renderStudentManagement() {
   });
   app.querySelector("[data-student-import]").addEventListener("change", (event) => importStudentFile(event.currentTarget.files?.[0]));
   app.querySelector("[data-download-student-template]").addEventListener("click", downloadStudentTemplate);
+  app.querySelector("[data-delete-all-students]")?.addEventListener("click", async () => {
+    if (!window.confirm(`등록된 학생 ${students.length}명을 모두 삭제할까요? 모든 수업의 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
+    await removeStudents(students.map((student) => student.id));
+    showToast(`${students.length}명의 학생 명단을 모두 삭제했습니다.`);
+    renderStudentManagement();
+  });
+  app.querySelectorAll("[data-delete-student-group]").forEach((button) => button.addEventListener("click", async () => {
+    const [grade, className] = button.dataset.deleteStudentGroup.split("|");
+    const groupStudents = students.filter((student) => student.grade === grade && student.className === className);
+    if (!groupStudents.length || !window.confirm(`${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제할까요? 해당 학생은 수업 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
+    await removeStudents(groupStudents.map((student) => student.id));
+    showToast(`${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제했습니다.`);
+    renderStudentManagement();
+  }));
   app.querySelectorAll("[data-delete-student]").forEach((button) => button.addEventListener("click", async () => {
     const student = students.find((item) => item.id === button.dataset.deleteStudent);
     if (!student || !window.confirm(`${student.grade}학년 ${student.className}반 ${student.number}번 ${student.name} 학생을 목록에서 삭제할까요?`)) return;
-    await deleteStudent(student.id);
+    await removeStudents([student.id]);
     showToast("학생을 삭제했습니다.");
     renderStudentManagement();
+  }));
+}
+
+async function removeStudents(studentIds) {
+  if (!studentIds.length) return;
+  const removedIds = new Set(studentIds);
+  await deleteStudents(studentIds);
+  const courses = await listCourses();
+  await Promise.all(courses.map(async (course) => {
+    const previousTargets = course.targetStudentIds || [];
+    const nextTargets = previousTargets.filter((studentId) => !removedIds.has(studentId));
+    if (nextTargets.length === previousTargets.length) return;
+    course.targetStudentIds = nextTargets;
+    course.submission = null;
+    course.grading = null;
+    course.updatedAt = new Date().toISOString();
+    await putCourse(course);
   }));
 }
 
@@ -270,7 +306,7 @@ async function importStudentFile(file) {
       if (!window.XLSX) throw new Error("Excel 읽기 도구를 불러오지 못했습니다. CSV 파일로 다시 시도해 주세요.");
       const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
       rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false, defval: "" });
-    } else rows = StudentWorkflow.parseDelimited(await file.text());
+    } else rows = StudentWorkflow.parseDelimited(StudentWorkflow.decodeTextBytes(await file.arrayBuffer()));
     const roster = StudentWorkflow.parseRosterRows(rows, { grade: "6" });
     if (!roster.length) throw new Error("명단에서 학생을 찾지 못했습니다.");
     await addStudents(roster);
@@ -1105,6 +1141,7 @@ function deleteCourse(id) { return withStore(COURSE_STORE, "readwrite", (store) 
 async function listStudents() { return (await withStore(STUDENT_STORE, "readonly", (store) => store.getAll())).sort(studentSort); }
 function putStudent(student) { return withStore(STUDENT_STORE, "readwrite", (store) => store.put(student)); }
 function deleteStudent(id) { return withStore(STUDENT_STORE, "readwrite", (store) => store.delete(id)); }
+function deleteStudents(ids) { return withStore(STUDENT_STORE, "readwrite", (store) => { let request; ids.forEach((id) => { request = store.delete(id); }); return request; }); }
 async function getSetting(key) { const record = await withStore(SETTINGS_STORE, "readonly", (store) => store.get(key)); return record?.value; }
 function putSetting(key, value) { return withStore(SETTINGS_STORE, "readwrite", (store) => store.put({ key, value })); }
 function deleteSetting(key) { return withStore(SETTINGS_STORE, "readwrite", (store) => store.delete(key)); }
