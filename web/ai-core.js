@@ -176,7 +176,7 @@
     const body = await readResponseBody(response);
     if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, model));
     const verifiedModel = validateModelId(body.name?.replace(/^models\//, "") || model);
-    const connectionGenerationConfig = {
+    const connectionGenerationConfig = structuredGenerationConfig(verifiedModel, {
       temperature: 0,
       maxOutputTokens: 512,
       responseMimeType: "application/json",
@@ -185,7 +185,7 @@
         properties: { ok: { type: "boolean" } },
         required: ["ok"],
       },
-    };
+    });
     // Gemini 2.5 Flash는 기본적으로 사고 토큰을 사용할 수 있다. 연결 확인은
     // 추론이 필요 없는 작업이므로 실제 JSON 응답에 출력 한도를 온전히 사용한다.
     if (/^gemini-2\.5-flash(?:$|-)/i.test(verifiedModel)) {
@@ -243,11 +243,11 @@
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
-          generationConfig: {
+          generationConfig: structuredGenerationConfig(selectedModel, {
             temperature: 0.1,
             responseMimeType: "application/json",
             responseSchema: pageMatchSchema,
-          },
+          }),
         }),
       });
     } catch (error) {
@@ -291,12 +291,12 @@
         },
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
-          generationConfig: {
+          generationConfig: structuredGenerationConfig(selectedModel, {
             temperature: 0.1,
             maxOutputTokens: 8192,
             responseMimeType: "application/json",
             responseSchema: gradingSchema,
-          },
+          }),
         }),
       }, { maxAttempts: 3, baseDelayMs: retryDelayMs });
     } catch (error) {
@@ -327,7 +327,7 @@
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }, await fileToInlinePart(file)] }],
-          generationConfig: { temperature: 0.1, responseMimeType: "application/json", responseSchema: schema },
+          generationConfig: structuredGenerationConfig(selectedModel, { temperature: 0.1, responseMimeType: "application/json", responseSchema: schema }),
         }),
       });
     } catch (error) {
@@ -408,11 +408,12 @@
 5. 각 평가요소의 answerReading에는 학생이 실제로 쓴 핵심 답·식·그림을 먼저 객관적으로 옮겨 적으세요. 보이지 않으면 ‘판독 불가’, 쓰지 않았으면 ‘무응답’으로 기록하고 내용을 만들지 마세요.
 6. 도형 문항은 점의 위치, 선분의 연결, 대칭축과의 대응, 격자 칸 수를 빈 답안지와 대조해 판정합니다. 흐린 연필선·겹친 선·지운 흔적은 낮은 confidence와 구체적인 교사 검토 사유를 남기세요.
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 needsTeacherReview와 reviewReasons에 기록합니다.
-8. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. 총점은 평가요소별 선택 점수의 합계여야 합니다.
-9. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
-10. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
-11. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 가려지지 않은 이름이 보이더라도 응답에 옮겨 적지 마세요.
-12. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
+8. questionResults에는 rubricCriteria의 모든 평가요소를 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사합니다. 같은 문제 번호에 평가요소가 여러 개여도 합치거나 생략하지 마세요.
+9. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. totalScore는 questionResults의 score 합계여야 합니다.
+10. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
+11. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
+12. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 가려지지 않은 이름이 보이더라도 응답에 옮겨 적지 마세요.
+13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -449,10 +450,20 @@ ${JSON.stringify(roster)}
     const assessmentMax = positiveNumber(metadata.totalScore, positiveNumber(raw.maxScore, 0));
     const reviewReasons = textList(raw.reviewReasons);
     const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
-    const questionResults = (Array.isArray(raw.questionResults) ? raw.questionResults : []).map((item, index) => {
-      const matchedRubric = rubricCriteria.find((criterion) => text(item?.criterionId) && criterion.id === text(item.criterionId))
-        || rubricCriteria.find((criterion) => criterion.questionNumber === text(item?.questionNumber) && criterion.evaluationElement === text(item?.evaluationElement))
-        || rubricCriteria[index];
+    const rawQuestionResults = Array.isArray(raw.questionResults) ? raw.questionResults : [];
+    const usedRawIndexes = new Set();
+    const resultSeeds = rubricCriteria.length ? rubricCriteria.map((rubric, index) => {
+      let rawIndex = rawQuestionResults.findIndex((item, itemIndex) => !usedRawIndexes.has(itemIndex) && text(item?.criterionId) && text(item.criterionId) === rubric.id);
+      if (rawIndex < 0) rawIndex = rawQuestionResults.findIndex((item, itemIndex) => !usedRawIndexes.has(itemIndex)
+        && text(item?.questionNumber) === rubric.questionNumber
+        && text(item?.evaluationElement) === rubric.evaluationElement);
+      if (rawIndex < 0 && rawQuestionResults[index] && !usedRawIndexes.has(index)) rawIndex = index;
+      if (rawIndex >= 0) usedRawIndexes.add(rawIndex);
+      return { item: rawIndex >= 0 ? rawQuestionResults[rawIndex] : null, matchedRubric: rubric, missing: rawIndex < 0 };
+    }) : rawQuestionResults.map((item) => ({ item, matchedRubric: null, missing: false }));
+    if (rubricCriteria.length && rawQuestionResults.length > usedRawIndexes.size) reviewReasons.push("Gemini가 입력 채점기준과 연결되지 않는 추가 문항 결과를 반환하여 제외했습니다.");
+    const questionResults = resultSeeds.map(({ item, matchedRubric, missing }, index) => {
+      if (missing) reviewReasons.push(`${matchedRubric.questionNumber}번 ‘${matchedRubric.evaluationElement}’의 AI 채점 결과가 없어 교사 확인이 필요합니다.`);
       const maxScore = matchedRubric ? matchedRubric.maxScore : Math.max(0, numeric(item?.maxScore));
       const originalScore = numeric(item?.score);
       let score = clamp(originalScore, 0, maxScore);
@@ -468,13 +479,13 @@ ${JSON.stringify(roster)}
         criterionId: matchedRubric?.id || text(item?.criterionId),
         questionNumber: matchedRubric?.questionNumber || String(item?.questionNumber || index + 1),
         evaluationElement: matchedRubric?.evaluationElement || text(item?.evaluationElement),
-        answerReading: text(item?.answerReading) || text(item?.evidence) || "판독 불가",
-        criterion: selectedLevel?.criterion || text(item?.criterion),
+        answerReading: text(item?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가"),
+        criterion: selectedLevel?.criterion || text(item?.criterion) || (missing ? "AI가 이 평가요소를 반환하지 않음" : ""),
         score,
         maxScore,
         evidence: text(item?.evidence),
-        feedback: text(item?.feedback),
-        confidence: ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low",
+        feedback: text(item?.feedback) || (missing ? "이 평가요소는 교사가 답안 원본을 확인해 주세요." : ""),
+        confidence: missing ? "low" : (["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low"),
       };
     });
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
@@ -505,7 +516,8 @@ ${JSON.stringify(roster)}
     const reportedTotal = roundScore(numeric(raw.totalScore));
     if (questionResults.length && reportedTotal !== questionTotal) reviewReasons.push("Gemini가 제시한 총점과 문항별 점수 합계가 달라 문항별 합계로 수정되었습니다.");
     if (assessmentMax > 0 && questionTotal > assessmentMax) reviewReasons.push("문항별 점수 합계가 평가 총점을 초과하여 교사 검토가 필요합니다.");
-    const totalScore = assessmentMax > 0 ? clamp(questionTotal || reportedTotal, 0, assessmentMax) : Math.max(0, questionTotal || reportedTotal);
+    const scoreForTotal = questionResults.length ? questionTotal : reportedTotal;
+    const totalScore = assessmentMax > 0 ? clamp(scoreForTotal, 0, assessmentMax) : Math.max(0, scoreForTotal);
 
     const rosterStudent = metadata.student ? {
       id: text(metadata.student.id),
@@ -661,6 +673,12 @@ ${JSON.stringify(roster)}
     const model = String(value || MODEL).trim();
     if (!/^[a-z0-9][a-z0-9._-]{2,80}$/i.test(model)) throw new Error("Gemini 모델 ID 형식을 확인해 주세요.");
     return model;
+  }
+
+  function structuredGenerationConfig(model, config) {
+    const normalized = { ...config };
+    if (/^gemini-3\.(?:6|7)-flash(?:$|-)/i.test(model)) delete normalized.temperature;
+    return normalized;
   }
 
   async function readResponseBody(response) {

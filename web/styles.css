@@ -769,21 +769,31 @@ a { color: inherit; text-decoration: none; }
 .review-label { background: var(--sand); color: #765017; }
 .failure-label { background: #ffe4de; color: #8b2e20; }
 .grading-result-row button { padding: 7px 9px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 8px; font-weight: 900; }
-.student-result-dialog { width: min(1180px, calc(100% - 24px)); max-height: calc(100vh - 24px); padding: 0; border: 2px solid var(--ink); border-radius: 20px; background: var(--surface); box-shadow: 8px 8px 0 var(--ink); color: var(--ink); }
-.student-result-dialog::backdrop { background: rgba(24,33,56,.62); backdrop-filter: blur(4px); }
+.student-result-inline-slot:empty { display: none; }
+.student-result-inline-slot { padding: 24px; border-top: 1px solid var(--line); background: rgba(233,239,255,.28); }
+.student-result-loading { padding: 28px; border: 1px dashed var(--line); border-radius: 14px; background: white; text-align: center; }
+.student-result-inline { overflow: hidden; border: 2px solid var(--ink); border-radius: 18px; background: var(--surface); box-shadow: 7px 7px 0 var(--ink); color: var(--ink); scroll-margin-top: 18px; }
 .student-result-shell { padding: 0; }
 .student-result-top { display: flex; justify-content: space-between; gap: 20px; padding: 21px 25px; border-bottom: 1px solid var(--line); }
 .student-result-top h2 { margin: 0; font-size: 24px; }
 .student-result-top p:not(.section-kicker) { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
-.student-result-top .dialog-close { position: static; font-size: 26px; }
-.student-review-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 620px; }
+.inline-detail-close { align-self: center; padding: 9px 13px; border: 1px solid var(--ink); border-radius: 9px; background: white; color: var(--blue); cursor: pointer; font-size: 8px; font-weight: 900; }
+.student-review-grid { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(430px,.85fr); min-height: 720px; }
 .student-answer-preview { border-right: 1px solid var(--line); }
-.student-answer-preview iframe { height: 620px; }
-.teacher-score-panel { overflow: auto; max-height: 680px; }
+.student-answer-preview iframe { height: 760px; }
+.teacher-score-panel { overflow: auto; max-height: 820px; }
+.question-score-group { border-bottom: 2px solid var(--ink); }
+.question-score-group:last-child { border-bottom: 0; }
+.question-score-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 16px; background: rgba(185,234,210,.24); }
+.question-score-group-head > strong { font-size: 11px; }
+.question-score-group-head span { color: var(--muted); font-size: 8px; }
+.question-score-group-head b { margin-left: 5px; color: var(--blue); font-size: 10px; }
 .teacher-score-list article { display: grid; grid-template-columns: 1fr 110px; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.question-score-group article:last-child { border-bottom: 0; }
 .teacher-score-list strong { font-size: 9px; }
 .teacher-score-list p, .teacher-score-list small { display: block; margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 .teacher-score-list .answer-reading { padding: 7px 9px; border-radius: 7px; background: rgba(233,239,255,.5); color: var(--ink); }
+.missing-score-label { display: inline-block; margin: 5px 0 0; padding: 4px 7px; border-radius: 999px; background: #ffe4de; color: #8b2e20; font-size: 7px; font-style: normal; font-weight: 900; }
 .teacher-score-list label { display: grid; grid-template-columns: 55px auto; gap: 4px; align-items: center; color: var(--muted); font-size: 8px; }
 .teacher-score-list input { grid-row: 2; width: 55px; padding: 7px; border: 1px solid var(--line); border-radius: 7px; }
 .teacher-score-list label span { grid-row: 2; }
@@ -794,6 +804,7 @@ a { color: inherit; text-decoration: none; }
 .teacher-review-alert { margin: 0 16px 15px; padding: 12px 14px; border: 1px solid #d79a72; border-radius: 10px; background: #fff3e9; color: #713a1f; }
 .teacher-review-alert strong { font-size: 9px; }
 .teacher-review-alert ul { margin: 7px 0 0; padding-left: 17px; font-size: 8px; line-height: 1.6; }
+.teacher-review-alert p { margin: 7px 0 0; font-size: 8px; line-height: 1.55; }
 .student-achievement-feedback { margin: 0 16px 15px; border: 1px solid var(--line); border-radius: 10px; }
 .student-achievement-feedback > strong { display: block; padding: 11px 12px; background: rgba(185,234,210,.2); font-size: 9px; }
 .student-achievement-feedback div { padding: 10px 12px; border-top: 1px solid var(--line); }
@@ -839,4 +850,3 @@ a { color: inherit; text-decoration: none; }
   .student-review-actions { grid-template-columns: 1fr; }
   .grading-prerequisite, .grading-result-actions { align-items: stretch; flex-direction: column; }
 }
-

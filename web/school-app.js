@@ -990,12 +990,14 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
         <div class="grading-result-actions">${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
-      ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId))).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
+      ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId), design)).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
+    <div class="student-result-inline-slot" data-student-result-inline aria-live="polite"></div>
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">← 과제물 관리</a><span>AI 결과는 교사가 검토한 뒤 확정해 주세요.</span></div>`;
 }
 
-function gradingResultRow(result, student) {
-  return `<div class="grading-result-row"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${result.needsTeacherReview ? "review-label" : "success-label"}">${result.needsTeacherReview ? "검토 필요" : "성공"}</em><span>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
+function gradingResultRow(result, student, design) {
+  const summary = resultScoreSummary(result, design);
+  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${result.needsTeacherReview ? "review-label" : "success-label"}">${result.needsTeacherReview ? "검토 필요" : "성공"}</em><span data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
 }
 
 function gradingErrorRow(error, student) {
@@ -1143,12 +1145,78 @@ function asFile(file) {
   return new File([file.blob || file], file.name || "document.pdf", { type: file.type || file.blob?.type || "application/pdf" });
 }
 
+function resultQuestionRows(result, design) {
+  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || []);
+  const storedRows = Array.isArray(result?.questionResults) ? result.questionResults : [];
+  if (!rubricCriteria.length) return storedRows.map((item, index) => ({ ...item, sourceIndex: index, missingResult: false }));
+  const usedIndexes = new Set();
+  return rubricCriteria.map((rubric, index) => {
+    let sourceIndex = storedRows.findIndex((item, itemIndex) => !usedIndexes.has(itemIndex) && item?.criterionId && item.criterionId === rubric.id);
+    if (sourceIndex < 0) sourceIndex = storedRows.findIndex((item, itemIndex) => !usedIndexes.has(itemIndex)
+      && String(item?.questionNumber || "").trim() === rubric.questionNumber
+      && String(item?.evaluationElement || "").trim() === rubric.evaluationElement);
+    if (sourceIndex < 0 && storedRows[index] && !usedIndexes.has(index)) sourceIndex = index;
+    if (sourceIndex >= 0) usedIndexes.add(sourceIndex);
+    const stored = sourceIndex >= 0 ? storedRows[sourceIndex] : {};
+    const maxScore = rubricGroupMaxScore(rubric);
+    return {
+      ...stored,
+      criterionId: rubric.id,
+      questionNumber: rubric.questionNumber || String(index + 1),
+      evaluationElement: rubric.evaluationElement,
+      answerReading: stored.answerReading || stored.evidence || (sourceIndex < 0 ? "AI 판독 결과 없음" : "판독 불가"),
+      criterion: stored.criterion || (sourceIndex < 0 ? "AI가 이 평가요소를 반환하지 않음" : ""),
+      score: Math.min(maxScore, Math.max(0, Number(stored.score || 0))),
+      maxScore,
+      evidence: stored.evidence || "",
+      feedback: stored.feedback || (sourceIndex < 0 ? "답안 원본을 확인하여 점수를 입력해 주세요." : ""),
+      confidence: sourceIndex < 0 ? "low" : (stored.confidence || "low"),
+      sourceIndex,
+      missingResult: sourceIndex < 0,
+    };
+  });
+}
+
+function resultScoreSummary(result, design) {
+  const rows = resultQuestionRows(result, design);
+  const rubricMax = rubricTotalScore(design?.rubricCriteria || []);
+  const maxScore = rubricMax || Number(result?.maxScore || 0) || rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  const rowTotal = rows.reduce((sum, item) => sum + Number(item.score || 0), 0);
+  const total = result?.teacherTotal ?? result?.totalScore ?? rowTotal;
+  return { total: Number(total || 0), maxScore, rows };
+}
+
+function renderQuestionScoreGroups(rows, teacherScores) {
+  const groups = new Map();
+  rows.forEach((item, index) => {
+    const questionNumber = String(item.questionNumber || index + 1);
+    if (!groups.has(questionNumber)) groups.set(questionNumber, []);
+    groups.get(questionNumber).push({ item, index });
+  });
+  return Array.from(groups.entries()).map(([questionNumber, entries], groupIndex) => {
+    const subtotal = entries.reduce((sum, entry) => sum + Number(teacherScores[entry.index] ?? entry.item.score ?? 0), 0);
+    const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
+    return `<section class="question-score-group">
+      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><span>문항 배점 결과 <b data-question-total="${groupIndex}">${formatScore(subtotal)} / ${formatScore(submax)}점</b></span></div>
+      ${entries.map(({ item, index }) => `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p><p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>배점 결과<input data-teacher-score="${index}" data-score-group="${groupIndex}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(teacherScores[index] ?? item.score ?? 0)}"><span>/ ${formatScore(item.maxScore)}점</span></label></article>`).join("")}
+    </section>`;
+  }).join("");
+}
+
 async function openStudentResult(course, targetStudents, studentId) {
-  document.querySelector("#student-result-dialog")?.remove();
+  const slot = app.querySelector("[data-student-result-inline]");
+  if (!slot) return;
+  if (slot.dataset.previewUrl) {
+    URL.revokeObjectURL(slot.dataset.previewUrl);
+    previewUrls = previewUrls.filter((url) => url !== slot.dataset.previewUrl);
+    delete slot.dataset.previewUrl;
+  }
+  slot.innerHTML = `<div class="student-result-loading"><strong>학생 답안과 채점 결과를 불러오고 있습니다.</strong></div>`;
   const result = course.grading?.results?.find((item) => item.studentId === studentId);
   const student = targetStudents.find((item) => item.id === studentId);
   const assignment = course.submission?.assignments?.find((item) => item.studentId === studentId);
-  if (!result || !student || !assignment) return;
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  if (!result || !student || !assignment || !design) { slot.innerHTML = ""; return; }
   const orderedResults = [...course.grading.results].sort((a, b) => studentSort(
     targetStudents.find((item) => item.id === a.studentId),
     targetStudents.find((item) => item.id === b.studentId),
@@ -1156,21 +1224,27 @@ async function openStudentResult(course, targetStudents, studentId) {
   const currentIndex = orderedResults.findIndex((item) => item.studentId === studentId);
   const answerFile = await splitStudentPdf(course.submission.sourceFile.blob, assignment.pageNumbers, currentIndex);
   const previewUrl = URL.createObjectURL(answerFile);
-  const dialog = document.createElement("dialog");
-  dialog.id = "student-result-dialog";
-  dialog.className = "student-result-dialog";
-  dialog.innerHTML = `
-    <form method="dialog" class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI ${formatScore(result.totalScore)} / ${formatScore(result.maxScore)}점</p></div><button class="dialog-close" value="close" aria-label="닫기">×</button></div>
+  previewUrls.push(previewUrl);
+  slot.dataset.previewUrl = previewUrl;
+  const summary = resultScoreSummary(result, design);
+  const questionRows = summary.rows;
+  const teacherScores = questionRows.map((item) => item.sourceIndex >= 0
+    ? Number(result.teacherScores?.[item.sourceIndex] ?? item.score ?? 0)
+    : Number(item.score || 0));
+  slot.innerHTML = `
+    <section class="student-result-inline">
+    <div class="student-result-shell">
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${previewUrl}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
         <section class="teacher-score-panel">
-          <div class="mini-panel-head"><strong>채점기준에 따른 점수</strong><span>교사가 수정 가능</span></div>
+          <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
           <div class="teacher-score-list">
-            ${(result.questionResults || []).map((item, index) => `<article><div><strong>${escapeHtml(item.questionNumber)}번 · ${escapeHtml(item.evaluationElement || item.criterion)}</strong><p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p><p><b>적용 기준:</b> ${escapeHtml(item.criterion)}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence)}</p><small>${escapeHtml(item.feedback)} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>점수<input data-teacher-score="${index}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(result.teacherScores?.[index] ?? item.score)}"><span>/ ${formatScore(item.maxScore)}</span></label></article>`).join("")}
+            ${renderQuestionScoreGroups(questionRows, teacherScores)}
           </div>
+          ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview ? `<div class="teacher-review-alert"><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
-          <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</strong></div>
+          <div class="teacher-total"><span>문항별 배점 합계 · 교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
           ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item) => `<div><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><p>${escapeHtml(item.feedback)}</p></div>`).join("")}</div>` : ""}
           <button class="secondary-action full-button" type="button" data-apply-ai-score>AI 점수 그대로 적용</button>
@@ -1181,44 +1255,61 @@ async function openStudentResult(course, targetStudents, studentId) {
         <span>${result.teacherConfirmed ? "교사 검토 저장됨" : "아직 교사 검토 전"}</span>
         <button class="primary-action" type="button" data-save-next>${currentIndex === orderedResults.length - 1 ? "저장 후 닫기" : "저장 후 다음 학생 →"}</button>
       </div>
-    </form>`;
-  document.body.append(dialog);
-  const scoreInputs = Array.from(dialog.querySelectorAll("[data-teacher-score]"));
+    </div></section>`;
+  const panel = slot.querySelector(".student-result-inline");
+  const scoreInputs = Array.from(panel.querySelectorAll("[data-teacher-score]"));
   const updateTotal = () => {
     const total = scoreInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
-    dialog.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(result.maxScore)}`;
+    panel.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(summary.maxScore)}점`;
+    panel.querySelectorAll("[data-question-total]").forEach((label) => {
+      const groupIndex = label.dataset.questionTotal;
+      const groupInputs = scoreInputs.filter((input) => input.dataset.scoreGroup === groupIndex);
+      const groupTotal = groupInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
+      const groupMax = groupInputs.reduce((sum, input) => sum + Number(input.max || 0), 0);
+      label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
+    });
   };
   scoreInputs.forEach((input) => input.addEventListener("input", updateTotal));
   const saveCurrent = async (applyOriginal = false) => {
-    if (applyOriginal) scoreInputs.forEach((input, index) => { input.value = result.questionResults[index]?.score ?? 0; });
-    result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(result.questionResults[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
+    if (applyOriginal) scoreInputs.forEach((input, index) => { input.value = questionRows[index]?.score ?? 0; });
+    result.questionResults = questionRows.map(({ sourceIndex, missingResult, ...item }) => item);
+    result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
     result.teacherTotal = Math.round(result.teacherScores.reduce((sum, value) => sum + value, 0) * 100) / 100;
-    result.teacherFeedback = dialog.querySelector("[data-teacher-feedback]").value.trim();
+    result.totalScore = Math.round(questionRows.reduce((sum, item) => sum + Number(item.score || 0), 0) * 100) / 100;
+    result.maxScore = summary.maxScore;
+    result.teacherFeedback = panel.querySelector("[data-teacher-feedback]").value.trim();
     result.teacherConfirmed = true;
     result.teacherReviewedAt = new Date().toISOString();
     await putCourse(course);
+    const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
+    if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}`;
   };
-  dialog.querySelector("[data-apply-ai-score]").addEventListener("click", async () => {
+  const closeCurrent = () => {
+    if (slot.dataset.previewUrl) {
+      URL.revokeObjectURL(slot.dataset.previewUrl);
+      previewUrls = previewUrls.filter((url) => url !== slot.dataset.previewUrl);
+      delete slot.dataset.previewUrl;
+    }
+    slot.innerHTML = "";
+  };
+  panel.querySelector("[data-close-student-result]").addEventListener("click", closeCurrent);
+  panel.querySelector("[data-apply-ai-score]").addEventListener("click", async () => {
     await saveCurrent(true);
     updateTotal();
     showToast("AI 점수와 피드백을 그대로 적용했습니다.");
-    dialog.querySelector(".student-review-actions span").textContent = "교사 검토 저장됨";
+    panel.querySelector(".student-review-actions span").textContent = "교사 검토 저장됨";
   });
-  dialog.querySelector("[data-previous-student]")?.addEventListener("click", async () => {
+  panel.querySelector("[data-previous-student]")?.addEventListener("click", async () => {
     await saveCurrent();
-    dialog.close();
-    URL.revokeObjectURL(previewUrl);
     openStudentResult(course, targetStudents, orderedResults[currentIndex - 1].studentId);
   });
-  dialog.querySelector("[data-save-next]").addEventListener("click", async () => {
+  panel.querySelector("[data-save-next]").addEventListener("click", async () => {
     await saveCurrent();
-    dialog.close();
-    URL.revokeObjectURL(previewUrl);
     if (currentIndex < orderedResults.length - 1) openStudentResult(course, targetStudents, orderedResults[currentIndex + 1].studentId);
     else { showToast("마지막 학생까지 교사 검토 내용을 저장했습니다."); renderCourse(course.id, "grading"); }
   });
-  dialog.addEventListener("close", () => { URL.revokeObjectURL(previewUrl); dialog.remove(); });
-  dialog.showModal();
+  updateTotal();
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function renderSettings() {
@@ -1414,4 +1505,3 @@ function renderNotFound() {
 function renderFatal(error) {
   app.innerHTML = `<div class="page-shell"><div class="course-empty"><span>!</span><h2>화면을 불러오지 못했습니다.</h2><p>${escapeHtml(friendlyError(error))}</p><button class="primary-action" type="button" onclick="location.reload()">다시 불러오기</button></div></div>`;
 }
-

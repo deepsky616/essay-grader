@@ -93,6 +93,29 @@ test("normalizeGradingResult validates achievement levels and keeps roster ident
   assert.equal(result.needsTeacherReview, true);
 });
 
+test("normalizeGradingResult creates a visible score row for every rubric criterion", () => {
+  const result = AI.normalizeGradingResult({
+    totalScore: 8,
+    maxScore: 10,
+    summary: "일부 결과만 반환됨",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [],
+    needsTeacherReview: false, reviewReasons: [],
+  }, {
+    totalScore: 10,
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1", evaluationElement: "도형 완성", scoreLevels: [{ score: 6, criterion: "정확함" }, { score: 0, criterion: "미완성" }] },
+      { id: "r2", questionNumber: "2", evaluationElement: "풀이 설명", scoreLevels: [{ score: 4, criterion: "정확함" }, { score: 0, criterion: "근거 없음" }] },
+    ],
+  });
+  assert.equal(result.questionResults.length, 2);
+  assert.deepEqual(result.questionResults.map((item) => item.maxScore), [6, 4]);
+  assert.deepEqual(result.questionResults.map((item) => item.score), [0, 0]);
+  assert.equal(result.totalScore, 0);
+  assert.equal(result.maxScore, 10);
+  assert.equal(result.needsTeacherReview, true);
+  assert.match(result.reviewReasons.join(" "), /AI 채점 결과가 없어/);
+});
+
 test("normalizePageAssignments rejects duplicate pages and fills unmatched students", () => {
   const result = AI.normalizePageAssignments({
     reportedPageCount: 4,
@@ -210,7 +233,7 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal(body.generationConfig.responseMimeType, "application/json");
       assert.equal(body.generationConfig.responseSchema.type, "object");
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
-      assert.equal(body.generationConfig.temperature, 0.1);
+      assert.equal("temperature" in body.generationConfig, false);
       assert.match(body.contents[0].parts[0].text, /같은 페이지끼리 비교/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(responsePayload) }] } }] }), { status: 200 });
     },
@@ -267,7 +290,7 @@ test("matchAnswerPages sends the combined PDF and normalizes roster assignments"
     answerFile: file,
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
-      assert.equal(body.generationConfig.temperature, 0.1);
+      assert.equal("temperature" in body.generationConfig, false);
       assert.equal(body.generationConfig.responseSchema.type, "object");
       assert.match(body.contents[0].parts[0].text, /학생 명단/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
