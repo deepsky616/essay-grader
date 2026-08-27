@@ -116,19 +116,42 @@ test("normalizePageAssignments rejects duplicate pages and fills unmatched stude
 
 test("testApiKey validates model access with a real structured generation", async () => {
   const calledUrls = [];
-  const result = await AI.testApiKey(VALID_KEY, async (url, options) => {
-    calledUrls.push(url);
-    assert.equal(options.headers["x-goog-api-key"], VALID_KEY);
-    if (options.method === "POST") {
-      const request = JSON.parse(options.body);
-      assert.equal(request.generationConfig.responseMimeType, "application/json");
-      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ok: true }) }] } }] }), { status: 200 });
-    }
-    return new Response(JSON.stringify({ name: "models/gemini-3.7-flash", displayName: "Gemini 3.7 Flash" }), { status: 200 });
+  const result = await AI.testApiKey(VALID_KEY, {
+    model: "gemini-2.5-flash",
+    fetchImpl: async (url, options) => {
+      calledUrls.push(url);
+      assert.equal(options.headers["x-goog-api-key"], VALID_KEY);
+      if (options.method === "POST") {
+        const request = JSON.parse(options.body);
+        assert.equal(request.generationConfig.responseMimeType, "application/json");
+        assert.ok(request.generationConfig.maxOutputTokens >= 512);
+        assert.equal(request.generationConfig.thinkingConfig.thinkingBudget, 0);
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ok: true }) }] } }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: "models/gemini-2.5-flash", displayName: "Gemini 2.5 Flash" }), { status: 200 });
+    },
   });
-  assert.match(calledUrls[0], /models\/gemini-3\.7-flash$/);
-  assert.match(calledUrls[1], /models\/gemini-3\.7-flash:generateContent$/);
-  assert.equal(result.model, "gemini-3.7-flash");
+  assert.match(calledUrls[0], /models\/gemini-2\.5-flash$/);
+  assert.match(calledUrls[1], /models\/gemini-2\.5-flash:generateContent$/);
+  assert.equal(result.model, "gemini-2.5-flash");
+  assert.equal(result.generationVerified, true);
+});
+
+test("testApiKey ignores thought parts and accepts fenced JSON", async () => {
+  const result = await AI.testApiKey(VALID_KEY, {
+    model: "gemini-2.5-flash",
+    fetchImpl: async (_url, options) => {
+      if (options.method === "POST") {
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [
+            { thought: true, text: "연결 확인을 분석합니다." },
+            { text: "```json\n{\"ok\":true}\n```" },
+          ] } }],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: "models/gemini-2.5-flash", displayName: "Gemini 2.5 Flash" }), { status: 200 });
+    },
+  });
   assert.equal(result.generationVerified, true);
 });
 
@@ -279,4 +302,3 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
-

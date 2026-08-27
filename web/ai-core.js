@@ -176,6 +176,21 @@
     const body = await readResponseBody(response);
     if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, model));
     const verifiedModel = validateModelId(body.name?.replace(/^models\//, "") || model);
+    const connectionGenerationConfig = {
+      temperature: 0,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+    };
+    // Gemini 2.5 Flash는 기본적으로 사고 토큰을 사용할 수 있다. 연결 확인은
+    // 추론이 필요 없는 작업이므로 실제 JSON 응답에 출력 한도를 온전히 사용한다.
+    if (/^gemini-2\.5-flash(?:$|-)/i.test(verifiedModel)) {
+      connectionGenerationConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
     let generationResponse;
     try {
       generationResponse = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${verifiedModel}:generateContent`, {
@@ -183,16 +198,7 @@
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: "연결 확인입니다. ok를 true로 반환하세요." }] }],
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 64,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "object",
-              properties: { ok: { type: "boolean" } },
-              required: ["ok"],
-            },
-          },
+          generationConfig: connectionGenerationConfig,
         }),
       }, { maxAttempts: 2, baseDelayMs: 800 });
     } catch (error) {
@@ -664,16 +670,62 @@ ${JSON.stringify(roster)}
   }
 
   function parseCandidateJson(body, emptyMessage) {
-    const candidateText = body?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim();
+    const parts = Array.isArray(body?.candidates?.[0]?.content?.parts) ? body.candidates[0].content.parts : [];
+    const candidateText = parts
+      .filter((part) => !part?.thought && typeof part?.text === "string")
+      .map((part) => part.text)
+      .join("")
+      .trim();
     if (!candidateText) {
       const blockReason = body?.promptFeedback?.blockReason;
       throw new Error(blockReason ? `Gemini 안전 필터가 응답을 중단했습니다: ${blockReason}` : emptyMessage);
     }
+    const normalizedText = candidateText
+      .replace(/^\s*```(?:json)?\s*/i, "")
+      .replace(/\s*```\s*$/i, "")
+      .trim();
     try {
-      return JSON.parse(candidateText);
+      const parsed = JSON.parse(normalizedText);
+      if (typeof parsed === "string") return JSON.parse(parsed);
+      return parsed;
     } catch {
+      const extracted = extractFirstJsonValue(normalizedText);
+      if (extracted) {
+        try { return JSON.parse(extracted); } catch { /* 아래의 공통 오류를 사용한다. */ }
+      }
       throw new Error("Gemini가 반환한 결과를 JSON으로 해석하지 못했습니다. 다시 시도해 주세요.");
     }
+  }
+
+  function extractFirstJsonValue(value) {
+    const source = String(value || "");
+    for (let start = 0; start < source.length; start += 1) {
+      const opening = source[start];
+      if (opening !== "{" && opening !== "[") continue;
+      const stack = [];
+      let inString = false;
+      let escaped = false;
+      for (let index = start; index < source.length; index += 1) {
+        const character = source[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (character === "\\") escaped = true;
+          else if (character === '"') inString = false;
+          continue;
+        }
+        if (character === '"') {
+          inString = true;
+          continue;
+        }
+        if (character === "{" || character === "[") stack.push(character);
+        else if (character === "}" || character === "]") {
+          const expected = character === "}" ? "{" : "[";
+          if (stack.pop() !== expected) break;
+          if (!stack.length) return source.slice(start, index + 1);
+        }
+      }
+    }
+    return "";
   }
 
   function geminiErrorMessage(status, body, model = MODEL) {
@@ -739,4 +791,3 @@ ${JSON.stringify(roster)}
     arrayBufferToBase64,
   };
 });
-
