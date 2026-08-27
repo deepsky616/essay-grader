@@ -6,6 +6,14 @@ const AI = require("../ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
+function assertSchemaEnumsAreStrings(value, path = "responseSchema") {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value.enum)) {
+    for (const entry of value.enum) assert.equal(typeof entry, "string", `${path}.enum must contain only strings`);
+  }
+  for (const [key, child] of Object.entries(value)) assertSchemaEnumsAreStrings(child, `${path}.${key}`);
+}
+
 test("buildPrompt treats uploaded documents as untrusted evidence", () => {
   const prompt = AI.buildPrompt({
     title: "도형 평가",
@@ -185,6 +193,26 @@ test("testApiKey explains an invalid key response", async () => {
   );
 });
 
+test("gradeAnswer reports response-schema errors as a site-format problem", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  await assert.rejects(
+    AI.gradeAnswer({
+      apiKey: VALID_KEY,
+      metadata: {
+        totalScore: 20,
+        requireBlankComparison: true,
+        rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "설명", scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 0, criterion: "오답" }] }],
+        exampleAnswers: [],
+      },
+      files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+      retryDelayMs: 0,
+      fetchImpl: async () => new Response(JSON.stringify({ error: { message: "Invalid value at 'generation_config.response_schema.properties[2].value.enum[0]' (TYPE_STRING), 20" } }), { status: 400 }),
+    }),
+    /채점 결과 형식 설정을 처리하지 못했습니다/,
+  );
+});
+
 test("testApiKey tests the selected model id", async () => {
   const calledUrls = [];
   const result = await AI.testApiKey(VALID_KEY, {
@@ -236,6 +264,14 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal(body.generationConfig.responseSchema.properties.questionResults.minItems, 1);
       assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 1);
       assert.deepEqual(body.generationConfig.responseSchema.properties.questionResults.items.properties.criterionId.enum, ["r1"]);
+      assertSchemaEnumsAreStrings(body.generationConfig.responseSchema);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
+      assert.equal(body.generationConfig.responseSchema.properties.maxScore.minimum, 2);
+      assert.equal(body.generationConfig.responseSchema.properties.maxScore.maximum, 2);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.items.properties.score.minimum, 0);
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.items.properties.score.maximum, 2);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
       assert.equal(body.generationConfig.maxOutputTokens, 16384);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
       assert.equal("temperature" in body.generationConfig, false);
@@ -327,6 +363,9 @@ test("gradeAnswer automatically repairs empty per-question and achievement resul
       assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 2);
       assert.equal(body.generationConfig.responseSchema.properties.achievementResults.minItems, 1);
       assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+      if (attempts === 1) assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
       if (attempts === 2) assert.match(body.contents[0].parts[0].text, /이전 채점 응답에서/);
       const payload = attempts === 1 ? incomplete : repaired;
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
@@ -384,3 +423,4 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
+

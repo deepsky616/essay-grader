@@ -472,7 +472,8 @@ ${JSON.stringify(safeMetadata)}
     if (assessmentMax > 0) {
       schema.properties.totalScore.minimum = 0;
       schema.properties.totalScore.maximum = assessmentMax;
-      schema.properties.maxScore.enum = [assessmentMax];
+      schema.properties.maxScore.minimum = assessmentMax;
+      schema.properties.maxScore.maximum = assessmentMax;
     }
     if (rubricCriteria.length) {
       schema.properties.questionResults.minItems = rubricCriteria.length;
@@ -481,8 +482,12 @@ ${JSON.stringify(safeMetadata)}
       item.properties.criterionId.enum = rubricCriteria.map((rubric) => rubric.id);
       item.properties.questionNumber.enum = Array.from(new Set(rubricCriteria.map((rubric) => rubric.questionNumber)));
       item.properties.evaluationElement.enum = Array.from(new Set(rubricCriteria.map((rubric) => rubric.evaluationElement)));
-      item.properties.maxScore.enum = Array.from(new Set(rubricCriteria.map((rubric) => rubric.maxScore)));
-      item.properties.score.enum = Array.from(new Set(rubricCriteria.flatMap((rubric) => rubric.scoreLevels.map((level) => level.score))));
+      const rubricMaxScores = rubricCriteria.map((rubric) => rubric.maxScore);
+      const rubricScores = rubricCriteria.flatMap((rubric) => rubric.scoreLevels.map((level) => level.score));
+      item.properties.maxScore.minimum = Math.min(...rubricMaxScores);
+      item.properties.maxScore.maximum = Math.max(...rubricMaxScores);
+      item.properties.score.minimum = Math.min(...rubricScores);
+      item.properties.score.maximum = Math.max(...rubricScores);
     }
     if (achievementGroups.length) {
       schema.properties.achievementResults.minItems = achievementGroups.length;
@@ -901,6 +906,9 @@ ${JSON.stringify(roster)}
     const message = body?.error?.message || body?.raw || "알 수 없는 오류";
     if (/api key|API_KEY_INVALID|key not valid/i.test(message)) return `[HTTP ${status}] Gemini API 키가 유효하지 않습니다. Google AI Studio에서 키 상태와 사용 제한을 확인해 주세요. (${message})`;
     if (status === 404) return `[HTTP 404] 선택한 Gemini 모델 ‘${model}’을 사용할 수 없습니다. 공식 모델 ID를 확인해 주세요. (${message})`;
+    if (status === 400 && /generation[_ ]config\.response[_ ]schema|responseSchema|Invalid value.*enum/i.test(message)) {
+      return `[HTTP 400] Gemini 채점 결과 형식 설정을 처리하지 못했습니다. 최신 사이트로 새로고침한 뒤 해당 학생을 다시 채점해 주세요. (${message})`;
+    }
     if (status === 400) return `[HTTP 400] Gemini가 요청을 처리하지 못했습니다. 파일 크기·형식·채점기준 입력을 확인해 주세요. (${message})`;
     if (status === 401 || status === 403) return `[HTTP ${status}] API 키가 유효하지 않거나 Gemini API 생성 권한이 없습니다. (${message})`;
     if (status === 429) return `[HTTP 429] Gemini 사용량 또는 요청 횟수 한도를 초과했습니다. 자동 재시도 후에도 실패했습니다. 잠시 후 다시 시도해 주세요. (${message})`;
@@ -960,3 +968,4 @@ ${JSON.stringify(roster)}
     arrayBufferToBase64,
   };
 });
+
