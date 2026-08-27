@@ -25,6 +25,11 @@ test("complex extracted formulas are shown as teacher-friendly math", () => {
   assert.match(friendlyMathToLatex(friendly), /\\begin\{aligned\}/);
 });
 
+test("teacher-friendly addition and subtraction render in the math preview", () => {
+  const { friendlyMathToLatex } = loadSchoolMathHelpers();
+  assert.equal(friendlyMathToLatex("3 + 2 − 1 = 4"), "3 + 2 - 1 = 4");
+});
+
 function assertSchemaEnumsAreStrings(value, path = "responseSchema") {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value.enum)) {
