@@ -30,6 +30,15 @@ test("teacher-friendly addition and subtraction render in the math preview", () 
   assert.equal(friendlyMathToLatex("3 + 2 − 1 = 4"), "3 + 2 - 1 = 4");
 });
 
+test("formula commands are removed from the answer explanation", () => {
+  const { toTeacherFriendlyMath } = loadSchoolMathHelpers();
+  const raw = String.raw`표: 형광펜 계산 과정 '\frac{180}{720} \times 100 = \frac{1}{4} \times 100 = 25\\%'과 샤프 계산 과정 '\frac{1500}{5000} \times 100 = \frac{3}{10} \times 100 = 30\\%'`;
+  const friendly = toTeacherFriendlyMath(raw);
+  assert.doesNotMatch(friendly, /\\(?:frac|times)/);
+  assert.match(friendly, /180\/720 × 100 = 1\/4 × 100 = 25%/);
+  assert.match(friendly, /1500\/5000 × 100 = 3\/10 × 100 = 30%/);
+});
+
 function assertSchemaEnumsAreStrings(value, path = "responseSchema") {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value.enum)) {

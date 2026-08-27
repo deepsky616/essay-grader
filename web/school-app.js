@@ -591,10 +591,12 @@ function rubricScoreRow(level) {
 
 function exampleEditorRow(item) {
   const friendlyMath = toTeacherFriendlyMath(item.mathNotation || "");
+  const friendlyAnswerText = toTeacherFriendlyMath(item.answerText || "");
+  const friendlyVisualDescription = toTeacherFriendlyMath(item.visualDescription || "");
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
     <div class="example-editor-head"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required></label><button type="button" data-remove-example>삭제</button></div>
-    <label>예시답안<textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(item.answerText || "")}</textarea></label>
-    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>쉬운 수식 입력</strong><span>예: 180 ÷ 720 × 100 = 25%</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(item.visualDescription || "")}</textarea></label></div>
+    <label>답안에 대한 설명 <small>복잡한 수식 명령어는 자동으로 쉬운 표현으로 바뀝니다.</small><textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(friendlyAnswerText)}</textarea></label>
+    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>쉬운 수식 입력</strong><span>예: 180 ÷ 720 × 100 = 25%</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
     <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
   </article>`;
 }
@@ -619,6 +621,10 @@ function bindDesignTab(course) {
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
   form.addEventListener("click", (event) => handleDesignEditorClick(event, form));
   form.addEventListener("input", (event) => { if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target); });
+  form.addEventListener("focusout", (event) => {
+    if (!event.target.matches('[name="exampleText"], [name="exampleVisual"]')) return;
+    event.target.value = toTeacherFriendlyMath(event.target.value);
+  });
   form.querySelectorAll("[data-extract-document]").forEach((button) => button.addEventListener("click", () => extractDesignDocument(form, button.dataset.extractDocument)));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -700,6 +706,7 @@ function refreshMathPreviews(form) {
 
 function toTeacherFriendlyMath(value) {
   let source = String(value || "").replace(/\$/g, "").trim();
+  source = source.replace(/\\(?:text|mathrm|operatorname)\s*\{([^{}]*)\}/g, "$1");
   for (let pass = 0; pass < 4; pass += 1) {
     const converted = source.replace(/\\(?:dfrac|tfrac|frac)\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_match, numerator, denominator) => `${numerator}/${denominator}`);
     if (converted === source) break;
@@ -709,8 +716,22 @@ function toTeacherFriendlyMath(value) {
     .replace(/\\times\b/g, "×")
     .replace(/\\div\b/g, "÷")
     .replace(/\\cdot\b/g, "·")
+    .replace(/\\pm\b/g, "±")
+    .replace(/\\(?:leq|le)\b/g, "≤")
+    .replace(/\\(?:geq|ge)\b/g, "≥")
+    .replace(/\\neq\b/g, "≠")
+    .replace(/\\approx\b/g, "≈")
+    .replace(/\\angle\b/g, "∠")
+    .replace(/\\parallel\b/g, "∥")
+    .replace(/\\perp\b/g, "⟂")
+    .replace(/\\pi\b/g, "π")
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)")
+    .replace(/\^\s*\{([^{}]*)\}/g, "^$1")
+    .replace(/_\s*\{([^{}]*)\}/g, "_$1")
     .replace(/\\+%/g, "%")
     .replace(/\\(?:left|right)\b/g, "")
+    .replace(/\\(?:begin|end)\s*\{[^{}]*\}/g, "")
+    .replace(/\\[A-Za-z]+\b/g, "")
     .replace(/\\[,;!]/g, " ")
     .replace(/\\\\(?=\s*(?:\d|[A-Za-z]))/g, "\n")
     .replace(/%(?=\s*\d+\s*\/)/g, "%\n")
@@ -806,9 +827,9 @@ function collectDesignForm(form, existing) {
     return {
       id,
       questionNumber: row.querySelector('[name="exampleQuestion"]').value.trim(),
-      answerText: row.querySelector('[name="exampleText"]').value.trim(),
-      mathNotation: row.querySelector('[name="exampleMath"]').value.trim(),
-      visualDescription: row.querySelector('[name="exampleVisual"]').value.trim(),
+      answerText: toTeacherFriendlyMath(row.querySelector('[name="exampleText"]').value),
+      mathNotation: toTeacherFriendlyMath(row.querySelector('[name="exampleMath"]').value),
+      visualDescription: toTeacherFriendlyMath(row.querySelector('[name="exampleVisual"]').value),
       file,
     };
   });
