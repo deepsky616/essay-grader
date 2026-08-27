@@ -220,7 +220,7 @@ async function renderStudentManagement() {
         <div class="student-import-card">
           <div><p class="section-kicker">Excel 일괄 생성</p><h2>학생 명단 불러오기</h2><p>첫 행에 학년, 반, 번호, 이름 열을 사용해 주세요.</p></div>
           <label class="file-pick-button">Excel·CSV 선택<input data-student-import type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values"></label>
-          <button class="secondary-action" type="button" data-download-student-template>명단 양식 CSV</button>
+          <button class="secondary-action" type="button" data-download-student-template>명단 양식 Excel</button>
           <p data-student-import-status>최대 ${MAX_STUDENTS}명까지 현재 브라우저에 저장됩니다.</p>
         </div>
       </section>
@@ -299,7 +299,34 @@ async function addStudents(input) {
 }
 
 function downloadStudentTemplate() {
-  downloadText("학생명단_양식.csv", "\uFEFF학년,반,번호,이름\r\n6,1,1,홍길동\r\n6,1,2,김하늘\r\n", "text/csv;charset=utf-8");
+  if (!window.XLSX) {
+    showToast("Excel 양식 도구를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.", true);
+    return;
+  }
+
+  const rosterRows = [["학년", "반", "번호", "이름"]];
+  for (let row = 0; row < 40; row += 1) rosterRows.push([6, "", "", ""]);
+
+  const workbook = window.XLSX.utils.book_new();
+  const rosterSheet = window.XLSX.utils.aoa_to_sheet(rosterRows);
+  rosterSheet["!cols"] = [{ wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
+  rosterSheet["!autofilter"] = { ref: "A1:D41" };
+  window.XLSX.utils.book_append_sheet(workbook, rosterSheet, "학생명단");
+
+  const guideSheet = window.XLSX.utils.aoa_to_sheet([
+    ["학생 명단 작성 안내"],
+    ["열 이름", "입력 방법", "예시"],
+    ["학년", "숫자로 입력합니다. 현재 수업은 6학년입니다.", 6],
+    ["반", "숫자로 입력합니다.", 1],
+    ["번호", "반 안에서 중복되지 않는 번호를 입력합니다.", 1],
+    ["이름", "학생 이름을 입력합니다.", "홍길동"],
+    ["주의", "학생명단 시트의 열 이름은 변경하지 마세요.", "학년 / 반 / 번호 / 이름"],
+  ]);
+  guideSheet["!cols"] = [{ wch: 18 }, { wch: 48 }, { wch: 28 }];
+  window.XLSX.utils.book_append_sheet(workbook, guideSheet, "작성 안내");
+
+  window.XLSX.writeFile(workbook, "학생명단_양식.xlsx", { compression: true });
+  showToast("학생 명단 Excel 양식을 내려받았습니다.");
 }
 
 function classOptions(selected = "1") {
