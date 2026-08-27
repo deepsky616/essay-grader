@@ -21,12 +21,29 @@ test("buildPrompt treats uploaded documents as untrusted evidence", () => {
 test("buildPrompt includes typed rubric and math example metadata", () => {
   const prompt = AI.buildPrompt({
     totalScore: 10,
-    rubricCriteria: [{ questionNumber: "1", evaluationElement: "분수 계산", maxScore: 10, criterion: "계산과 설명" }],
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 계산", scoreLevels: [{ score: 10, criterion: "계산과 설명이 모두 정확함" }, { score: 5, criterion: "계산 과정 일부가 타당함" }, { score: 0, criterion: "무응답" }] }],
     exampleAnswers: [{ questionNumber: "1", answerText: "넓이를 구한다", mathNotation: "\\frac{1}{2}ab", visualDescription: "삼각형 ABC" }],
   });
   assert.match(prompt, /분수 계산/);
+  assert.match(prompt, /계산 과정 일부가 타당함/);
   assert.match(prompt, /\\\\frac\{1\}\{2\}ab/);
   assert.match(prompt, /삼각형 ABC/);
+});
+
+test("normalizeGradingResult selects one of the teacher-defined score levels", () => {
+  const result = AI.normalizeGradingResult({
+    totalScore: 4,
+    maxScore: 5,
+    summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [], reviewReasons: [], needsTeacherReview: false,
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "설명", criterion: "임의 점수", score: 4, maxScore: 5, evidence: "풀이", feedback: "확인", confidence: "high" }],
+  }, {
+    totalScore: 5,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "설명", scoreLevels: [{ score: 5, criterion: "완전함" }, { score: 3, criterion: "일부 타당" }, { score: 0, criterion: "근거 없음" }] }],
+  });
+  assert.equal(result.questionResults[0].score, 5);
+  assert.equal(result.questionResults[0].criterion, "완전함");
+  assert.equal(result.needsTeacherReview, true);
 });
 
 test("normalizeGradingResult recomputes totals and flags invalid scores", () => {
@@ -192,7 +209,7 @@ test("matchAnswerPages sends the combined PDF and normalizes roster assignments"
   assert.equal(result.needsTeacherReview, false);
 });
 
-test("extractEvaluationDocument preserves rubric rows in structured output", async () => {
+test("extractEvaluationDocument preserves grouped score levels in structured output", async () => {
   const bytes = new TextEncoder().encode("rubric pdf");
   const file = { name: "rubric.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
   const result = await AI.extractEvaluationDocument({
@@ -204,11 +221,12 @@ test("extractEvaluationDocument preserves rubric rows in structured output", asy
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 1);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
-        rubricCriteria: [{ questionNumber: "1", evaluationElement: "도형 성질", maxScore: 5, criterion: "조건 2개 충족" }],
+        rubricCriteria: [{ questionNumber: "1", evaluationElement: "도형 성질", scoreLevels: [{ score: 5, criterion: "조건 2개 충족" }, { score: 3, criterion: "조건 1개 충족" }] }],
         notes: [],
       }) }] } }] }), { status: 200 });
     },
   });
-  assert.equal(result.rubricCriteria[0].maxScore, 5);
+  assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
+  assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
 

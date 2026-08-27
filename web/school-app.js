@@ -12,6 +12,11 @@ const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_STUDENTS = 500;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const ACHIEVEMENT_LEVEL_EXAMPLES = {
+  "상": "예: 기준을 정확히 이해하고 조건에 맞게 수행할 수 있다.",
+  "중": "예: 기준을 이해하고 기본 조건에 맞게 수행할 수 있다.",
+  "하": "예: 기준의 일부를 알고 수행을 시도한다.",
+};
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
@@ -483,50 +488,49 @@ function renderDesignTab(course) {
 }
 
 function designCard(design, index) {
-  const total = (design.rubricCriteria || []).reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
-  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 채점기준 ${design.rubricCriteria?.length || 0}개 · ${formatScore(total)}점</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
+  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
 
 function createEmptyDesign() {
   return {
     id: "",
     taskName: "",
-    achievementGroups: [{ id: crypto.randomUUID(), itemRange: "1번", standard: "", levels: defaultAchievementLevels() }],
-    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", maxScore: 10, criterion: "" }],
+    achievementGroups: [{ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }],
+    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 10, criterion: "" }] }],
     exampleAnswers: [{ id: crypto.randomUUID(), questionNumber: "1", answerText: "", mathNotation: "", visualDescription: "" }],
   };
 }
 
 function defaultAchievementLevels() {
   return [
-    { id: crypto.randomUUID(), label: "상", description: "기준을 정확히 이해하고 조건에 맞게 수행할 수 있다." },
-    { id: crypto.randomUUID(), label: "중", description: "기준을 이해하고 기본 조건에 맞게 수행할 수 있다." },
-    { id: crypto.randomUUID(), label: "하", description: "기준의 일부를 알고 수행을 시도한다." },
+    { id: crypto.randomUUID(), label: "상", description: "" },
+    { id: crypto.randomUUID(), label: "중", description: "" },
+    { id: crypto.randomUUID(), label: "하", description: "" },
   ];
 }
 
 function designEditor(design) {
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
   return `
     <form id="design-form" class="design-editor" data-design-id="${escapeHtml(design.id)}">
       <div class="design-editor-heading"><div><p class="section-kicker">DESIGN EDITOR</p><h3>${design.id ? "평가 설계 수정" : "평가 설계 추가"}</h3></div><button type="button" data-cancel-design>닫기</button></div>
       <label class="design-name-field">평가(과제)명<input name="taskName" value="${escapeHtml(design.taskName)}" placeholder="예: 원의 넓이 서·논술형 평가" required maxlength="100"></label>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>기준과 수준을 필요한 만큼 추가하거나 삭제할 수 있습니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
+        <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>회색 예시는 입력값이 아닌 안내 문구이며 교사가 입력하면 자동으로 사라집니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
         <div data-achievement-groups>${(design.achievementGroups || []).map(achievementEditor).join("")}</div>
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>문제 번호, 평가요소, 배점, 부분점수 기준을 입력하세요.</p></div><button type="button" data-add-rubric>＋ 채점기준 추가</button></div>
+        <div class="editor-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>문제 번호와 평가요소를 묶고, 그 안에 여러 배점 기준을 나누어 입력하세요.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="document-auto-row">
           <label>채점기준표 PDF·사진<input name="rubricDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
           <button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>
           <span>${design.rubricFile ? `저장됨: ${escapeHtml(design.rubricFile.name)}` : "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다."}</span>
         </div>
-        <div class="rubric-editor-table">
-          <div class="rubric-editor-head"><span>문제 번호</span><span>평가요소</span><span>배점</span><span>채점기준</span><span></span></div>
-          <div data-rubric-rows>${(design.rubricCriteria || []).map(rubricEditorRow).join("")}</div>
-        </div>
+        <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map(rubricEditorGroup).join("")}</div>
       </section>
 
       <section class="design-editor-section">
@@ -553,18 +557,31 @@ function achievementEditor(group, index) {
 }
 
 function levelEditor(level) {
-  return `<div class="level-editor-row" data-level data-level-id="${escapeHtml(level.id || "")}"><input name="levelLabel" value="${escapeHtml(level.label || "")}" placeholder="수준 이름" required><textarea name="levelDescription" rows="2" placeholder="수준 설명" required>${escapeHtml(level.description || "")}</textarea><button type="button" data-remove-level>삭제</button></div>`;
+  const legacyExamples = Object.values(ACHIEVEMENT_LEVEL_EXAMPLES).map((value) => value.replace(/^예:\s*/, ""));
+  const savedDescription = legacyExamples.includes(String(level.description || "").trim()) ? "" : level.description || "";
+  const placeholder = ACHIEVEMENT_LEVEL_EXAMPLES[level.label] || "예: 이 수준에서 학생이 보여야 할 수행을 입력하세요.";
+  return `<div class="level-editor-row" data-level data-level-id="${escapeHtml(level.id || "")}"><input name="levelLabel" value="${escapeHtml(level.label || "")}" placeholder="수준 이름" required><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea><button type="button" data-remove-level>삭제</button></div>`;
 }
 
-function rubricEditorRow(item) {
-  return `<div class="rubric-editor-row" data-rubric-row data-row-id="${escapeHtml(item.id || "")}"><input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required><input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="평가요소" required><input name="rubricScore" type="number" min="0" step="0.5" value="${Number(item.maxScore || 0)}" required><textarea name="rubricCriterion" rows="3" placeholder="정답·부분점수·오류별 기준" required>${escapeHtml(item.criterion || "")}</textarea><button type="button" data-remove-rubric>삭제</button></div>`;
+function rubricEditorGroup(item, index) {
+  return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
+    <div class="rubric-group-head"><strong>평가요소 ${index + 1}</strong><button type="button" data-remove-rubric>평가요소 삭제</button></div>
+    <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
+    <div class="rubric-score-head"><span>배점</span><span>해당 배점의 채점기준</span><span></span></div>
+    <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map(rubricScoreRow).join("")}</div>
+    <button class="mini-add" type="button" data-add-rubric-score>＋ 배점 기준 추가</button>
+  </article>`;
+}
+
+function rubricScoreRow(level) {
+  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><input name="rubricScore" type="number" min="0" step="0.5" value="${Number(level.score || 0)}" required><textarea name="rubricCriterion" rows="2" placeholder="이 배점을 주는 구체적인 조건" required>${escapeHtml(level.criterion || "")}</textarea><button type="button" data-remove-rubric-score>삭제</button></div>`;
 }
 
 function exampleEditorRow(item) {
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
     <div class="example-editor-head"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required></label><button type="button" data-remove-example>삭제</button></div>
     <label>예시답안<textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(item.answerText || "")}</textarea></label>
-    <div class="example-detail-grid"><label>수식(LaTeX)<textarea name="exampleMath" rows="2" placeholder="예: \\frac{1}{2}ab">${escapeHtml(item.mathNotation || "")}</textarea></label><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(item.visualDescription || "")}</textarea></label></div>
+    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>수식 입력</strong><span>분자·분모만 입력하세요</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>분수 추가</button></div><label class="latex-helper">수식 자동 입력값 <small>직접 수정도 가능합니다.</small><textarea name="exampleMath" rows="2" placeholder="분수 만들기를 사용하면 자동으로 입력됩니다.">${escapeHtml(item.mathNotation || "")}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(item.visualDescription || "")}</textarea></label></div>
     <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
   </article>`;
 }
@@ -585,8 +602,10 @@ function bindDesignTab(course) {
   }));
   const form = app.querySelector("#design-form");
   if (!form) return;
+  refreshMathPreviews(form);
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
   form.addEventListener("click", (event) => handleDesignEditorClick(event, form));
+  form.addEventListener("input", (event) => { if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target); });
   form.querySelectorAll("[data-extract-document]").forEach((button) => button.addEventListener("click", () => extractDesignDocument(form, button.dataset.extractDocument)));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -616,13 +635,54 @@ function handleDesignEditorClick(event, form) {
   const removeLevel = event.target.closest("[data-remove-level]");
   if (removeLevel) { const list = removeLevel.closest("[data-levels]"); if (list.querySelectorAll("[data-level]").length > 1) removeLevel.closest("[data-level]").remove(); return; }
   const addRubric = event.target.closest("[data-add-rubric]");
-  if (addRubric) { form.querySelector("[data-rubric-rows]").insertAdjacentHTML("beforeend", rubricEditorRow({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", maxScore: 0, criterion: "" })); return; }
+  if (addRubric) {
+    const list = form.querySelector("[data-rubric-groups]");
+    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 0, criterion: "" }] }, list.querySelectorAll("[data-rubric-group]").length));
+    return;
+  }
   const removeRubric = event.target.closest("[data-remove-rubric]");
-  if (removeRubric) { if (form.querySelectorAll("[data-rubric-row]").length > 1) removeRubric.closest("[data-rubric-row]").remove(); return; }
+  if (removeRubric) { if (form.querySelectorAll("[data-rubric-group]").length > 1) removeRubric.closest("[data-rubric-group]").remove(); return; }
+  const addRubricScore = event.target.closest("[data-add-rubric-score]");
+  if (addRubricScore) { addRubricScore.closest("[data-rubric-group]").querySelector("[data-rubric-scores]").insertAdjacentHTML("beforeend", rubricScoreRow({ id: crypto.randomUUID(), score: 0, criterion: "" })); return; }
+  const removeRubricScore = event.target.closest("[data-remove-rubric-score]");
+  if (removeRubricScore) { const list = removeRubricScore.closest("[data-rubric-scores]"); if (list.querySelectorAll("[data-rubric-score]").length > 1) removeRubricScore.closest("[data-rubric-score]").remove(); return; }
   const addExample = event.target.closest("[data-add-example]");
-  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", answerText: "", mathNotation: "", visualDescription: "" })); return; }
+  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
-  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) removeExample.closest("[data-example-row]").remove();
+  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); return; }
+  const buildFraction = event.target.closest("[data-build-fraction]");
+  if (buildFraction) {
+    const card = buildFraction.closest("[data-example-row]");
+    const numeratorInput = card.querySelector("[data-fraction-numerator]");
+    const denominatorInput = card.querySelector("[data-fraction-denominator]");
+    const numerator = numeratorInput.value.trim();
+    const denominator = denominatorInput.value.trim();
+    if (!numerator || !denominator) { showToast("분자와 분모를 모두 입력해 주세요."); return; }
+    const textarea = card.querySelector('[name="exampleMath"]');
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const spacer = start > 0 && !/\s$/.test(textarea.value.slice(0, start)) ? " " : "";
+    textarea.setRangeText(`${spacer}\\frac{${numerator}}{${denominator}}`, start, end, "end");
+    numeratorInput.value = "";
+    denominatorInput.value = "";
+    textarea.focus();
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function refreshMathPreviews(form) {
+  form.querySelectorAll('[name="exampleMath"]').forEach(renderMathPreview);
+}
+
+function renderMathPreview(textarea) {
+  const preview = textarea.closest("[data-example-row]")?.querySelector("[data-math-preview]");
+  if (!preview) return;
+  const expression = textarea.value.trim();
+  if (!expression) { preview.textContent = "수식을 입력하면 실제 모양이 여기에 표시됩니다."; preview.classList.add("is-empty"); return; }
+  preview.classList.remove("is-empty");
+  if (!window.katex) { preview.textContent = expression; return; }
+  try { window.katex.render(expression, preview, { displayMode: true, throwOnError: false, strict: "ignore", trust: false }); }
+  catch { preview.textContent = expression; }
 }
 
 async function extractDesignDocument(form, kind) {
@@ -640,9 +700,9 @@ async function extractDesignDocument(form, kind) {
   try {
     const result = await ChaejeomAI.extractEvaluationDocument({ apiKey, file, kind, model });
     if (kind === "rubric") {
-      const items = result.rubricCriteria || [];
+      const items = normalizeRubricCriteria(result.rubricCriteria || []);
       if (!items.length) throw new Error("문서에서 채점기준 행을 찾지 못했습니다.");
-      form.querySelector("[data-rubric-rows]").innerHTML = items.map((item) => rubricEditorRow({ ...item, id: crypto.randomUUID() })).join("");
+      form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
     } else {
       const items = result.exampleAnswers || [];
       if (!items.length) throw new Error("문서에서 예시답안을 찾지 못했습니다.");
@@ -669,13 +729,16 @@ function collectDesignForm(form, existing) {
       description: level.querySelector('[name="levelDescription"]').value.trim(),
     })),
   }));
-  const rubricCriteria = Array.from(form.querySelectorAll("[data-rubric-row]")).map((row) => ({
-    id: row.dataset.rowId || crypto.randomUUID(),
-    questionNumber: row.querySelector('[name="rubricQuestion"]').value.trim(),
-    evaluationElement: row.querySelector('[name="rubricElement"]').value.trim(),
-    maxScore: Number(row.querySelector('[name="rubricScore"]').value),
-    criterion: row.querySelector('[name="rubricCriterion"]').value.trim(),
-  }));
+  const rubricCriteria = normalizeRubricCriteria(Array.from(form.querySelectorAll("[data-rubric-group]")).map((group) => ({
+    id: group.dataset.groupId || crypto.randomUUID(),
+    questionNumber: group.querySelector('[name="rubricQuestion"]').value.trim(),
+    evaluationElement: group.querySelector('[name="rubricElement"]').value.trim(),
+    scoreLevels: Array.from(group.querySelectorAll("[data-rubric-score]")).map((level) => ({
+      id: level.dataset.scoreId || crypto.randomUUID(),
+      score: Number(level.querySelector('[name="rubricScore"]').value),
+      criterion: level.querySelector('[name="rubricCriterion"]').value.trim(),
+    })),
+  })));
   const existingExamples = new Map((existing?.exampleAnswers || []).map((item) => [item.id, item]));
   const exampleAnswers = Array.from(form.querySelectorAll("[data-example-row]")).map((row) => {
     const id = row.dataset.rowId || crypto.randomUUID();
@@ -692,7 +755,8 @@ function collectDesignForm(form, existing) {
   });
   if (!achievementGroups.length || !rubricCriteria.length || !exampleAnswers.length) throw new Error("성취기준, 채점기준, 예시답안을 각각 한 개 이상 입력해 주세요.");
   if (achievementGroups.some((group) => !group.itemRange || !group.standard || group.levels.some((level) => !level.label || !level.description))) throw new Error("성취기준과 모든 성취수준을 입력해 주세요.");
-  if (rubricCriteria.some((item) => !item.questionNumber || !item.evaluationElement || !item.criterion || item.maxScore < 0)) throw new Error("문제별 평가요소, 배점, 채점기준을 모두 입력해 주세요.");
+  if (rubricCriteria.some((item) => !item.questionNumber || !item.evaluationElement || !item.scoreLevels.length || item.scoreLevels.some((level) => !level.criterion || level.score < 0))) throw new Error("각 평가요소의 문제 번호와 배점별 채점기준을 모두 입력해 주세요.");
+  if (rubricCriteria.some((item) => new Set(item.scoreLevels.map((level) => String(level.score))).size !== item.scoreLevels.length)) throw new Error("같은 평가요소 안에서는 서로 다른 배점을 입력해 주세요.");
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");
   const rubricFile = form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
   const exampleFile = form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
@@ -711,6 +775,40 @@ function collectDesignForm(form, existing) {
   };
 }
 
+function normalizeRubricCriteria(items) {
+  const grouped = new Map();
+  for (const raw of Array.isArray(items) ? items : []) {
+    const questionNumber = String(raw?.questionNumber || "").trim();
+    const evaluationElement = String(raw?.evaluationElement || "").trim();
+    const key = `${questionNumber.toLocaleLowerCase("ko-KR")}|${evaluationElement.toLocaleLowerCase("ko-KR")}`;
+    if (!grouped.has(key)) grouped.set(key, { id: raw?.id || crypto.randomUUID(), questionNumber, evaluationElement, scoreLevels: [] });
+    const group = grouped.get(key);
+    const rawLevels = Array.isArray(raw?.scoreLevels) && raw.scoreLevels.length
+      ? raw.scoreLevels
+      : [{ id: raw?.scoreId || crypto.randomUUID(), score: Number(raw?.maxScore ?? raw?.score ?? 0), criterion: raw?.criterion || "" }];
+    for (const rawLevel of rawLevels) {
+      const score = Math.max(0, Number(rawLevel?.score ?? rawLevel?.maxScore ?? 0));
+      const criterion = String(rawLevel?.criterion || "").trim();
+      const existing = group.scoreLevels.find((level) => level.score === score);
+      if (existing) {
+        if (criterion && !existing.criterion.includes(criterion)) existing.criterion = [existing.criterion, criterion].filter(Boolean).join(" / ");
+      } else group.scoreLevels.push({ id: rawLevel?.id || crypto.randomUUID(), score, criterion });
+    }
+  }
+  return Array.from(grouped.values()).map((group) => ({
+    ...group,
+    scoreLevels: group.scoreLevels.sort((a, b) => b.score - a.score),
+  }));
+}
+
+function rubricGroupMaxScore(item) {
+  return Math.max(0, ...(item?.scoreLevels || []).map((level) => Number(level.score || 0)));
+}
+
+function rubricTotalScore(items) {
+  return normalizeRubricCriteria(items).reduce((sum, item) => sum + rubricGroupMaxScore(item), 0);
+}
+
 function validateDocumentFile(file) {
   if (!ACCEPTED_DOCUMENT_TYPES.has(file.type)) throw new Error(`${file.name}: PDF·JPG·PNG·WEBP 파일만 사용할 수 있습니다.`);
   if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name}: 파일 하나는 20MB 이하로 준비해 주세요.`);
@@ -726,17 +824,18 @@ function setDesignStatus(form, message, isError = false) {
 function renderSubmissionTab(course, targetStudents) {
   const designs = course.designs || [];
   const submission = course.submission;
+  const isReady = targetStudents.length > 0 && designs.length > 0;
   const assignmentMap = new Map((submission?.assignments || []).map((item) => [item.studentId, item]));
   const previewUrl = submission?.sourceFile?.blob ? createPreviewUrl(submission.sourceFile.blob) : "";
   return `
     <div class="workflow-heading"><div><p class="section-kicker">STEP 3</p><h2>과제물 관리</h2><p>학급 답안 PDF 1개를 올리면 선택한 학생 순서와 1인당 페이지 수에 따라 자동 분할합니다.</p></div><span>${submission ? `${submission.pageCount}쪽` : "업로드 전"}</span></div>
-    ${!targetStudents.length || !designs.length ? `<div class="inline-empty"><strong>평가 대상과 평가 설계를 먼저 준비해 주세요.</strong><p>두 단계가 완료되어야 학급 PDF를 분할할 수 있습니다.</p></div>` : `
-      <form id="submission-form" class="submission-upload-bar">
-        <label>평가 설계<select name="designId">${designs.map((design) => `<option value="${escapeHtml(design.id)}" ${submission?.designId === design.id ? "selected" : ""}>${escapeHtml(design.taskName)}</option>`).join("")}</select></label>
-        <label>학생 1명당 답안지 페이지 수<input name="pagesPerStudent" type="number" min="1" max="50" value="${submission?.pagesPerStudent || 3}" required></label>
-        <label class="file-pick-button">학급 PDF 업로드<input name="classPdf" type="file" accept="application/pdf" ${submission ? "" : "required"}></label>
-        <button class="primary-action" type="submit">${submission ? "다시 분할" : "업로드 후 자동 분할"}</button>
+      <form id="submission-form" class="submission-upload-bar ${isReady ? "" : "is-disabled"}">
+        <label>평가 설계<select name="designId" ${designs.length ? "" : "disabled"}>${designs.length ? designs.map((design) => `<option value="${escapeHtml(design.id)}" ${submission?.designId === design.id ? "selected" : ""}>${escapeHtml(design.taskName)}</option>`).join("") : `<option>평가 설계를 먼저 추가하세요</option>`}</select></label>
+        <label>학생 1명당 답안지 페이지 수<input name="pagesPerStudent" type="number" min="1" max="50" value="${submission?.pagesPerStudent || 3}" required ${isReady ? "" : "disabled"}></label>
+        <label class="file-pick-button ${isReady ? "" : "is-disabled"}">과제물 PDF 선택<input name="classPdf" type="file" accept="application/pdf" ${submission ? "" : "required"} ${isReady ? "" : "disabled"}></label>
+        <button class="primary-action" type="submit" ${isReady ? "" : "disabled"}>${submission ? "과제물 다시 분할" : "과제물 업로드 및 자동 분할"}</button>
       </form>
+      ${!isReady ? `<div class="submission-prerequisite"><strong>과제물 업로드 준비가 필요합니다.</strong><p>${!targetStudents.length ? "평가 대상 학생을 먼저 추가해 주세요. " : ""}${!designs.length ? "평가 설계를 한 개 이상 저장해 주세요." : ""}</p></div>` : ""}
       ${submission ? `
         <div class="submission-workspace">
           <section class="pdf-preview-panel">
@@ -754,7 +853,7 @@ function renderSubmissionTab(course, targetStudents) {
             </div>
             <div class="split-summary"><strong>${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료</strong><p>${submission.unusedPages?.length ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽` : "모든 페이지를 순서대로 배정했습니다."}</p></div>
           </section>
-        </div>` : ""}`}
+        </div>` : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=designs">← 평가 설계</a><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=grading">AI 채점으로 →</a></div>`;
 }
 
@@ -888,7 +987,7 @@ async function startCourseGrading(course, targetStudents) {
   if (!window.confirm(`${assignments.length}명의 분할 답안과 평가 설계 자료를 Google Gemini API로 전송해 채점할까요? 학생 이름 대신 S001 같은 익명 번호를 사용하지만 스캔에 보이는 이름은 전송됩니다.`)) return;
   const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
-  const maxScore = (design.rubricCriteria || []).reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  const maxScore = rubricTotalScore(design.rubricCriteria || []);
   course.grading = { status: "running", startedAt: new Date().toISOString(), completedCount: 0, totalCount: assignments.length, results: [], errors: [], model: selectedModel };
   await putCourse(course);
   updateGradingProgress(0, assignments.length);
@@ -991,7 +1090,7 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>채점기준에 따른 점수</strong><span>교사가 수정 가능</span></div>
           <div class="teacher-score-list">
-            ${(result.questionResults || []).map((item, index) => `<article><div><strong>${escapeHtml(item.questionNumber)}번 · ${escapeHtml(item.criterion)}</strong><p>${escapeHtml(item.evidence)}</p><small>${escapeHtml(item.feedback)}</small></div><label>점수<input data-teacher-score="${index}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(result.teacherScores?.[index] ?? item.score)}"><span>/ ${formatScore(item.maxScore)}</span></label></article>`).join("")}
+            ${(result.questionResults || []).map((item, index) => `<article><div><strong>${escapeHtml(item.questionNumber)}번 · ${escapeHtml(item.evaluationElement || item.criterion)}</strong><p>${escapeHtml(item.criterion)}</p><p>${escapeHtml(item.evidence)}</p><small>${escapeHtml(item.feedback)}</small></div><label>점수<input data-teacher-score="${index}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(result.teacherScores?.[index] ?? item.score)}"><span>/ ${formatScore(item.maxScore)}</span></label></article>`).join("")}
           </div>
           <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</strong></div>
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>

@@ -666,10 +666,10 @@ a { color: inherit; text-decoration: none; }
 .achievement-editor-card { padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: rgba(233,239,255,.22); }
 .achievement-editor-card + .achievement-editor-card { margin-top: 11px; }
 .achievement-editor-head, .example-editor-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; }
-.achievement-editor-head button, .example-editor-head button, .level-editor-row button, .rubric-editor-row > button { border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 8px; font-weight: 900; }
+.achievement-editor-head button, .example-editor-head button, .level-editor-row button, .rubric-group-head button, .rubric-score-row button { border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 8px; font-weight: 900; }
 .achievement-input-grid { display: grid; grid-template-columns: 180px 1fr; gap: 10px; }
 .achievement-input-grid label, .example-editor-card label, .document-auto-row label { display: grid; gap: 5px; color: var(--muted); font-size: 8px; font-weight: 900; }
-.achievement-input-grid input, .achievement-input-grid textarea, .level-editor-row input, .level-editor-row textarea, .rubric-editor-row input, .rubric-editor-row textarea, .example-editor-card input, .example-editor-card textarea, .document-auto-row input { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: white; outline: 0; font-size: 9px; }
+.achievement-input-grid input, .achievement-input-grid textarea, .level-editor-row input, .level-editor-row textarea, .rubric-group-fields input, .rubric-score-row input, .rubric-score-row textarea, .example-editor-card input, .example-editor-card textarea, .document-auto-row input { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: white; outline: 0; font-size: 9px; }
 .level-editor-list { display: grid; gap: 7px; margin-top: 10px; }
 .level-editor-row { display: grid; grid-template-columns: 100px minmax(0,1fr) 40px; gap: 8px; align-items: center; }
 .mini-add { margin-top: 9px; border-style: dashed; }
@@ -679,16 +679,45 @@ a { color: inherit; text-decoration: none; }
 .rubric-editor-head, .rubric-editor-row { display: grid; grid-template-columns: 90px minmax(130px,.8fr) 80px minmax(260px,1.7fr) 44px; gap: 8px; align-items: center; min-width: 720px; padding: 9px 11px; }
 .rubric-editor-head { background: rgba(24,33,56,.06); color: var(--muted); font-size: 8px; font-weight: 900; }
 .rubric-editor-row { border-top: 1px solid var(--line); }
+.rubric-group-list { display: grid; gap: 12px; }
+.rubric-editor-group { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(233,239,255,.14); }
+.rubric-group-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; border-bottom: 1px solid var(--line); background: rgba(24,33,56,.06); }
+.rubric-group-head strong { font-size: 9px; }
+.rubric-group-fields { display: grid; grid-template-columns: 150px minmax(220px,1fr); gap: 10px; padding: 13px 14px; }
+.rubric-group-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 8px; font-weight: 900; }
+.rubric-score-head, .rubric-score-row { display: grid; grid-template-columns: 90px minmax(260px,1fr) 44px; gap: 8px; align-items: center; padding: 8px 14px; }
+.rubric-score-head { border-top: 1px solid var(--line); background: rgba(242,217,167,.22); color: var(--muted); font-size: 8px; font-weight: 900; }
+.rubric-score-row { border-top: 1px solid var(--line); background: white; }
+.rubric-editor-group > .mini-add { margin: 10px 14px 13px; }
 .example-editor-card { padding: 15px; border: 1px solid var(--line); border-radius: 12px; }
 .example-editor-card + .example-editor-card { margin-top: 10px; }
 .example-editor-head label { grid-template-columns: auto 90px; align-items: center; }
 .example-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
+.example-math-field { display: grid; gap: 5px; color: var(--muted); font-size: 8px; font-weight: 900; }
+.example-math-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.example-math-head span { color: var(--blue); font-size: 7px; }
+.example-math-field small { font-size: 7px; font-weight: 500; line-height: 1.5; }
+.fraction-builder { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(242,217,167,.2); }
+.fraction-stack { display: grid; width: min(190px,65%); gap: 4px; }
+.fraction-stack input { min-width: 0; text-align: center; }
+.fraction-stack i { display: block; height: 2px; background: var(--ink); }
+.fraction-builder > button { flex: 1; min-height: 38px; padding: 8px; border: 1px solid var(--ink); border-radius: 8px; background: var(--ink); color: white; cursor: pointer; font-size: 8px; font-weight: 900; }
+.latex-helper { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; }
+.latex-helper small { color: var(--muted); }
+.latex-helper textarea { grid-column: 1 / -1; }
+.math-preview { display: grid; min-height: 62px; place-items: center; overflow-x: auto; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; background: rgba(255,255,255,.72); color: var(--ink); font-size: 12px; }
+.math-preview.is-empty { color: var(--muted); font-size: 8px; font-weight: 500; }
 .example-file-field { display: grid !important; grid-template-columns: 150px 1fr auto; align-items: center; margin-top: 9px; }
 .design-form-status { margin: 0 24px; padding: 12px; border-radius: 9px; background: rgba(185,234,210,.25); color: var(--muted); font-size: 8px; }
 .design-form-status.is-error { background: #ffe8e2; color: #812d1e; }
 .design-form-status.is-success { color: #27634c; }
 .design-editor > .form-bottom-actions { padding: 20px 24px; border-top: 1px solid var(--line); }
 .submission-upload-bar { grid-template-columns: minmax(190px,1fr) 190px 170px auto; }
+.submission-upload-bar.is-disabled { opacity: .72; }
+.submission-upload-bar button:disabled, .file-pick-button.is-disabled { cursor: not-allowed; filter: grayscale(.35); opacity: .65; }
+.submission-prerequisite { padding: 16px 28px; border-top: 1px solid var(--line); background: rgba(242,217,167,.24); }
+.submission-prerequisite strong { font-size: 10px; }
+.submission-prerequisite p { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
 .submission-workspace { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(360px,.85fr); min-height: 620px; border-top: 1px solid var(--line); }
 .pdf-preview-panel, .split-student-panel, .student-answer-preview, .teacher-score-panel { min-width: 0; }
 .pdf-preview-panel { border-right: 1px solid var(--line); }
@@ -775,6 +804,7 @@ a { color: inherit; text-decoration: none; }
   .student-list-actions { justify-content: space-between; }
   .student-class-summary > div { width: 100%; justify-content: space-between; border-radius: 10px; }
   .achievement-input-grid, .example-detail-grid, .document-auto-row { grid-template-columns: 1fr; }
+  .rubric-group-fields { grid-template-columns: 1fr; }
   .document-auto-row span { align-self: auto; }
   .design-card { grid-template-columns: 38px minmax(0,1fr); }
   .design-card button { grid-column: 2; justify-self: start; }
