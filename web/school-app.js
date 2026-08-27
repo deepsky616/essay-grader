@@ -537,7 +537,7 @@ function designEditor(design) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>직접 입력하거나 PDF·사진 원본을 첨부하세요. 수식은 LaTeX, 도형은 관계 설명으로 자동 입력됩니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
+        <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>직접 입력하거나 PDF·사진 원본을 첨부하세요. 복잡한 수식 명령어는 숨기고 교사가 읽기 쉬운 형태로 표시합니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
         <div class="document-auto-row">
           <label>예시답안 PDF·사진<input name="exampleDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
           <button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>
@@ -590,10 +590,11 @@ function rubricScoreRow(level) {
 }
 
 function exampleEditorRow(item) {
+  const friendlyMath = toTeacherFriendlyMath(item.mathNotation || "");
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
     <div class="example-editor-head"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required></label><button type="button" data-remove-example>삭제</button></div>
     <label>예시답안<textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(item.answerText || "")}</textarea></label>
-    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>수식 입력</strong><span>분자·분모만 입력하세요</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>분수 추가</button></div><label class="latex-helper">수식 자동 입력값 <small>직접 수정도 가능합니다.</small><textarea name="exampleMath" rows="2" placeholder="분수 만들기를 사용하면 자동으로 입력됩니다.">${escapeHtml(item.mathNotation || "")}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(item.visualDescription || "")}</textarea></label></div>
+    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>쉬운 수식 입력</strong><span>예: 180 ÷ 720 × 100 = 25%</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(item.visualDescription || "")}</textarea></label></div>
     <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
   </article>`;
 }
@@ -662,6 +663,17 @@ function handleDesignEditorClick(event, form) {
   if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
   if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); return; }
+  const insertMath = event.target.closest("[data-insert-math]");
+  if (insertMath) {
+    const textarea = insertMath.closest("[data-example-row]").querySelector('[name="exampleMath"]');
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const symbol = insertMath.dataset.insertMath;
+    textarea.setRangeText(`${start > 0 && !/\s$/.test(textarea.value.slice(0, start)) ? " " : ""}${symbol} `, start, end, "end");
+    textarea.focus();
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
   const buildFraction = event.target.closest("[data-build-fraction]");
   if (buildFraction) {
     const card = buildFraction.closest("[data-example-row]");
@@ -674,7 +686,7 @@ function handleDesignEditorClick(event, form) {
     const start = textarea.selectionStart ?? textarea.value.length;
     const end = textarea.selectionEnd ?? textarea.value.length;
     const spacer = start > 0 && !/\s$/.test(textarea.value.slice(0, start)) ? " " : "";
-    textarea.setRangeText(`${spacer}\\frac{${numerator}}{${denominator}}`, start, end, "end");
+    textarea.setRangeText(`${spacer}${numerator}/${denominator}`, start, end, "end");
     numeratorInput.value = "";
     denominatorInput.value = "";
     textarea.focus();
@@ -686,6 +698,40 @@ function refreshMathPreviews(form) {
   form.querySelectorAll('[name="exampleMath"]').forEach(renderMathPreview);
 }
 
+function toTeacherFriendlyMath(value) {
+  let source = String(value || "").replace(/\$/g, "").trim();
+  for (let pass = 0; pass < 4; pass += 1) {
+    const converted = source.replace(/\\(?:dfrac|tfrac|frac)\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_match, numerator, denominator) => `${numerator}/${denominator}`);
+    if (converted === source) break;
+    source = converted;
+  }
+  source = source
+    .replace(/\\times\b/g, "×")
+    .replace(/\\div\b/g, "÷")
+    .replace(/\\cdot\b/g, "·")
+    .replace(/\\+%/g, "%")
+    .replace(/\\(?:left|right)\b/g, "")
+    .replace(/\\[,;!]/g, " ")
+    .replace(/\\\\(?=\s*(?:\d|[A-Za-z]))/g, "\n")
+    .replace(/%(?=\s*\d+\s*\/)/g, "%\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+  return source;
+}
+
+function friendlyMathToLatex(value) {
+  const friendly = toTeacherFriendlyMath(value);
+  const lines = friendly.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => line
+    .replace(/([A-Za-z0-9.()+-]+)\s*\/\s*([A-Za-z0-9.()+-]+)/g, "\\frac{$1}{$2}")
+    .replace(/×/g, "\\times ")
+    .replace(/÷/g, "\\div ")
+    .replace(/·/g, "\\cdot ")
+    .replace(/%/g, "\\%"));
+  if (lines.length > 1) return `\\begin{aligned}${lines.join("\\\\") }\\end{aligned}`;
+  return lines[0] || "";
+}
+
 function renderMathPreview(textarea) {
   const preview = textarea.closest("[data-example-row]")?.querySelector("[data-math-preview]");
   if (!preview) return;
@@ -693,7 +739,7 @@ function renderMathPreview(textarea) {
   if (!expression) { preview.textContent = "수식을 입력하면 실제 모양이 여기에 표시됩니다."; preview.classList.add("is-empty"); return; }
   preview.classList.remove("is-empty");
   if (!window.katex) { preview.textContent = expression; return; }
-  try { window.katex.render(expression, preview, { displayMode: true, throwOnError: false, strict: "ignore", trust: false }); }
+  try { window.katex.render(friendlyMathToLatex(expression), preview, { displayMode: true, throwOnError: false, strict: "ignore", trust: false }); }
   catch { preview.textContent = expression; }
 }
 
@@ -1814,4 +1860,3 @@ function renderNotFound() {
 function renderFatal(error) {
   app.innerHTML = `<div class="page-shell"><div class="course-empty"><span>!</span><h2>화면을 불러오지 못했습니다.</h2><p>${escapeHtml(friendlyError(error))}</p><button class="primary-action" type="button" onclick="location.reload()">다시 불러오기</button></div></div>`;
 }
-

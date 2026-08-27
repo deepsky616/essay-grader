@@ -708,6 +708,9 @@ a { color: inherit; text-decoration: none; }
 .fraction-stack input { min-width: 0; text-align: center; }
 .fraction-stack i { display: block; height: 2px; background: var(--ink); }
 .fraction-builder > button { flex: 1; min-height: 38px; padding: 8px; border: 1px solid var(--ink); border-radius: 8px; background: var(--ink); color: white; cursor: pointer; font-size: 8px; font-weight: 900; }
+.math-quick-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.math-quick-buttons button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink); cursor: pointer; font-size: 8px; font-weight: 850; }
+.math-quick-buttons button:hover, .math-quick-buttons button:focus-visible { border-color: var(--blue); background: rgba(233,239,255,.75); color: var(--blue); }
 .latex-helper { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; }
 .latex-helper small { color: var(--muted); }
 .latex-helper textarea { grid-column: 1 / -1; }
@@ -863,4 +866,3 @@ a { color: inherit; text-decoration: none; }
   .student-review-actions, .detail-ai-actions { grid-template-columns: 1fr; }
   .grading-prerequisite, .grading-result-actions { align-items: stretch; flex-direction: column; }
 }
-
