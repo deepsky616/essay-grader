@@ -261,16 +261,16 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.responseMimeType, "application/json");
       assert.equal(body.generationConfig.responseSchema.type, "object");
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.minItems, 1);
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 1);
-      assert.deepEqual(body.generationConfig.responseSchema.properties.questionResults.items.properties.criterionId.enum, ["r1"]);
+      assert.equal("minItems" in body.generationConfig.responseSchema.properties.questionResults, false);
+      assert.equal("maxItems" in body.generationConfig.responseSchema.properties.questionResults, false);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.criterionId, false);
       assertSchemaEnumsAreStrings(body.generationConfig.responseSchema);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
-      assert.equal(body.generationConfig.responseSchema.properties.maxScore.minimum, 2);
-      assert.equal(body.generationConfig.responseSchema.properties.maxScore.maximum, 2);
+      assert.equal("minimum" in body.generationConfig.responseSchema.properties.maxScore, false);
+      assert.equal("maximum" in body.generationConfig.responseSchema.properties.maxScore, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.items.properties.score.minimum, 0);
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.items.properties.score.maximum, 2);
+      assert.equal("minimum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
+      assert.equal("maximum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
       assert.equal(body.generationConfig.maxOutputTokens, 16384);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
@@ -283,6 +283,101 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
   assert.equal(result.questionResults[0].confidence, "high");
   assert.equal(result.questionResults[0].answerReading, "2라고 씀");
   assert.equal(result.model, "gemini-3.7-flash");
+});
+
+test("gradeAnswer keeps the response schema compact for many rubric criteria", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const rubricCriteria = Array.from({ length: 40 }, (_, index) => ({
+    id: `r${index + 1}`,
+    questionNumber: String(index + 1),
+    evaluationElement: `매우 구체적인 평가요소 ${index + 1} - 학생의 풀이 과정과 수학적 의사소통을 종합적으로 평가`,
+    scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 1, criterion: "부분적으로 타당함" }, { score: 0, criterion: "근거 없음" }],
+  }));
+  const questionResults = rubricCriteria.map((rubric) => ({
+    criterionId: rubric.id,
+    questionNumber: rubric.questionNumber,
+    evaluationElement: rubric.evaluationElement,
+    answerReading: "무응답",
+    criterion: "근거 없음",
+    score: 0,
+    maxScore: 2,
+    evidence: "",
+    feedback: "풀이를 작성해 보세요.",
+    confidence: "high",
+  }));
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: { totalScore: 80, requireBlankComparison: true, rubricCriteria, achievementGroups: [], exampleAnswers: [] },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const encodedSchema = JSON.stringify(body.generationConfig.responseSchema);
+      assert.ok(encodedSchema.length < 6000);
+      assert.equal(encodedSchema.includes("매우 구체적인 평가요소"), false);
+      assert.equal("minItems" in body.generationConfig.responseSchema.properties.questionResults, false);
+      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.criterionId, false);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        studentIdentifier: "S001",
+        totalScore: 0,
+        maxScore: 80,
+        overallAchievementLevel: "검토 필요",
+        summary: "답안을 확인해 주세요.",
+        strengths: [],
+        improvements: ["풀이 작성"],
+        nextSteps: ["문제별 풀이 작성"],
+        achievementResults: [],
+        questionResults,
+        needsTeacherReview: false,
+        reviewReasons: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(result.questionResults.length, 40);
+});
+
+test("gradeAnswer retries without responseSchema when Gemini reports too many schema states", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  let attempts = 0;
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: {
+      totalScore: 2,
+      requireBlankComparison: true,
+      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "설명", scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 0, criterion: "오답" }] }],
+      achievementGroups: [],
+      exampleAnswers: [],
+    },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      attempts += 1;
+      const body = JSON.parse(options.body);
+      if (attempts === 1) {
+        assert.equal(body.generationConfig.responseSchema.type, "object");
+        return new Response(JSON.stringify({ error: { message: "The specified schema produces a constraint that has too many states for serving." } }), { status: 400 });
+      }
+      assert.equal("responseSchema" in body.generationConfig, false);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        studentIdentifier: "S001",
+        totalScore: 2,
+        maxScore: 2,
+        overallAchievementLevel: "상",
+        summary: "정확합니다.",
+        strengths: ["정확함"],
+        improvements: [],
+        nextSteps: [],
+        achievementResults: [],
+        questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "설명", answerReading: "정답", criterion: "정확함", score: 2, maxScore: 2, evidence: "정답", feedback: "잘했습니다.", confidence: "high" }],
+        needsTeacherReview: false,
+        reviewReasons: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(result.totalScore, 2);
 });
 
 test("gradeAnswer requires a blank answer sheet for scanned-paper grading", async () => {
@@ -359,9 +454,10 @@ test("gradeAnswer automatically repairs empty per-question and achievement resul
     fetchImpl: async (_url, options) => {
       attempts += 1;
       const body = JSON.parse(options.body);
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.minItems, 2);
-      assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 2);
-      assert.equal(body.generationConfig.responseSchema.properties.achievementResults.minItems, 1);
+      assert.equal("minItems" in body.generationConfig.responseSchema.properties.questionResults, false);
+      assert.equal("maxItems" in body.generationConfig.responseSchema.properties.questionResults, false);
+      assert.equal("minItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
+      assert.equal("maxItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
       assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
       if (attempts === 1) assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);

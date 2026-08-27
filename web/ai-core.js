@@ -283,23 +283,22 @@
 
     const responseSchema = buildGradingResponseSchema(metadata);
     let response;
+    let body;
     try {
-      response = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${selectedModel}:generateContent`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-goog-api-key": key,
-        },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: gradingGenerationConfig(selectedModel, responseSchema),
-        }),
-      }, { maxAttempts: 3, baseDelayMs: retryDelayMs });
+      ({ response, body } = await fetchGradingResponse({
+        fetchImpl,
+        url: `${API_ROOT}/models/${selectedModel}:generateContent`,
+        key,
+        parts,
+        model: selectedModel,
+        responseSchema,
+        maxAttempts: 3,
+        baseDelayMs: retryDelayMs,
+      }));
     } catch (error) {
       throw new Error(`Gemini 채점 요청을 보내지 못했습니다. (${error.message})`);
     }
 
-    const body = await readResponseBody(response);
     if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, selectedModel));
     let parsed;
     try {
@@ -319,22 +318,21 @@
     if (!hasCompleteGradingPayload(parsed, metadata)) {
       const repairParts = [{ text: buildScoreRepairPrompt(metadata) }, ...parts.slice(1)];
       let repairResponse;
+      let repairBody;
       try {
-        repairResponse = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${selectedModel}:generateContent`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-goog-api-key": key,
-          },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: repairParts }],
-            generationConfig: gradingGenerationConfig(selectedModel, buildScoreRepairSchema(metadata)),
-          }),
-        }, { maxAttempts: 2, baseDelayMs: retryDelayMs });
+        ({ response: repairResponse, body: repairBody } = await fetchGradingResponse({
+          fetchImpl,
+          url: `${API_ROOT}/models/${selectedModel}:generateContent`,
+          key,
+          parts: repairParts,
+          model: selectedModel,
+          responseSchema: buildScoreRepairSchema(metadata),
+          maxAttempts: 2,
+          baseDelayMs: retryDelayMs,
+        }));
       } catch (error) {
         throw new Error(`Gemini의 누락된 문항별 채점 결과를 다시 요청하지 못했습니다. (${error.message})`);
       }
-      const repairBody = await readResponseBody(repairResponse);
       if (!repairResponse.ok) throw new Error(geminiErrorMessage(repairResponse.status, repairBody, selectedModel));
       const repaired = parseCandidateJson(repairBody, "Gemini가 다시 요청한 문항별 채점 결과를 반환하지 않았습니다.");
       parsed = {
@@ -464,41 +462,12 @@ ${JSON.stringify(safeMetadata)}
 반드시 지정된 JSON 스키마로만 응답하세요.`;
   }
 
-  function buildGradingResponseSchema(metadata = {}) {
-    const schema = JSON.parse(JSON.stringify(gradingSchema));
-    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
-    const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
-    const assessmentMax = positiveNumber(metadata.totalScore, rubricCriteria.reduce((sum, item) => sum + item.maxScore, 0));
-    if (assessmentMax > 0) {
-      schema.properties.totalScore.minimum = 0;
-      schema.properties.totalScore.maximum = assessmentMax;
-      schema.properties.maxScore.minimum = assessmentMax;
-      schema.properties.maxScore.maximum = assessmentMax;
-    }
-    if (rubricCriteria.length) {
-      schema.properties.questionResults.minItems = rubricCriteria.length;
-      schema.properties.questionResults.maxItems = rubricCriteria.length;
-      const item = schema.properties.questionResults.items;
-      item.properties.criterionId.enum = rubricCriteria.map((rubric) => rubric.id);
-      item.properties.questionNumber.enum = Array.from(new Set(rubricCriteria.map((rubric) => rubric.questionNumber)));
-      item.properties.evaluationElement.enum = Array.from(new Set(rubricCriteria.map((rubric) => rubric.evaluationElement)));
-      const rubricMaxScores = rubricCriteria.map((rubric) => rubric.maxScore);
-      const rubricScores = rubricCriteria.flatMap((rubric) => rubric.scoreLevels.map((level) => level.score));
-      item.properties.maxScore.minimum = Math.min(...rubricMaxScores);
-      item.properties.maxScore.maximum = Math.max(...rubricMaxScores);
-      item.properties.score.minimum = Math.min(...rubricScores);
-      item.properties.score.maximum = Math.max(...rubricScores);
-    }
-    if (achievementGroups.length) {
-      schema.properties.achievementResults.minItems = achievementGroups.length;
-      schema.properties.achievementResults.maxItems = achievementGroups.length;
-      const item = schema.properties.achievementResults.items;
-      item.properties.achievementStandardId.enum = achievementGroups.map((group, index) => text(group?.id) || `achievement-${index + 1}`);
-      item.properties.itemRange.enum = Array.from(new Set(achievementGroups.map((group) => text(group?.itemRange))));
-      const levels = Array.from(new Set(achievementGroups.flatMap((group) => (Array.isArray(group?.levels) ? group.levels : []).map((level) => text(level?.label)).filter(Boolean))));
-      if (levels.length) item.properties.achievementLevel.enum = levels;
-    }
-    return schema;
+  function buildGradingResponseSchema() {
+    // 채점기준의 문항 수·ID·배점 값을 스키마 enum/minItems/maxItems에 직접 넣으면
+    // 평가가 커질수록 Gemini serving state가 기하급수적으로 증가한다. 스키마는
+    // 고정된 자료형만 정의하고, 정확한 개수·ID·허용 점수는 프롬프트와 아래의
+    // hasCompleteGradingPayload/normalizeGradingResult에서 검증한다.
+    return JSON.parse(JSON.stringify(gradingSchema));
   }
 
   function buildScoreRepairSchema(metadata = {}) {
@@ -514,7 +483,6 @@ ${JSON.stringify(safeMetadata)}
       },
       required: ["totalScore", "achievementResults", "questionResults", "needsTeacherReview", "reviewReasons"],
     };
-    if (!normalizeRubricForPrompt(metadata.rubricCriteria).length) schema.properties.questionResults.minItems = 1;
     return schema;
   }
 
@@ -831,10 +799,39 @@ ${JSON.stringify(roster)}
       temperature: 0.1,
       maxOutputTokens: 16384,
       responseMimeType: "application/json",
-      responseSchema,
     });
+    if (responseSchema) config.responseSchema = responseSchema;
     if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 2048 };
     return config;
+  }
+
+  async function fetchGradingResponse({ fetchImpl, url, key, parts, model, responseSchema, maxAttempts, baseDelayMs }) {
+    const send = (schema) => fetchWithRetry(fetchImpl, url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": key,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: gradingGenerationConfig(model, schema),
+      }),
+    }, { maxAttempts, baseDelayMs });
+
+    let response = await send(responseSchema);
+    let body = await readResponseBody(response);
+    if (!response.ok && isSchemaStateComplexityError(response.status, body)) {
+      // 모델별 structured-output 제한이 더 낮은 경우에도 채점을 중단하지 않고
+      // JSON 출력 지시와 애플리케이션 검증을 유지한 채 스키마 없이 한 번 재요청한다.
+      response = await send(null);
+      body = await readResponseBody(response);
+    }
+    return { response, body };
+  }
+
+  function isSchemaStateComplexityError(status, body) {
+    const message = body?.error?.message || body?.raw || "";
+    return status === 400 && /schema produces a constraint that has too many states|too many states for serving|schema.*complex/i.test(message);
   }
 
   async function readResponseBody(response) {
@@ -906,6 +903,7 @@ ${JSON.stringify(roster)}
     const message = body?.error?.message || body?.raw || "알 수 없는 오류";
     if (/api key|API_KEY_INVALID|key not valid/i.test(message)) return `[HTTP ${status}] Gemini API 키가 유효하지 않습니다. Google AI Studio에서 키 상태와 사용 제한을 확인해 주세요. (${message})`;
     if (status === 404) return `[HTTP 404] 선택한 Gemini 모델 ‘${model}’을 사용할 수 없습니다. 공식 모델 ID를 확인해 주세요. (${message})`;
+    if (isSchemaStateComplexityError(status, body)) return `[HTTP 400] 선택한 Gemini 모델이 채점 결과 형식을 처리하지 못했습니다. 다른 Flash 모델로 변경한 뒤 해당 학생을 다시 채점해 주세요. (${message})`;
     if (status === 400 && /generation[_ ]config\.response[_ ]schema|responseSchema|Invalid value.*enum/i.test(message)) {
       return `[HTTP 400] Gemini 채점 결과 형식 설정을 처리하지 못했습니다. 최신 사이트로 새로고침한 뒤 해당 학생을 다시 채점해 주세요. (${message})`;
     }
