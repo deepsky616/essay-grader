@@ -803,6 +803,7 @@ a { color: inherit; text-decoration: none; }
 .teacher-score-list strong { font-size: 9px; }
 .teacher-score-list p, .teacher-score-list small { display: block; margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 .teacher-score-list .answer-reading { padding: 7px 9px; border-radius: 7px; background: rgba(233,239,255,.5); color: var(--ink); }
+.teacher-score-list .visual-reading { padding: 7px 9px; border-radius: 7px; background: rgba(185,234,210,.22); color: var(--ink); }
 .missing-score-label { display: inline-block; margin: 5px 0 0; padding: 4px 7px; border-radius: 999px; background: #ffe4de; color: #8b2e20; font-size: 7px; font-style: normal; font-weight: 900; }
 .teacher-score-list label { display: grid; grid-template-columns: 55px auto; gap: 4px; align-items: center; color: var(--muted); font-size: 8px; }
 .teacher-score-list input { grid-row: 2; width: 55px; padding: 7px; border: 1px solid var(--line); border-radius: 7px; }

@@ -84,6 +84,31 @@
     ],
   };
 
+  const answerRecognitionSchema = {
+    type: "object",
+    properties: {
+      readings: {
+        type: "array",
+        description: "평가요소별 학생 답안의 객관적 판독 결과",
+        items: {
+          type: "object",
+          properties: {
+            criterionId: { type: "string" },
+            questionNumber: { type: "string" },
+            evaluationElement: { type: "string" },
+            answerReading: { type: "string", description: "학생이 실제로 쓴 글씨·수식·숫자·표시를 그대로 판독한 내용" },
+            visualDescription: { type: "string", description: "학생이 그린 점·선분·도형·표시의 위치와 관계를 객관적으로 설명" },
+            confidence: { type: "string", enum: ["high", "medium", "low"] },
+            reviewReason: { type: "string", description: "흐림·지움·겹침·잘림 등 교사가 원본을 확인해야 할 이유" },
+          },
+          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "visualDescription", "confidence", "reviewReason"],
+        },
+      },
+      pageNotes: { type: "array", items: { type: "string" } },
+    },
+    required: ["readings", "pageNotes"],
+  };
+
   const pageMatchSchema = {
     type: "object",
     properties: {
@@ -260,6 +285,47 @@
     return normalizePageAssignments(parsed, normalizedRoster, actualPageCount, selectedModel);
   }
 
+  async function recognizeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 800, signal }) {
+    const key = validateApiKey(apiKey);
+    const selectedModel = validateModelId(model);
+    const rubricCriteria = normalizeRubricForPrompt(metadata?.rubricCriteria);
+    if (!rubricCriteria.length) throw new Error("답안을 판독하려면 평가요소가 필요합니다.");
+    const normalizedFiles = (Array.isArray(files) ? files : []).filter((item) => item?.file);
+    if (!normalizedFiles.some((item) => item.role === "studentAnswer" || item.role === "enhancedAnswer")) {
+      throw new Error("답안 판독에 필요한 학생 답안이 없습니다.");
+    }
+    const totalBytes = normalizedFiles.reduce((sum, item) => sum + Number(item.file.size || 0), 0);
+    if (totalBytes > MAX_INLINE_BYTES) throw new Error(`답안 판독 자료는 합쳐서 18MB 이하로 준비해 주세요. 현재 ${formatBytes(totalBytes)}입니다.`);
+
+    const parts = [{ text: buildRecognitionPrompt(rubricCriteria) }];
+    for (const item of normalizedFiles) {
+      parts.push({ text: `\n[판독 자료 역할: ${roleLabel(item.role)} / 파일명: ${item.file.name}]` });
+      parts.push(await fileToInlinePart(item.file));
+    }
+    let response;
+    let body;
+    try {
+      ({ response, body } = await fetchGradingResponse({
+        fetchImpl,
+        url: `${API_ROOT}/models/${selectedModel}:generateContent`,
+        key,
+        parts,
+        model: selectedModel,
+        responseSchema: answerRecognitionSchema,
+        maxAttempts: 2,
+        baseDelayMs: retryDelayMs,
+        signal,
+        generationConfigBuilder: recognitionGenerationConfig,
+      }));
+    } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
+      throw new Error(`Gemini 답안 판독 요청을 보내지 못했습니다. (${error.message})`);
+    }
+    if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, selectedModel));
+    const parsed = parseCandidateJson(body, "Gemini 응답에 학생 답안 판독 결과가 없습니다.");
+    return normalizeRecognitionResult(parsed, rubricCriteria, selectedModel);
+  }
+
   async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 1200, signal }) {
     const key = validateApiKey(apiKey);
     const selectedModel = validateModelId(model);
@@ -411,6 +477,66 @@
     }));
   }
 
+  function buildRecognitionPrompt(rubricCriteria) {
+    const targets = rubricCriteria.map((item) => ({
+      criterionId: item.id,
+      questionNumber: item.questionNumber,
+      evaluationElement: item.evaluationElement,
+    }));
+    return `첨부된 자료는 학생이 종이에 작성한 수학 답안입니다. 먼저 채점하지 말고 학생이 실제로 쓴 글씨·수식·숫자·그림만 객관적으로 판독하세요.
+
+자료 사용 규칙:
+1. 빈 답안지는 인쇄된 문제·표·격자·도형과 학생이 새로 쓴 내용을 구별하는 기준입니다.
+2. 원본 학생 답안은 전체 배치와 문항 위치 확인에 사용합니다.
+3. ‘필기 강조본’은 흐린 연필선과 작은 글씨를 확대·대비 보정한 참고자료입니다. 강조 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
+4. 같은 페이지의 원본과 강조본을 서로 대조하고, 둘 중 하나에서만 보이는 내용은 confidence를 낮추세요.
+5. 지운 흔적, 겹친 선, 잘린 글씨, 흐린 숫자는 추측하지 말고 판독 불가 또는 가능한 후보를 명시하세요.
+6. 분수는 분자/분모, 계산식은 기호와 순서를 보이는 그대로 기록하세요.
+7. 도형은 점의 위치, 연결된 선분, 대칭축과의 대응, 격자 칸 수, 학생이 추가한 표시를 구체적으로 설명하세요.
+8. 학생 이름이나 학번은 응답에 기록하지 마세요.
+9. 아래 모든 평가요소를 입력 순서대로 한 번씩 판독하고 criterionId를 그대로 복사하세요.
+
+판독 대상(JSON):
+${JSON.stringify(targets)}
+
+반드시 지정된 JSON 형식으로만 응답하세요.`;
+  }
+
+  function normalizeRecognitionResult(raw, rubricCriteria, model) {
+    const source = Array.isArray(raw?.readings) ? raw.readings : [];
+    const used = new Set();
+    const reviewReasons = textList(raw?.pageNotes);
+    const readings = rubricCriteria.map((rubric) => {
+      let sourceIndex = source.findIndex((item, index) => !used.has(index) && text(item?.criterionId) === rubric.id);
+      if (sourceIndex < 0) {
+        sourceIndex = source.findIndex((item, index) => !used.has(index)
+          && text(item?.questionNumber) === rubric.questionNumber
+          && text(item?.evaluationElement).toLocaleLowerCase("ko-KR") === rubric.evaluationElement.toLocaleLowerCase("ko-KR"));
+      }
+      const item = sourceIndex >= 0 ? source[sourceIndex] : null;
+      if (sourceIndex >= 0) used.add(sourceIndex);
+      const confidence = ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low";
+      const reviewReason = text(item?.reviewReason) || (!item ? "해당 평가요소의 사전 판독 결과가 없습니다." : confidence !== "high" ? "글씨 또는 그림 판독 확신도가 낮습니다." : "");
+      if (reviewReason) reviewReasons.push(`${rubric.questionNumber}번 ‘${rubric.evaluationElement}’: ${reviewReason}`);
+      return {
+        criterionId: rubric.id,
+        questionNumber: rubric.questionNumber,
+        evaluationElement: rubric.evaluationElement,
+        answerReading: text(item?.answerReading) || "판독 불가",
+        visualDescription: text(item?.visualDescription),
+        confidence,
+        reviewReason,
+      };
+    });
+    return {
+      readings,
+      pageNotes: textList(raw?.pageNotes),
+      needsTeacherReview: readings.some((item) => item.confidence !== "high" || /판독 불가/.test(item.answerReading)),
+      reviewReasons: Array.from(new Set(reviewReasons)),
+      model,
+    };
+  }
+
   function buildPrompt(metadata = {}, answerFileName = "학생 답안") {
     const safeMetadata = {
       title: metadata.title || "",
@@ -426,6 +552,16 @@
         mathNotation: item?.mathNotation || "",
         visualDescription: item?.visualDescription || "",
       })),
+      preReadings: (Array.isArray(metadata.preReadings) ? metadata.preReadings : []).map((item) => ({
+        criterionId: item?.criterionId || "",
+        questionNumber: item?.questionNumber || "",
+        evaluationElement: item?.evaluationElement || "",
+        answerReading: item?.answerReading || "",
+        visualDescription: item?.visualDescription || "",
+        confidence: item?.confidence || "low",
+        reviewReason: item?.reviewReason || "",
+      })),
+      recognitionWarnings: textList(metadata.recognitionWarnings),
       blankComparisonRequired: Boolean(metadata.requireBlankComparison),
       identityRedacted: Boolean(metadata.identityRedacted),
       student: metadata.student ? {
@@ -459,6 +595,8 @@
 11. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
 12. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 가려지지 않은 이름이 보이더라도 응답에 옮겨 적지 마세요.
 13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
+14. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
+15. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -565,8 +703,9 @@ ${JSON.stringify(roster)}
   function normalizeGradingResult(raw, metadata = {}, model = MODEL) {
     if (!raw || typeof raw !== "object") throw new Error("채점 결과 형식이 올바르지 않습니다.");
     const assessmentMax = positiveNumber(metadata.totalScore, positiveNumber(raw.maxScore, 0));
-    const reviewReasons = textList(raw.reviewReasons);
+    const reviewReasons = [...textList(raw.reviewReasons), ...textList(metadata.recognitionWarnings)];
     const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const preReadings = Array.isArray(metadata.preReadings) ? metadata.preReadings : [];
     const rawQuestionResults = Array.isArray(raw.questionResults) ? raw.questionResults : [];
     const usedRawIndexes = new Set();
     const resultSeeds = rubricCriteria.length ? rubricCriteria.map((rubric, index) => {
@@ -592,17 +731,27 @@ ${JSON.stringify(roster)}
         score = closest;
       }
       const selectedLevel = matchedRubric?.scoreLevels?.find((level) => level.score === score);
+      const criterionId = matchedRubric?.id || text(item?.criterionId);
+      const preReading = preReadings.find((reading) => text(reading?.criterionId) === criterionId)
+        || preReadings.find((reading) => text(reading?.questionNumber) === (matchedRubric?.questionNumber || String(item?.questionNumber || index + 1))
+          && text(reading?.evaluationElement) === (matchedRubric?.evaluationElement || text(item?.evaluationElement)));
+      const finalConfidence = missing ? "low" : (["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low");
+      const preConfidence = ["high", "medium", "low"].includes(preReading?.confidence) ? preReading.confidence : "high";
+      const confidenceOrder = { high: 2, medium: 1, low: 0 };
+      const confidence = confidenceOrder[preConfidence] < confidenceOrder[finalConfidence] ? preConfidence : finalConfidence;
+      if (text(preReading?.reviewReason)) reviewReasons.push(`${matchedRubric?.questionNumber || item?.questionNumber || index + 1}번 사전 판독: ${text(preReading.reviewReason)}`);
       return {
-        criterionId: matchedRubric?.id || text(item?.criterionId),
+        criterionId,
         questionNumber: matchedRubric?.questionNumber || String(item?.questionNumber || index + 1),
         evaluationElement: matchedRubric?.evaluationElement || text(item?.evaluationElement),
-        answerReading: text(item?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가"),
+        answerReading: text(item?.answerReading) || text(preReading?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가"),
+        visualDescription: text(preReading?.visualDescription),
         criterion: selectedLevel?.criterion || text(item?.criterion) || (missing ? "AI가 이 평가요소를 반환하지 않음" : ""),
         score,
         maxScore,
         evidence: text(item?.evidence),
         feedback: text(item?.feedback) || (missing ? "이 평가요소는 교사가 답안 원본을 확인해 주세요." : ""),
-        confidence: missing ? "low" : (["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low"),
+        confidence,
       };
     });
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
@@ -821,7 +970,19 @@ ${JSON.stringify(roster)}
     return config;
   }
 
-  async function fetchGradingResponse({ fetchImpl, url, key, parts, model, responseSchema, maxAttempts, baseDelayMs, signal }) {
+  function recognitionGenerationConfig(model, responseSchema) {
+    const config = structuredGenerationConfig(model, {
+      temperature: 0,
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+    });
+    if (responseSchema) config.responseSchema = responseSchema;
+    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 0 };
+    else if (/^gemini-3(?:\.|-)/i.test(model)) config.thinkingConfig = { thinkingLevel: "low" };
+    return config;
+  }
+
+  async function fetchGradingResponse({ fetchImpl, url, key, parts, model, responseSchema, maxAttempts, baseDelayMs, signal, generationConfigBuilder = gradingGenerationConfig }) {
     const send = (schema) => fetchWithRetry(fetchImpl, url, {
       method: "POST",
       headers: {
@@ -831,7 +992,7 @@ ${JSON.stringify(roster)}
       signal,
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        generationConfig: gradingGenerationConfig(model, schema),
+        generationConfig: generationConfigBuilder(model, schema),
       }),
     }, { maxAttempts, baseDelayMs });
 
@@ -932,7 +1093,7 @@ ${JSON.stringify(roster)}
   }
 
   function roleLabel(role) {
-    return ({ rubric: "채점 기준표", example: "예시 답안", blank: "빈 답안지", studentAnswer: "학생 답안" })[role] || role;
+    return ({ rubric: "채점 기준표", example: "예시 답안", blank: "빈 답안지", studentAnswer: "학생 답안 원본", enhancedAnswer: "학생 필기 강조본" })[role] || role;
   }
 
   function normalizeRosterForPrompt(roster) {
@@ -969,11 +1130,13 @@ ${JSON.stringify(roster)}
     SUPPORTED_MODELS,
     MAX_INLINE_BYTES,
     gradingSchema,
+    answerRecognitionSchema,
     pageMatchSchema,
     rubricExtractionSchema,
     exampleExtractionSchema,
     testApiKey,
     matchAnswerPages,
+    recognizeAnswer,
     gradeAnswer,
     extractEvaluationDocument,
     buildPrompt,

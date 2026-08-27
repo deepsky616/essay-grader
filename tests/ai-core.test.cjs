@@ -124,6 +124,26 @@ test("normalizeGradingResult creates a visible score row for every rubric criter
   assert.match(result.reviewReasons.join(" "), /AI 채점 결과가 없어/);
 });
 
+test("normalizeGradingResult preserves pre-read handwriting and drawing evidence", () => {
+  const result = AI.normalizeGradingResult({
+    totalScore: 2,
+    maxScore: 2,
+    summary: "도형을 확인했습니다.",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "대칭 도형", answerReading: "", criterion: "정확함", score: 2, maxScore: 2, evidence: "대응점 확인", feedback: "잘했습니다.", confidence: "high" }],
+    needsTeacherReview: false, reviewReasons: [],
+  }, {
+    totalScore: 2,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "대칭 도형", scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 0, criterion: "오답" }] }],
+    preReadings: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "대칭 도형", answerReading: "격자에 도형을 그림", visualDescription: "오른쪽 대응점 하나가 흐림", confidence: "medium", reviewReason: "연필선이 흐림" }],
+  });
+  assert.equal(result.questionResults[0].answerReading, "격자에 도형을 그림");
+  assert.equal(result.questionResults[0].visualDescription, "오른쪽 대응점 하나가 흐림");
+  assert.equal(result.questionResults[0].confidence, "medium");
+  assert.equal(result.needsTeacherReview, true);
+  assert.match(result.reviewReasons.join(" "), /사전 판독/);
+});
+
 test("normalizePageAssignments rejects duplicate pages and fills unmatched students", () => {
   const result = AI.normalizePageAssignments({
     reportedPageCount: 4,
@@ -226,6 +246,46 @@ test("testApiKey tests the selected model id", async () => {
   assert.match(calledUrls[0], /models\/gemini-3-flash-preview$/);
   assert.match(calledUrls[1], /models\/gemini-3-flash-preview:generateContent$/);
   assert.equal(result.model, "gemini-3-flash-preview");
+});
+
+test("recognizeAnswer performs a fast handwriting and drawing transcription pass", async () => {
+  const bytes = new TextEncoder().encode("scan");
+  const file = (name, type = "application/pdf") => ({ name, type, size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const result = await AI.recognizeAnswer({
+    apiKey: VALID_KEY,
+    model: "gemini-2.5-flash",
+    metadata: {
+      rubricCriteria: [
+        { id: "r1", questionNumber: "1", evaluationElement: "분수 계산", scoreLevels: [{ score: 2, criterion: "정확" }] },
+        { id: "r2", questionNumber: "2", evaluationElement: "대칭 도형", scoreLevels: [{ score: 2, criterion: "정확" }] },
+      ],
+    },
+    files: [
+      { role: "blank", file: file("blank.pdf") },
+      { role: "studentAnswer", file: file("student.pdf") },
+      { role: "enhancedAnswer", file: file("student-enhanced-page-01.jpg", "image/jpeg") },
+    ],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 0);
+      assert.equal(body.generationConfig.responseSchema.properties.readings.type, "array");
+      assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 3);
+      assert.match(body.contents[0].parts[0].text, /먼저 채점하지 말고/);
+      assert.match(body.contents[0].parts[0].text, /필기 강조본/);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        readings: [
+          { criterionId: "r1", questionNumber: "1", evaluationElement: "분수 계산", answerReading: "3/5라고 씀", visualDescription: "", confidence: "high", reviewReason: "" },
+          { criterionId: "r2", questionNumber: "2", evaluationElement: "대칭 도형", answerReading: "격자에 도형을 그림", visualDescription: "오른쪽 대응점 한 곳이 흐림", confidence: "low", reviewReason: "연필선이 흐림" },
+        ],
+        pageNotes: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(result.readings.length, 2);
+  assert.equal(result.readings[0].answerReading, "3/5라고 씀");
+  assert.equal(result.needsTeacherReview, true);
+  assert.match(result.reviewReasons.join(" "), /연필선이 흐림/);
 });
 
 test("gradeAnswer sends structured schema and normalizes the response", async () => {

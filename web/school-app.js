@@ -981,8 +981,8 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>빈 답안지와 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
-      <article class="is-ready"><span>2</span><div><strong>신원 영역 가림</strong><p>원본은 유지하고 AI 전송용 사본의 학생정보 영역만 가립니다.</p></div></article>
-      <article class="is-ready"><span>3</span><div><strong>교사 확인 표시</strong><p>흐린 글씨·지운 흔적·불확실한 도형은 자동 확정하지 않습니다.</p></div></article>
+      <article class="is-ready"><span>2</span><div><strong>필기·도형 고해상도 보정</strong><p>신원 영역을 가린 뒤 흐린 연필선과 작은 수식을 강조한 AI 전송용 이미지를 만듭니다.</p></div></article>
+      <article class="is-ready"><span>3</span><div><strong>판독 후 채점</strong><p>글씨·수식·그림을 먼저 읽고, 두 번째 단계에서 채점기준과 대조합니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
@@ -1233,14 +1233,55 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   onStage?.("학생 답안 페이지 분리·개인정보 가림 중");
   const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
-  const files = [
+  const referenceFiles = [
     ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
     ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
     ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
+  ];
+  let enhancedFiles = [];
+  const recognitionWarnings = [];
+  try {
+    onStage?.("흐린 필기·도형 고해상도 보정 중");
+    enhancedFiles = await prepareEnhancedAnswerImages(studentFile, { signal });
+  } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw error;
+    recognitionWarnings.push(`필기 강조본을 만들지 못해 원본 PDF로 판독했습니다. (${friendlyError(error)})`);
+  }
+  const fixedBytes = [...referenceFiles.map((item) => item.file), resolvedBlankFile, studentFile].reduce((sum, file) => sum + Number(file?.size || 0), 0);
+  const enhancedBudget = Math.max(0, ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - (256 * 1024));
+  let retainedBytes = 0;
+  const retainedEnhancedFiles = enhancedFiles.filter((file) => {
+    if (retainedBytes + file.size > enhancedBudget) return false;
+    retainedBytes += file.size;
+    return true;
+  });
+  if (retainedEnhancedFiles.length < enhancedFiles.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 필기 강조 페이지는 제외했습니다.");
+  enhancedFiles = retainedEnhancedFiles;
+  let recognition = { readings: [], reviewReasons: [] };
+  try {
+    onStage?.("1단계 · 글씨·수식·그림만 먼저 판독 중");
+    recognition = await ChaejeomAI.recognizeAnswer({
+      apiKey,
+      model: selectedModel,
+      signal,
+      metadata: { rubricCriteria: design.rubricCriteria },
+      files: [
+        { role: "blank", file: resolvedBlankFile },
+        { role: "studentAnswer", file: studentFile },
+        ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
+      ],
+    });
+  } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw error;
+    recognitionWarnings.push(`사전 답안 판독을 완료하지 못해 원본과 강조본을 직접 비교하여 채점했습니다. (${friendlyError(error)})`);
+  }
+  const files = [
+    ...referenceFiles,
     { role: "blank", file: resolvedBlankFile },
     { role: "studentAnswer", file: studentFile },
+    ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
   ];
-  onStage?.("Gemini가 답안을 판독하고 채점·피드백 작성 중");
+  onStage?.("2단계 · 판독 결과를 채점기준과 대조하고 피드백 작성 중");
   const result = await ChaejeomAI.gradeAnswer({
     apiKey,
     model: selectedModel,
@@ -1253,6 +1294,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
       achievementGroups: design.achievementGroups,
       rubricCriteria: design.rubricCriteria,
       exampleAnswers: design.exampleAnswers,
+      preReadings: recognition.readings,
+      recognitionWarnings: [...recognitionWarnings, ...(recognition.pageNotes || [])],
       requireBlankComparison: true,
       identityRedacted: true,
       student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
@@ -1268,6 +1311,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     teacherScores: result.questionResults.map((item) => item.score),
     teacherTotal: result.totalScore,
     teacherFeedback: result.summary,
+    recognitionEnhanced: enhancedFiles.length > 0,
+    recognitionPassCompleted: recognition.readings.length > 0,
     teacherConfirmed: false,
     regradedAt: new Date().toISOString(),
   };
@@ -1338,6 +1383,61 @@ async function splitStudentPdf(sourceBlob, pageNumbers, index = 0, { anonymize =
   return new File([bytes], `student-${String(index + 1).padStart(3, "0")}_pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
 }
 
+async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
+  if (!window.pdfjsLib?.getDocument) throw new Error("필기 보정 도구를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  const data = new Uint8Array(await pdfFile.arrayBuffer());
+  const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
+  const pdfDocument = await loadingTask.promise;
+  const files = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+      const page = await pdfDocument.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetWidth = pdfDocument.numPages > 5 ? 1500 : 1800;
+      const scale = Math.min(3.2, Math.max(1.5, targetWidth / Math.max(1, baseViewport.width)));
+      const viewport = page.getViewport({ scale });
+      const sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = Math.round(viewport.width);
+      sourceCanvas.height = Math.round(viewport.height);
+      const sourceContext = sourceCanvas.getContext("2d", { alpha: false, willReadFrequently: false });
+      sourceContext.fillStyle = "#ffffff";
+      sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+
+      const enhancedCanvas = document.createElement("canvas");
+      enhancedCanvas.width = sourceCanvas.width;
+      enhancedCanvas.height = sourceCanvas.height;
+      const enhancedContext = enhancedCanvas.getContext("2d", { alpha: false });
+      enhancedContext.fillStyle = "#ffffff";
+      enhancedContext.fillRect(0, 0, enhancedCanvas.width, enhancedCanvas.height);
+      enhancedContext.filter = "grayscale(1) contrast(1.34) brightness(1.04)";
+      enhancedContext.drawImage(sourceCanvas, 0, 0);
+      enhancedContext.filter = "none";
+      const blob = await canvasToBlob(enhancedCanvas, "image/jpeg", 0.84);
+      files.push(new File([blob], `student-enhanced-page-${String(pageNumber).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+      sourceCanvas.width = 1;
+      sourceCanvas.height = 1;
+      enhancedCanvas.width = 1;
+      enhancedCanvas.height = 1;
+      page.cleanup();
+    }
+    return files;
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => {
+    if (blob) resolve(blob);
+    else reject(new Error("필기 강조 이미지를 만들지 못했습니다."));
+  }, type, quality));
+}
+
 function asFile(file) {
   if (file instanceof File) return file;
   return new File([file.blob || file], file.name || "document.pdf", { type: file.type || file.blob?.type || "application/pdf" });
@@ -1396,7 +1496,7 @@ function renderQuestionScoreGroups(rows, teacherScores) {
     const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
     return `<section class="question-score-group">
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><span>문항 배점 결과 <b data-question-total="${groupIndex}">${formatScore(subtotal)} / ${formatScore(submax)}점</b></span></div>
-      ${entries.map(({ item, index }) => `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p><p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>배점 결과<input data-teacher-score="${index}" data-score-group="${groupIndex}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(teacherScores[index] ?? item.score ?? 0)}"><span>/ ${formatScore(item.maxScore)}점</span></label></article>`).join("")}
+      ${entries.map(({ item, index }) => `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>배점 결과<input data-teacher-score="${index}" data-score-group="${groupIndex}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(teacherScores[index] ?? item.score ?? 0)}"><span>/ ${formatScore(item.maxScore)}점</span></label></article>`).join("")}
     </section>`;
   }).join("");
 }
@@ -1432,7 +1532,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.recognitionPassCompleted ? "2단계 판독 완료" : "직접 채점"}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${previewUrl}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
         <section class="teacher-score-panel">
