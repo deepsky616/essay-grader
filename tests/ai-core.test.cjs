@@ -214,13 +214,14 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
     strengths: ["정확함"],
     improvements: [],
     nextSteps: ["설명 확장"],
-    questionResults: [{ questionNumber: "1", answerReading: "2라고 씀", criterion: "정확성", score: 2, maxScore: 2, evidence: "정답", feedback: "잘했습니다.", confidence: "high" }],
+    achievementResults: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "정확성", answerReading: "2라고 씀", criterion: "정확성", score: 2, maxScore: 2, evidence: "정답", feedback: "잘했습니다.", confidence: "high" }],
     needsTeacherReview: false,
     reviewReasons: [],
   };
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
-    metadata: { title: "평가", totalScore: 2, achievementGroups: [], requireBlankComparison: true, identityRedacted: true },
+    metadata: { title: "평가", totalScore: 2, achievementGroups: [], rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "정확성", scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 0, criterion: "오답" }] }], requireBlankComparison: true, identityRedacted: true },
     files: [
       { role: "rubric", file: fakeFile("rubric.pdf", "application/pdf", "rubric") },
       { role: "example", file: fakeFile("example.pdf", "application/pdf", "example") },
@@ -232,6 +233,10 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.responseMimeType, "application/json");
       assert.equal(body.generationConfig.responseSchema.type, "object");
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.minItems, 1);
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 1);
+      assert.deepEqual(body.generationConfig.responseSchema.properties.questionResults.items.properties.criterionId.enum, ["r1"]);
+      assert.equal(body.generationConfig.maxOutputTokens, 16384);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
       assert.equal("temperature" in body.generationConfig, false);
       assert.match(body.contents[0].parts[0].text, /같은 페이지끼리 비교/);
@@ -263,11 +268,13 @@ test("gradeAnswer retries a temporary rate-limit response", async () => {
   let attempts = 0;
   const responsePayload = {
     studentIdentifier: "S001", totalScore: 0, maxScore: 0, overallAchievementLevel: "검토 필요", summary: "확인 필요",
-    strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [], needsTeacherReview: true, reviewReasons: ["무응답"],
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "응답 확인", answerReading: "무응답", criterion: "무응답", score: 0, maxScore: 0, evidence: "", feedback: "확인 필요", confidence: "low" }],
+    needsTeacherReview: true, reviewReasons: ["무응답"],
   };
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
-    metadata: { requireBlankComparison: true, rubricCriteria: [], exampleAnswers: [] },
+    metadata: { requireBlankComparison: true, rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "응답 확인", scoreLevels: [{ score: 0, criterion: "무응답" }] }], exampleAnswers: [] },
     files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
     retryDelayMs: 0,
     fetchImpl: async () => {
@@ -278,6 +285,58 @@ test("gradeAnswer retries a temporary rate-limit response", async () => {
   });
   assert.equal(attempts, 2);
   assert.equal(result.needsTeacherReview, true);
+});
+
+test("gradeAnswer automatically repairs empty per-question and achievement results", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  let attempts = 0;
+  const incomplete = {
+    studentIdentifier: "S001", totalScore: 0, maxScore: 10, overallAchievementLevel: "검토 필요", summary: "처리 중",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [], needsTeacherReview: false, reviewReasons: [],
+  };
+  const repaired = {
+    totalScore: 7,
+    achievementResults: [{ achievementStandardId: "a1", itemRange: "1-2번", achievementLevel: "중", evidence: "두 문항의 풀이", feedback: "풀이를 더 자세히 쓰세요.", confidence: "high" }],
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1", evaluationElement: "도형", answerReading: "대칭 도형을 그림", criterion: "정확함", score: 4, maxScore: 4, evidence: "대응점 일치", feedback: "정확합니다.", confidence: "high" },
+      { criterionId: "r2", questionNumber: "2", evaluationElement: "설명", answerReading: "비율을 설명함", criterion: "일부 타당", score: 3, maxScore: 6, evidence: "계산 과정 일부", feedback: "단위를 확인하세요.", confidence: "medium" },
+    ],
+    needsTeacherReview: true,
+    reviewReasons: ["2번 계산 과정 확인"],
+  };
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    model: "gemini-2.5-flash",
+    metadata: {
+      totalScore: 10,
+      requireBlankComparison: true,
+      rubricCriteria: [
+        { id: "r1", questionNumber: "1", evaluationElement: "도형", scoreLevels: [{ score: 4, criterion: "정확함" }, { score: 0, criterion: "오답" }] },
+        { id: "r2", questionNumber: "2", evaluationElement: "설명", scoreLevels: [{ score: 6, criterion: "정확함" }, { score: 3, criterion: "일부 타당" }, { score: 0, criterion: "근거 없음" }] },
+      ],
+      exampleAnswers: [],
+      achievementGroups: [{ id: "a1", itemRange: "1-2번", standard: "문제를 해결한다", levels: [{ label: "상" }, { label: "중" }, { label: "하" }] }],
+    },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      attempts += 1;
+      const body = JSON.parse(options.body);
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.minItems, 2);
+      assert.equal(body.generationConfig.responseSchema.properties.questionResults.maxItems, 2);
+      assert.equal(body.generationConfig.responseSchema.properties.achievementResults.minItems, 1);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+      if (attempts === 2) assert.match(body.contents[0].parts[0].text, /이전 채점 응답에서/);
+      const payload = attempts === 1 ? incomplete : repaired;
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(result.questionResults.length, 2);
+  assert.equal(result.achievementResults.length, 1);
+  assert.equal(result.totalScore, 7);
+  assert.deepEqual(result.questionResults.map((item) => item.score), [4, 3]);
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {

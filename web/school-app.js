@@ -1043,7 +1043,6 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     navigate("/settings");
     return;
   }
-  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   const maxScore = rubricTotalScore(design.rubricCriteria || []);
   if (maxScore <= 0) { showToast("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요."); return; }
   course.grading = {
@@ -1061,46 +1060,9 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   updateGradingProgress(0, assignments.length);
   const startButton = app.querySelector("[data-run-grading]");
   if (startButton) { startButton.disabled = true; startButton.textContent = "채점 진행 중…"; }
-  for (const [index, assignment] of assignments.entries()) {
-    const student = studentMap.get(assignment.studentId);
-    const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
+  for (const assignment of assignments) {
     try {
-      const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
-      const files = [
-        ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
-        ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
-        ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
-        { role: "blank", file: blankFile },
-        { role: "studentAnswer", file: studentFile },
-      ];
-      const result = await ChaejeomAI.gradeAnswer({
-        apiKey,
-        model: selectedModel,
-        metadata: {
-          title: design.taskName,
-          subject: course.subject,
-          grade: course.grade,
-          totalScore: maxScore,
-          achievementGroups: design.achievementGroups,
-          rubricCriteria: design.rubricCriteria,
-          exampleAnswers: design.exampleAnswers,
-          requireBlankComparison: true,
-          identityRedacted: true,
-          student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
-        },
-        files,
-      });
-      course.grading.results.push({
-        ...result,
-        studentId: student.id,
-        studentIdentifier: StudentWorkflow.rosterIdentity(student),
-        pageNumbers: assignment.pageNumbers,
-        sourceFileName: submission.sourceFile.name,
-        teacherScores: result.questionResults.map((item) => item.score),
-        teacherTotal: result.totalScore,
-        teacherFeedback: result.summary,
-        teacherConfirmed: false,
-      });
+      course.grading.results.push(await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile }));
     } catch (error) {
       course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
     }
@@ -1122,6 +1084,103 @@ function updateGradingProgress(completed, total) {
   card.hidden = false;
   card.querySelector("[data-progress-copy]").textContent = `${completed} / ${total}`;
   card.querySelector("[data-progress-bar]").style.width = `${total ? Math.round((completed / total) * 100) : 0}%`;
+}
+
+async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile }) {
+  const submission = course.submission;
+  const student = targetStudents.find((item) => item.id === assignment.studentId);
+  if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
+  const resolvedBlankFile = blankFile || asFile(design.blankFile);
+  const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
+  const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
+  const maxScore = rubricTotalScore(design.rubricCriteria || []);
+  if (maxScore <= 0) throw new Error("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요.");
+  const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+  const files = [
+    ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
+    ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
+    ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
+    { role: "blank", file: resolvedBlankFile },
+    { role: "studentAnswer", file: studentFile },
+  ];
+  const result = await ChaejeomAI.gradeAnswer({
+    apiKey,
+    model: selectedModel,
+    metadata: {
+      title: design.taskName,
+      subject: course.subject,
+      grade: course.grade,
+      totalScore: maxScore,
+      achievementGroups: design.achievementGroups,
+      rubricCriteria: design.rubricCriteria,
+      exampleAnswers: design.exampleAnswers,
+      requireBlankComparison: true,
+      identityRedacted: true,
+      student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
+    },
+    files,
+  });
+  return {
+    ...result,
+    studentId: student.id,
+    studentIdentifier: StudentWorkflow.rosterIdentity(student),
+    pageNumbers: assignment.pageNumbers,
+    sourceFileName: submission.sourceFile.name,
+    teacherScores: result.questionResults.map((item) => item.score),
+    teacherTotal: result.totalScore,
+    teacherFeedback: result.summary,
+    teacherConfirmed: false,
+    regradedAt: new Date().toISOString(),
+  };
+}
+
+async function regradeSingleStudent(course, targetStudents, studentId, button) {
+  const submission = course.submission;
+  const design = course.designs?.find((item) => item.id === submission?.designId);
+  const assignment = submission?.assignments?.find((item) => item.studentId === studentId && item.pageNumbers.length);
+  const student = targetStudents.find((item) => item.id === studentId);
+  if (!submission || !design || !assignment || !student) { showToast("이 학생의 평가 설계 또는 답안 페이지를 찾지 못했습니다."); return; }
+  if (!design.blankFile) { showToast("평가 설계에서 빈 답안지 PDF를 먼저 등록해 주세요."); return; }
+  if (!window.confirm(`${StudentWorkflow.rosterIdentity(student)} 학생만 AI로 다시 채점할까요? 이 학생의 기존 AI 점수와 교사 수정 내용은 새 결과로 교체됩니다.`)) return;
+  const [apiKey, selectedModel, keyStatus] = await Promise.all([
+    loadGeminiApiKey(),
+    getSetting(GEMINI_MODEL_SETTING).then((value) => value || ChaejeomAI.MODEL),
+    getSetting(GEMINI_STATUS_SETTING),
+  ]);
+  if (!apiKey || !keyStatus?.generationVerified || keyStatus.model !== selectedModel) {
+    showToast("설정에서 현재 모델의 실제 생성 테스트를 먼저 완료해 주세요.");
+    navigate("/settings");
+    return;
+  }
+  const blankFile = asFile(design.blankFile);
+  try {
+    const blankPageCount = await getPdfPageCount(blankFile);
+    if (blankPageCount !== assignment.pageNumbers.length) throw new Error(`빈 답안지는 ${blankPageCount}쪽이고 이 학생 답안은 ${assignment.pageNumbers.length}쪽입니다.`);
+  } catch (error) {
+    showToast(friendlyError(error));
+    return;
+  }
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "이 학생 재채점 중…";
+  try {
+    const nextResult = await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile });
+    const resultIndex = course.grading.results.findIndex((item) => item.studentId === studentId);
+    if (resultIndex >= 0) course.grading.results.splice(resultIndex, 1, nextResult);
+    else course.grading.results.push(nextResult);
+    course.grading.errors = (course.grading.errors || []).filter((item) => item.studentId !== studentId);
+    course.grading.model = selectedModel;
+    course.grading.finishedAt = new Date().toISOString();
+    const expectedCount = submission.assignments.filter((item) => item.pageNumbers.length).length;
+    course.grading.status = course.grading.results.length === expectedCount ? "complete" : course.grading.results.length ? "partial" : "failed";
+    await putCourse(course);
+    showToast(`${student.number}번 ${student.name} 학생의 AI 재채점을 완료했습니다.`);
+    await openStudentResult(course, targetStudents, studentId);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    showToast(`개별 재채점 실패: ${friendlyError(error)}`);
+  }
 }
 
 async function splitStudentPdf(sourceBlob, pageNumbers, index = 0, { anonymize = false } = {}) {
@@ -1247,7 +1306,7 @@ async function openStudentResult(course, targetStudents, studentId) {
           <div class="teacher-total"><span>문항별 배점 합계 · 교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
           ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item) => `<div><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><p>${escapeHtml(item.feedback)}</p></div>`).join("")}</div>` : ""}
-          <button class="secondary-action full-button" type="button" data-apply-ai-score>AI 점수 그대로 적용</button>
+          <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>이 학생 AI 재채점</button><button class="secondary-action" type="button" data-apply-ai-score>AI 점수 그대로 적용</button></div>
         </section>
       </div>
       <div class="student-review-actions">
@@ -1293,6 +1352,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     slot.innerHTML = "";
   };
   panel.querySelector("[data-close-student-result]").addEventListener("click", closeCurrent);
+  panel.querySelector("[data-regrade-student]").addEventListener("click", (event) => regradeSingleStudent(course, targetStudents, studentId, event.currentTarget));
   panel.querySelector("[data-apply-ai-score]").addEventListener("click", async () => {
     await saveCurrent(true);
     updateTotal();
