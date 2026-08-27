@@ -13,6 +13,27 @@
 
 ---
 
+## 설계 절 연결
+
+이 저장소의 계획 이름은 인식과 채점을 P3에 함께 넣어 설계 문서 12절의 단계
+이름보다 하나 빠르다. 따라서 이 계획의 P5는 설계 문서 12절 표의 P6 완료 기준인
+피드백 생성과 내보내기를 구현한다.
+
+| 작업 | 함께 구현하는 설계 절 | 구현 계약 |
+|---|---|---|
+| 1. 성취수준 판정 | 9절, 10절 | 교사가 정한 세 경계값만 엄격하게 받아 총점을 결정론적으로 수준에 대응시킨다. |
+| 2. 피드백 모델 | 9절, 10절 | 실행과 학생마다 피드백 하나, 확정 자료 지문, 대체 문장 상태를 저장한다. |
+| 3. 입력 조립 | 7.7절, 9절, 10절 | 성공한 실행의 완전한 확정 점수와 정확한 루브릭 조항만 익명 입력으로 만든다. |
+| 4. 익명 생성 | 7.7절, 9절 | 학년 말투와 엄격한 출력 계약을 강제하고 실패하면 확정 기준 기반 문장으로 낮춘다. |
+| 5. 지역 렌더링 | 7.7절, 9절, 11절 | 실명은 지역 템플릿에서만 넣고 외부 자료가 없는 인쇄용 문서를 만든다. |
+| 6. 성적표 | 9절, 11절 | 문항 점수와 총점과 수준, 문항별 평균과 평균 득점률을 지역 파일로 만든다. |
+| 7. 피드백 API | 7.7절, 9절, 10절 | 현재 정책과 현재 키에 묶인 모형을 확인하고 전원 생성 뒤 원자적으로 바꾼다. |
+| 8. 경계값 화면 | 9절, 15절 | 추천값은 출발값으로만 채우며 세 값을 교사가 확인하고 저장하게 한다. |
+| 9. 피드백 화면 | 7.7절, 9절, 12절 | 전송 범위, 대체 문장, 오래된 자료 차단, 지역 이름 미리보기를 분명히 보인다. |
+| 10. 전체 검증 | 13절, 14절 | 합성 자동 검사와 실제 학급 현장 측정을 구분하고 관찰하지 않은 수치를 만들지 않는다. |
+
+---
+
 ## 이 계획의 범위
 
 **포함**
@@ -430,6 +451,18 @@ def test_context_uses_anonymous_token_for_llm(graded_setup, db_session):
     assert "김미래" not in str(payload)
 
 
+def test_rejects_when_anonymous_token_is_missing(graded_setup, db_session):
+    from app.models.scan import Submission
+
+    run_id = graded_setup["run"].id
+    _confirm_all(db_session, run_id)
+    submission = db_session.query(Submission).first()
+    submission.anonymous_token = None
+
+    with pytest.raises(NotConfirmed, match="익명 토큰"):
+        build_contexts(db_session, run_id, _rubric())
+
+
 def test_item_detail_includes_criterion_and_max(graded_setup, db_session):
     run_id = graded_setup["run"].id
     _confirm_all(db_session, run_id, score_value=1)
@@ -606,6 +639,10 @@ def build_contexts(
     for submission_id, item_scores in grouped.items():
         submission = session.get(Submission, submission_id)
         student = session.get(Student, submission.student_id)
+        if not submission.anonymous_token:
+            raise NotConfirmed(
+                "익명 토큰이 없는 답안이 있습니다. P2 처리 단계를 다시 확인하세요."
+            )
 
         details: list[ItemDetail] = []
         for score in sorted(item_scores, key=lambda s: s.item_no):
@@ -643,7 +680,7 @@ def build_contexts(
                 submission_id=submission_id,
                 student_number=student.number,
                 student_name=student.name,
-                anonymous_token=submission.anonymous_token or f"S-{submission_id}",
+                anonymous_token=submission.anonymous_token,
                 grade=rubric.assessment.grade,
                 subject=rubric.assessment.subject,
                 total_score=total,
@@ -663,7 +700,7 @@ def build_contexts(
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_feedback_builder.py -v`
-Expected: PASS (7 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -676,6 +713,10 @@ git commit -m "feat: 확정 점수 기반 피드백 컨텍스트 조립"
 
 ## Task 4: 피드백 생성
 
+P3 Task 9에서 정확한 `LLMProvider` 손잡이의 `LLMRequest`에 추가한
+`anonymous_token`을 사용한다. 별도 `gateway.send`로 손잡이를 감싸지 않고,
+한 번의 공개 완성 흐름이 식별정보 검사와 익명 표식 감사를 함께 맡는다.
+
 **Files:**
 - Create: `backend/app/services/feedback_generator.py`
 - Test: `backend/tests/test_feedback_generator.py`
@@ -687,19 +728,10 @@ git commit -m "feat: 확정 점수 기반 피드백 컨텍스트 조립"
 ```python
 import json
 
-import pytest
-
 from app.providers.gateway import TransmissionGateway
 from app.services.feedback_builder import FeedbackContext, ItemDetail
 from app.services.feedback_generator import generate_feedback
-from tests.fakes import FakeLLMProvider
-
-
-@pytest.fixture
-def gateway(tmp_path):
-    return TransmissionGateway(
-        audit_log_path=tmp_path / "audit.log", pii_terms_provider=set
-    )
+from tests.fakes import make_fake_llm_provider, make_llm_provider
 
 
 def _context(total=3) -> FeedbackContext:
@@ -752,9 +784,9 @@ def _llm_output(**overrides) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def test_generates_comment_for_each_item(gateway):
-    provider = FakeLLMProvider([_llm_output()])
-    result = generate_feedback(_context(), provider, gateway)
+def test_generates_comment_for_each_item():
+    provider, _adapter = make_fake_llm_provider([_llm_output()])
+    result = generate_feedback(_context(), provider)
 
     assert len(result.item_comments) == 2
     assert result.item_comments[0]["item_no"] == 1
@@ -762,66 +794,85 @@ def test_generates_comment_for_each_item(gateway):
     assert result.next_step
 
 
-def test_prompt_contains_no_real_name(gateway):
-    provider = FakeLLMProvider([_llm_output()])
-    generate_feedback(_context(), provider, gateway)
+def test_prompt_contains_no_real_name():
+    provider, adapter = make_fake_llm_provider([_llm_output()])
+    generate_feedback(_context(), provider)
 
-    prompt = provider.requests[0].user_text
+    prompt = adapter.requests[0].user_text
     assert "김미래" not in prompt
     assert "S-abcd1234" in prompt
 
 
-def test_prompt_states_grade_for_tone(gateway):
-    provider = FakeLLMProvider([_llm_output()])
-    generate_feedback(_context(), provider, gateway)
+def test_feedback_audit_keeps_anonymous_token(tmp_path):
+    audit_path = tmp_path / "audit.log"
+    gateway = TransmissionGateway(
+        audit_log_path=audit_path,
+        pii_terms_provider=set,
+        provider="test-provider",
+    )
+    provider, _adapter = make_fake_llm_provider(
+        [_llm_output()], gateway=gateway
+    )
 
-    assert "6학년" in provider.requests[0].system or "6학년" in provider.requests[0].user_text
+    generate_feedback(_context(), provider)
+
+    entry = json.loads(audit_path.read_text())
+    assert entry["purpose"] == "generate_feedback"
+    assert entry["anonymous_token"] == "S-abcd1234"
 
 
-def test_comments_for_unknown_items_are_dropped(gateway):
-    provider = FakeLLMProvider(
+def test_prompt_states_grade_for_tone():
+    provider, adapter = make_fake_llm_provider([_llm_output()])
+    generate_feedback(_context(), provider)
+
+    assert "6학년" in adapter.requests[0].system or "6학년" in adapter.requests[0].user_text
+
+
+def test_comments_for_unknown_items_are_dropped():
+    provider, _adapter = make_fake_llm_provider(
         [_llm_output(item_comments=[{"item_no": 99, "comment": "없는 문항"}])]
     )
-    result = generate_feedback(_context(), provider, gateway)
+    result = generate_feedback(_context(), provider)
     assert result.item_comments == []
 
 
-def test_missing_comment_gets_criterion_fallback(gateway):
+def test_missing_comment_gets_criterion_fallback():
     """LLM 이 일부 문항을 빠뜨려도 문서에 빈칸이 생기지 않아야 한다."""
-    provider = FakeLLMProvider(
+    provider, _adapter = make_fake_llm_provider(
         [_llm_output(item_comments=[{"item_no": 1, "comment": "잘했어요."}])]
     )
-    result = generate_feedback(_context(), provider, gateway)
+    result = generate_feedback(_context(), provider)
 
     assert len(result.item_comments) == 2
     assert result.item_comments[1]["comment"] == "일부만 완성"
 
 
-def test_malformed_json_falls_back_to_criteria(gateway):
-    provider = FakeLLMProvider(["JSON 이 아닙니다"])
-    result = generate_feedback(_context(), provider, gateway)
+def test_malformed_json_falls_back_to_criteria():
+    provider, _adapter = make_fake_llm_provider(["JSON 이 아닙니다"])
+    result = generate_feedback(_context(), provider)
 
     assert len(result.item_comments) == 2
     assert result.summary  # 기계적으로라도 채워진다
     assert result.degraded is True
 
 
-def test_llm_failure_falls_back(gateway):
-    class Boom:
+def test_llm_failure_falls_back():
+    class FailingAdapter:
         def complete(self, _request):
             raise RuntimeError("네트워크 오류")
 
-        def list_models(self):
+        def list_models(self, _request):
             return []
 
-    result = generate_feedback(_context(), Boom(), gateway)
+    provider = make_llm_provider(FailingAdapter())
+    result = generate_feedback(_context(), provider)
     assert result.degraded is True
     assert len(result.item_comments) == 2
 
 
-def test_scores_are_included_in_comments(gateway):
-    provider = FakeLLMProvider([_llm_output()])
-    result = generate_feedback(_context(), provider, gateway)
+def test_scores_are_included_in_comments():
+    provider, _adapter = make_fake_llm_provider([_llm_output()])
+    result = generate_feedback(_context(), provider)
 
     assert result.item_comments[0]["score"] == 2
     assert result.item_comments[0]["max"] == 2
@@ -850,7 +901,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.providers.base import LLMProvider, LLMRequest
-from app.providers.gateway import OutboundRequest, TransmissionGateway
 from app.services.feedback_builder import FeedbackContext
 
 _CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -955,20 +1005,17 @@ def _merge(context: FeedbackContext, payload: dict[str, Any]) -> GeneratedFeedba
 def generate_feedback(
     context: FeedbackContext,
     provider: LLMProvider,
-    gateway: TransmissionGateway,
 ) -> GeneratedFeedback:
     user_text = _build_user_text(context)
-    outbound = OutboundRequest(
-        purpose="generate_feedback",
-        text_parts=[SYSTEM_PROMPT, user_text],
-        anonymous_token=context.anonymous_token,
-    )
 
     try:
-        response = gateway.send(
-            outbound,
-            lambda _req: provider.complete(
-                LLMRequest(system=SYSTEM_PROMPT, user_text=user_text)
+        response = LLMProvider.complete(
+            provider,
+            LLMRequest(
+                system=SYSTEM_PROMPT,
+                user_text=user_text,
+                purpose="generate_feedback",
+                anonymous_token=context.anonymous_token,
             ),
         )
         payload = json.loads(_CODE_FENCE.sub("", response.text.strip()).strip())
@@ -989,7 +1036,7 @@ def generate_feedback(
 - [ ] **Step 4: 테스트 통과 확인**
 
 Run: `cd backend && pytest tests/test_feedback_generator.py -v`
-Expected: PASS (8 tests)
+Expected: PASS (9 tests)
 
 - [ ] **Step 5: 커밋**
 
@@ -1639,7 +1686,7 @@ from app.models.grading import GradingRun
 from app.models.rubric import RubricDraft
 from app.models.scan import ScanBatch, Submission
 from app.providers.gateway import TransmissionGateway
-from app.providers.gemini_llm import GeminiLLMProvider
+from app.providers.gemini_llm import create_gemini_provider
 from app.providers.pii_terms import roster_pii_terms
 from app.schemas.rubric import Rubric
 from app.services.export_excel import build_gradebook
@@ -1654,11 +1701,9 @@ from app.services.feedback_render import render_all
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
 
-def generate_one(
-    context: FeedbackContext, provider, gateway
-) -> GeneratedFeedback:
+def generate_one(context: FeedbackContext, provider) -> GeneratedFeedback:
     """테스트에서 monkeypatch 로 대체한다."""
-    return generate_feedback(context, provider, gateway)
+    return generate_feedback(context, provider)
 
 
 def _load_run(run_id: int, session: Session) -> GradingRun:
@@ -1713,8 +1758,13 @@ def generate(run_id: int, session: Session = Depends(get_session)) -> dict[str, 
     gateway = TransmissionGateway(
         audit_log_path=settings.audit_log_path(),
         pii_terms_provider=roster_pii_terms(session),
+        provider="gemini",
     )
-    provider = GeminiLLMProvider(api_key=api_key, model=model)
+    provider = create_gemini_provider(
+        api_key=api_key,
+        model=model,
+        gateway=gateway,
+    )
 
     # 다시 생성하면 이전 것을 지운다. 점수가 바뀌었을 수 있다.
     for existing in session.scalars(
@@ -1724,7 +1774,7 @@ def generate(run_id: int, session: Session = Depends(get_session)) -> dict[str, 
     session.flush()
 
     for context in contexts:
-        generated = generate_one(context, provider, gateway)
+        generated = generate_one(context, provider)
         session.add(
             Feedback(
                 run_id=run_id,
@@ -2164,7 +2214,9 @@ v1 완성 시점이다. 처음부터 끝까지 한 번 돌린다.
 
 `audit.log`를 열어 다음을 확인한다.
 
-- 모든 항목에 `anonymous_token`이 있고 실명이 없는가
+- 학생 답안과 피드백 관련 항목에는 `anonymous_token`이 있고, 어느 항목에도
+  실명이 없는가. 학생과 무관한 `rubric_compile`, `list_models`에는 익명 표식을
+  억지로 넣지 않는다.
 - `purpose`가 `rubric_compile`, `recognize_classify`, `recognize_transcribe`, `grade_open_text`, `generate_feedback`으로 기록되는가
 - 페이로드 본문이 저장되지 않았는가
 
