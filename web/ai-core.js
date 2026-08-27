@@ -54,6 +54,7 @@
             criterionId: { type: "string", description: "평가 정보의 평가요소 ID" },
             questionNumber: { type: "string" },
             evaluationElement: { type: "string", description: "적용한 평가요소" },
+            answerReading: { type: "string", description: "학생이 실제로 쓴 답·계산식·그림을 읽은 내용. 무응답이면 무응답이라고 기록" },
             criterion: { type: "string", description: "적용한 채점기준의 요약" },
             score: { type: "number" },
             maxScore: { type: "number" },
@@ -61,7 +62,7 @@
             feedback: { type: "string", description: "해당 문항에 대한 구체적인 피드백" },
             confidence: { type: "string", enum: ["high", "medium", "low"] },
           },
-          required: ["criterionId", "questionNumber", "evaluationElement", "criterion", "score", "maxScore", "evidence", "feedback", "confidence"],
+          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "criterion", "score", "maxScore", "evidence", "feedback", "confidence"],
         },
       },
       needsTeacherReview: { type: "boolean" },
@@ -174,9 +175,37 @@
     }
     const body = await readResponseBody(response);
     if (!response.ok) throw new Error(geminiErrorMessage(response.status, body, model));
+    const verifiedModel = validateModelId(body.name?.replace(/^models\//, "") || model);
+    let generationResponse;
+    try {
+      generationResponse = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${verifiedModel}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "연결 확인입니다. ok를 true로 반환하세요." }] }],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 64,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "object",
+              properties: { ok: { type: "boolean" } },
+              required: ["ok"],
+            },
+          },
+        }),
+      }, { maxAttempts: 2, baseDelayMs: 800 });
+    } catch (error) {
+      throw new Error(`모델 조회에는 성공했지만 실제 생성 요청을 보내지 못했습니다. (${error.message})`);
+    }
+    const generationBody = await readResponseBody(generationResponse);
+    if (!generationResponse.ok) throw new Error(geminiErrorMessage(generationResponse.status, generationBody, verifiedModel));
+    const generationResult = parseCandidateJson(generationBody, "Gemini가 연결 확인 결과를 반환하지 않았습니다.");
+    if (generationResult?.ok !== true) throw new Error("Gemini 모델 연결 확인 응답이 올바르지 않습니다.");
     return {
       ok: true,
-      model: body.name?.replace(/^models\//, "") || model,
+      generationVerified: true,
+      model: verifiedModel,
       displayName: body.displayName || model,
     };
   }
@@ -203,7 +232,7 @@
 
     let response;
     try {
-      response = await fetchImpl(`${API_ROOT}/models/${selectedModel}:generateContent`, {
+      response = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${selectedModel}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
@@ -225,18 +254,19 @@
     return normalizePageAssignments(parsed, normalizedRoster, actualPageCount, selectedModel);
   }
 
-  async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch }) {
+  async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 1200 }) {
     const key = validateApiKey(apiKey);
     const selectedModel = validateModelId(model);
     const normalizedFiles = Array.isArray(files) ? files.filter((item) => item?.file) : [];
     const requiredRoles = new Set(normalizedFiles.map((item) => item.role));
     if (!requiredRoles.has("studentAnswer")) throw new Error("자동 채점에 필요한 학생 답안 파일이 없습니다.");
+    if (metadata?.requireBlankComparison && !requiredRoles.has("blank")) throw new Error("종이 스캔 답안을 채점하려면 동일한 빈 답안지 PDF가 필요합니다.");
     if (!requiredRoles.has("rubric") && !Array.isArray(metadata?.rubricCriteria)) throw new Error("채점기준 입력 또는 채점기준표 파일이 필요합니다.");
     if (!requiredRoles.has("example") && !Array.isArray(metadata?.exampleAnswers)) throw new Error("예시답안 입력 또는 예시답안 파일이 필요합니다.");
 
     const totalBytes = normalizedFiles.reduce((sum, item) => sum + Number(item.file.size || 0), 0);
     if (totalBytes > MAX_INLINE_BYTES) {
-      throw new Error(`한 학생의 AI 채점 요청은 기준표·예시답안·학생답안을 합쳐 18MB 이하로 준비해 주세요. 현재 ${formatBytes(totalBytes)}입니다.`);
+      throw new Error(`한 학생의 AI 채점 요청은 기준표·예시답안·빈 답안지·학생답안을 합쳐 18MB 이하로 준비해 주세요. 현재 ${formatBytes(totalBytes)}입니다.`);
     }
 
     const parts = [{ text: buildPrompt(metadata, normalizedFiles.find((item) => item.role === "studentAnswer")?.file?.name) }];
@@ -247,7 +277,7 @@
 
     let response;
     try {
-      response = await fetchImpl(`${API_ROOT}/models/${selectedModel}:generateContent`, {
+      response = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${selectedModel}:generateContent`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -256,11 +286,13 @@
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
           generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192,
             responseMimeType: "application/json",
             responseSchema: gradingSchema,
           },
         }),
-      });
+      }, { maxAttempts: 3, baseDelayMs: retryDelayMs });
     } catch (error) {
       throw new Error(`Gemini 채점 요청을 보내지 못했습니다. (${error.message})`);
     }
@@ -284,7 +316,7 @@
     const schema = isRubric ? rubricExtractionSchema : exampleExtractionSchema;
     let response;
     try {
-      response = await fetchImpl(`${API_ROOT}/models/${selectedModel}:generateContent`, {
+      response = await fetchWithRetry(fetchImpl, `${API_ROOT}/models/${selectedModel}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
@@ -343,6 +375,8 @@
         mathNotation: item?.mathNotation || "",
         visualDescription: item?.visualDescription || "",
       })),
+      blankComparisonRequired: Boolean(metadata.requireBlankComparison),
+      identityRedacted: Boolean(metadata.identityRedacted),
       student: metadata.student ? {
         id: metadata.student.id || "",
         grade: metadata.student.grade || "",
@@ -363,14 +397,16 @@
 채점 절차:
 1. 평가 정보의 rubricCriteria와 첨부 채점기준표에서 문항별 배점과 부분점수 조건을 먼저 확인합니다. 둘이 충돌하면 교사 검토 사유에 기록합니다.
 2. 평가 정보의 exampleAnswers와 첨부 예시답안은 정답 형태와 풀이 방향을 이해하는 참고자료로만 사용하고, 표현이 다르다는 이유만으로 감점하지 않습니다. LaTeX 수식과 도형 설명을 실제 첨부 그림과 함께 확인합니다.
-3. 빈 답안지가 있으면 인쇄된 문항·도형과 학생이 작성한 내용을 구분하는 데만 사용합니다.
-4. 학생 답안(${answerFileName || "학생 답안"})의 실제 작성 내용만 평가합니다.
-5. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 needsTeacherReview와 reviewReasons에 기록합니다.
-6. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. 총점은 평가요소별 선택 점수의 합계여야 합니다.
-7. 피드백은 한국어로 작성하고, 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
-8. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
-9. 학생 명단 정보가 있으면 studentIdentifier는 명단의 학년·반·번호·이름을 그대로 사용합니다. 스캔 표기와 명단이 충돌하면 추측하지 말고 교사 검토 사유에 기록합니다.
-10. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
+3. 빈 답안지와 학생 답안은 같은 페이지끼리 비교합니다. 빈 답안지에 이미 인쇄된 문장·격자·선·도형·기호는 학생이 쓴 답으로 간주하지 마세요.
+4. 학생 답안(${answerFileName || "학생 답안"})에 새로 더해진 연필·볼펜 필기, 계산식, 선택 표시, 선, 도형과 지운 흔적만 평가합니다. 흰색으로 가린 신원 영역은 채점에서 무시합니다.
+5. 각 평가요소의 answerReading에는 학생이 실제로 쓴 핵심 답·식·그림을 먼저 객관적으로 옮겨 적으세요. 보이지 않으면 ‘판독 불가’, 쓰지 않았으면 ‘무응답’으로 기록하고 내용을 만들지 마세요.
+6. 도형 문항은 점의 위치, 선분의 연결, 대칭축과의 대응, 격자 칸 수를 빈 답안지와 대조해 판정합니다. 흐린 연필선·겹친 선·지운 흔적은 낮은 confidence와 구체적인 교사 검토 사유를 남기세요.
+7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 needsTeacherReview와 reviewReasons에 기록합니다.
+8. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. 총점은 평가요소별 선택 점수의 합계여야 합니다.
+9. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
+10. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
+11. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 가려지지 않은 이름이 보이더라도 응답에 옮겨 적지 마세요.
+12. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -426,6 +462,7 @@ ${JSON.stringify(roster)}
         criterionId: matchedRubric?.id || text(item?.criterionId),
         questionNumber: matchedRubric?.questionNumber || String(item?.questionNumber || index + 1),
         evaluationElement: matchedRubric?.evaluationElement || text(item?.evaluationElement),
+        answerReading: text(item?.answerReading) || text(item?.evidence) || "판독 불가",
         criterion: selectedLevel?.criterion || text(item?.criterion),
         score,
         maxScore,
@@ -489,8 +526,8 @@ ${JSON.stringify(roster)}
       questionResults,
       needsTeacherReview: Boolean(raw.needsTeacherReview)
         || reviewReasons.length > 0
-        || questionResults.some((item) => item.confidence === "low")
-        || achievementResults.some((item) => item.confidence === "low"),
+        || questionResults.some((item) => item.confidence !== "high" || /판독 불가/.test(item.answerReading))
+        || achievementResults.some((item) => item.confidence !== "high"),
       reviewReasons: Array.from(new Set(reviewReasons)),
       model: validateModelId(model),
       gradedAt: new Date().toISOString(),
@@ -570,6 +607,34 @@ ${JSON.stringify(roster)}
     return { inlineData: { mimeType: file.type, data } };
   }
 
+  async function fetchWithRetry(fetchImpl, url, options, { maxAttempts = 3, baseDelayMs = 1200 } = {}) {
+    let lastResponse = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await fetchImpl(url, options);
+        if (![429, 500, 502, 503, 504].includes(response.status) || attempt === maxAttempts) return response;
+        lastResponse = response;
+        const retryAfter = Number(response.headers?.get?.("retry-after"));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(60000, retryAfter * 1000)
+          : Math.min(15000, baseDelayMs * (2 ** (attempt - 1)));
+        if (delay > 0) await sleep(delay);
+      } catch (error) {
+        lastError = error;
+        if (attempt === maxAttempts) throw error;
+        const delay = Math.min(15000, baseDelayMs * (2 ** (attempt - 1)));
+        if (delay > 0) await sleep(delay);
+      }
+    }
+    if (lastResponse) return lastResponse;
+    throw lastError || new Error("Gemini 요청에 실패했습니다.");
+  }
+
+  function sleep(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
   function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     const chunks = [];
@@ -613,12 +678,12 @@ ${JSON.stringify(roster)}
 
   function geminiErrorMessage(status, body, model = MODEL) {
     const message = body?.error?.message || body?.raw || "알 수 없는 오류";
-    if (/api key|API_KEY_INVALID|key not valid/i.test(message)) return `Gemini API 키가 유효하지 않습니다. Google AI Studio에서 키 상태와 사용 제한을 확인해 주세요. (${message})`;
-    if (status === 404) return `선택한 Gemini 모델 ‘${model}’을 사용할 수 없습니다. 공식 모델 ID를 확인해 주세요. (${message})`;
-    if (status === 400) return `Gemini가 요청을 처리하지 못했습니다. 파일 크기와 형식을 확인해 주세요. (${message})`;
-    if (status === 401 || status === 403) return `API 키가 유효하지 않거나 Gemini API 사용 권한이 없습니다. (${message})`;
-    if (status === 429) return `Gemini 사용량 또는 요청 횟수 한도를 초과했습니다. 잠시 후 다시 시도해 주세요. (${message})`;
-    if (status >= 500) return `Gemini 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요. (${message})`;
+    if (/api key|API_KEY_INVALID|key not valid/i.test(message)) return `[HTTP ${status}] Gemini API 키가 유효하지 않습니다. Google AI Studio에서 키 상태와 사용 제한을 확인해 주세요. (${message})`;
+    if (status === 404) return `[HTTP 404] 선택한 Gemini 모델 ‘${model}’을 사용할 수 없습니다. 공식 모델 ID를 확인해 주세요. (${message})`;
+    if (status === 400) return `[HTTP 400] Gemini가 요청을 처리하지 못했습니다. 파일 크기·형식·채점기준 입력을 확인해 주세요. (${message})`;
+    if (status === 401 || status === 403) return `[HTTP ${status}] API 키가 유효하지 않거나 Gemini API 생성 권한이 없습니다. (${message})`;
+    if (status === 429) return `[HTTP 429] Gemini 사용량 또는 요청 횟수 한도를 초과했습니다. 자동 재시도 후에도 실패했습니다. 잠시 후 다시 시도해 주세요. (${message})`;
+    if (status >= 500) return `[HTTP ${status}] Gemini 서버가 일시적으로 응답하지 않습니다. 자동 재시도 후에도 실패했습니다. (${message})`;
     return `Gemini 요청이 실패했습니다. (${status}: ${message})`;
   }
 

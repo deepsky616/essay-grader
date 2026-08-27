@@ -375,12 +375,14 @@ function classOptions(selected = "1") {
 }
 
 async function renderCourse(courseId, activeTab) {
-  const [course, students, hasApiKey, selectedModel] = await Promise.all([
+  const [course, students, apiKey, selectedModel, keyStatus] = await Promise.all([
     getCourse(courseId),
     listStudents(),
-    loadGeminiApiKey().then(Boolean),
+    loadGeminiApiKey(),
     getSetting(GEMINI_MODEL_SETTING).then((value) => value || ChaejeomAI.MODEL),
+    getSetting(GEMINI_STATUS_SETTING),
   ]);
+  const hasApiKey = Boolean(apiKey && keyStatus?.generationVerified && keyStatus.model === selectedModel);
   if (!course) return renderNotFound();
   const allowedTabs = ["targets", "designs", "submissions", "grading"];
   const tab = allowedTabs.includes(activeTab) ? activeTab : "targets";
@@ -490,7 +492,7 @@ function renderDesignTab(course) {
 function designCard(design, index) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
   const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
-  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
+  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점 · 빈 답안지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
 
 function createEmptyDesign() {
@@ -541,6 +543,15 @@ function designEditor(design) {
           <span>${design.exampleFile ? `저장됨: ${escapeHtml(design.exampleFile.name)}` : "수식·도형이 있는 원본도 그대로 보관합니다."}</span>
         </div>
         <div data-example-rows>${(design.exampleAnswers || []).map(exampleEditorRow).join("")}</div>
+      </section>
+      <section class="design-editor-section blank-answer-section">
+        <div class="editor-section-title"><div><span>4</span><strong>빈 답안지 등록</strong><p>학생이 쓰기 전의 동일한 답안지를 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다.</p></div></div>
+        <div class="document-auto-row">
+          <label>빈 답안지 PDF<input name="blankDocument" type="file" accept="application/pdf"></label>
+          <span>${design.blankFile ? `저장됨: ${escapeHtml(design.blankFile.name)}` : "종이 스캔 답안 AI 채점에는 등록이 필요합니다."}</span>
+        </div>
+        ${design.blankFile ? `<label class="remove-saved-file"><input name="removeBlankDocument" type="checkbox"> 저장된 빈 답안지 제거</label>` : ""}
+        <p class="blank-answer-help">학생별 답안 페이지 수와 빈 답안지 페이지 수가 같아야 합니다. 빈 답안지는 학생 페이지 분할 수에 포함되지 않습니다.</p>
       </section>
       <p class="design-form-status" data-design-status role="status">자동 입력 결과는 반드시 원본과 대조해 주세요.</p>
       <div class="form-bottom-actions"><button class="secondary-action" type="button" data-cancel-design>취소</button><button class="primary-action" type="submit">평가 설계 저장</button></div>
@@ -760,8 +771,15 @@ function collectDesignForm(form, existing) {
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");
   const rubricFile = form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
   const exampleFile = form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
+  const blankFile = form.elements.removeBlankDocument?.checked
+    ? null
+    : form.elements.blankDocument.files?.[0] || existing?.blankFile || null;
   if (rubricFile) validateDocumentFile(rubricFile);
   if (exampleFile) validateDocumentFile(exampleFile);
+  if (blankFile) {
+    validateDocumentFile(blankFile);
+    if (blankFile.type !== "application/pdf") throw new Error("빈 답안지는 여러 페이지를 비교할 수 있도록 PDF 파일로 등록해 주세요.");
+  }
   return {
     id: existing?.id || crypto.randomUUID(),
     taskName: form.elements.taskName.value.trim(),
@@ -770,6 +788,7 @@ function collectDesignForm(form, existing) {
     exampleAnswers,
     rubricFile,
     exampleFile,
+    blankFile,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -872,6 +891,12 @@ function bindSubmissionTab(course, targetStudents) {
       if (sourceFile.size > MAX_FILE_BYTES) throw new Error("학급 PDF는 20MB 이하로 준비해 주세요.");
       if (!window.PDFLib?.PDFDocument) throw new Error("PDF 분할 도구를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.");
       const pageCount = await getPdfPageCount(sourceFile.blob);
+      const selectedDesign = course.designs?.find((item) => item.id === form.elements.designId.value);
+      if (selectedDesign?.blankFile) {
+        const blankPageCount = await getPdfPageCount(asFile(selectedDesign.blankFile));
+        const pagesPerStudent = Math.max(1, Math.min(50, Number(form.elements.pagesPerStudent.value) || 1));
+        if (blankPageCount !== pagesPerStudent) throw new Error(`빈 답안지는 ${blankPageCount}쪽입니다. 학생 1명당 답안지 페이지 수도 ${blankPageCount}쪽으로 맞춰 주세요.`);
+      }
       const includedStudentIds = selectedFile || !course.submission
         ? targetStudents.map((student) => student.id)
         : course.submission.includedStudentIds.filter((id) => targetStudents.some((student) => student.id === id));
@@ -943,27 +968,34 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const statusLabel = ({ running: "채점 진행 중", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[grading.status] || "채점 전";
   const progressTotal = grading.totalCount || submission?.assignments?.length || 0;
   const progress = progressTotal ? Math.round(((grading.completedCount || 0) / progressTotal) * 100) : 0;
+  const scanReady = Boolean(submission && design?.blankFile);
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>성취기준·채점기준·예시답안과 학생별 분할 PDF를 바탕으로 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(grading.status || "idle")}">${statusLabel}</span></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>빈 답안지와 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(grading.status || "idle")}">${statusLabel}</span></div>
+    <div class="grading-quality-grid">
+      <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
+      <article class="is-ready"><span>2</span><div><strong>신원 영역 가림</strong><p>원본은 유지하고 AI 전송용 사본의 학생정보 영역만 가립니다.</p></div></article>
+      <article class="is-ready"><span>3</span><div><strong>교사 확인 표시</strong><p>흐린 글씨·지운 흔적·불확실한 도형은 자동 확정하지 않습니다.</p></div></article>
+    </div>
     <div class="grading-launch-card">
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
-      ${hasApiKey ? `<button class="primary-action" type="button" data-run-grading ${!submission || !design || grading.status === "running" ? "disabled" : ""}>AI 채점 실행</button>` : `<a class="primary-action" href="#/settings">API 키 설정 →</a>`}
+      ${hasApiKey ? `<button class="primary-action" type="button" data-run-grading ${!scanReady || grading.status === "running" ? "disabled" : ""}>AI 채점 실행</button>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
+    ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>빈 답안지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 답안지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
     <div class="grading-progress-card" ${grading.status === "running" ? "" : "hidden"} data-grading-progress>
       <div><span>학생 답안을 순서대로 채점하고 있습니다.</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}</strong></div>
       <span><i data-progress-bar style="width:${progress}%"></i></span>
     </div>
-    ${results.length ? `
+    ${results.length || errors.length ? `
       <div class="grading-result-summary">
-        <div><strong>${results.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
-        <button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button>
+        <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
+        <div class="grading-result-actions">${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
       ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId))).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">← 과제물 관리</a><span>AI 결과는 교사가 검토한 뒤 확정해 주세요.</span></div>`;
 }
 
 function gradingResultRow(result, student) {
-  return `<div class="grading-result-row"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="success-label">성공</em><span>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
+  return `<div class="grading-result-row"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${result.needsTeacherReview ? "review-label" : "success-label"}">${result.needsTeacherReview ? "검토 필요" : "성공"}</em><span>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
 }
 
 function gradingErrorRow(error, student) {
@@ -973,34 +1005,70 @@ function gradingErrorRow(error, student) {
 function bindGradingTab(course, targetStudents) {
   app.querySelector("[data-toggle-results]")?.addEventListener("click", () => { gradingResultsExpanded = !gradingResultsExpanded; renderCourse(course.id, "grading"); });
   app.querySelector("[data-run-grading]")?.addEventListener("click", () => startCourseGrading(course, targetStudents));
+  app.querySelector("[data-retry-failed]")?.addEventListener("click", () => startCourseGrading(course, targetStudents, { retryFailedOnly: true }));
+  app.querySelector("[data-edit-linked-design]")?.addEventListener("click", () => {
+    editingDesignId = course.submission?.designId || "";
+    renderCourse(course.id, "designs");
+  });
   app.querySelectorAll("[data-open-student-result]").forEach((button) => button.addEventListener("click", () => openStudentResult(course, targetStudents, button.dataset.openStudentResult)));
 }
 
-async function startCourseGrading(course, targetStudents) {
+async function startCourseGrading(course, targetStudents, { retryFailedOnly = false } = {}) {
   const apiKey = await loadGeminiApiKey();
   if (!apiKey) { navigate("/settings"); return; }
   const submission = course.submission;
   const design = course.designs?.find((item) => item.id === submission?.designId);
   if (!submission || !design) { showToast("과제물 분할과 평가 설계를 먼저 준비해 주세요."); return; }
-  const assignments = submission.assignments.filter((item) => item.pageNumbers.length);
+  if (!design.blankFile) { showToast("평가 설계에서 동일한 빈 답안지 PDF를 먼저 등록해 주세요."); return; }
+  const blankFile = asFile(design.blankFile);
+  let blankPageCount = 0;
+  try { blankPageCount = await getPdfPageCount(blankFile); }
+  catch { showToast("빈 답안지 PDF를 읽지 못했습니다. 평가 설계에서 정상 PDF로 다시 등록해 주세요."); return; }
+  if (blankPageCount !== submission.pagesPerStudent) {
+    showToast(`빈 답안지는 ${blankPageCount}쪽이고 학생 답안은 1명당 ${submission.pagesPerStudent}쪽입니다. 페이지 수를 같게 맞춰 주세요.`);
+    return;
+  }
+  const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
+  const failedStudentIds = new Set((course.grading?.errors || []).map((item) => item.studentId));
+  const assignments = retryFailedOnly ? allAssignments.filter((item) => failedStudentIds.has(item.studentId)) : allAssignments;
   if (!assignments.length) { showToast("채점할 학생 답안 페이지가 없습니다."); return; }
-  if (!window.confirm(`${assignments.length}명의 분할 답안과 평가 설계 자료를 Google Gemini API로 전송해 채점할까요? 학생 이름 대신 S001 같은 익명 번호를 사용하지만 스캔에 보이는 이름은 전송됩니다.`)) return;
+  const actionLabel = retryFailedOnly ? "실패 학생을 다시 채점" : "AI 채점을 실행";
+  if (!window.confirm(`${assignments.length}명의 ${actionLabel}할까요? AI 전송용 사본에서는 고정 학생정보 영역을 가리고 S001 같은 익명 번호를 사용합니다. 자유롭게 적은 이름은 남을 수 있으므로 원본도 확인해 주세요.`)) return;
   const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
+  const keyStatus = await getSetting(GEMINI_STATUS_SETTING);
+  if (!keyStatus?.generationVerified || keyStatus.model !== selectedModel) {
+    showToast("설정에서 현재 모델의 실제 생성 테스트를 먼저 완료해 주세요.");
+    navigate("/settings");
+    return;
+  }
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   const maxScore = rubricTotalScore(design.rubricCriteria || []);
-  course.grading = { status: "running", startedAt: new Date().toISOString(), completedCount: 0, totalCount: assignments.length, results: [], errors: [], model: selectedModel };
+  if (maxScore <= 0) { showToast("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요."); return; }
+  course.grading = {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completedCount: 0,
+    totalCount: assignments.length,
+    results: retryFailedOnly ? [...(course.grading?.results || [])] : [],
+    errors: [],
+    model: selectedModel,
+    blankComparison: true,
+    identityRedacted: true,
+  };
   await putCourse(course);
   updateGradingProgress(0, assignments.length);
   const startButton = app.querySelector("[data-run-grading]");
   if (startButton) { startButton.disabled = true; startButton.textContent = "채점 진행 중…"; }
   for (const [index, assignment] of assignments.entries()) {
     const student = studentMap.get(assignment.studentId);
+    const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
     try {
-      const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, index);
+      const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
       const files = [
         ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
         ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
         ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
+        { role: "blank", file: blankFile },
         { role: "studentAnswer", file: studentFile },
       ];
       const result = await ChaejeomAI.gradeAnswer({
@@ -1014,7 +1082,9 @@ async function startCourseGrading(course, targetStudents) {
           achievementGroups: design.achievementGroups,
           rubricCriteria: design.rubricCriteria,
           exampleAnswers: design.exampleAnswers,
-          student: { ...StudentWorkflow.createAnonymousStudent(student, index), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
+          requireBlankComparison: true,
+          identityRedacted: true,
+          student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
         },
         files,
       });
@@ -1030,17 +1100,17 @@ async function startCourseGrading(course, targetStudents) {
         teacherConfirmed: false,
       });
     } catch (error) {
-      course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error) });
+      course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
     }
     course.grading.completedCount += 1;
     await putCourse(course);
     updateGradingProgress(course.grading.completedCount, assignments.length);
   }
   course.grading.finishedAt = new Date().toISOString();
-  course.grading.status = course.grading.results.length === assignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
+  course.grading.status = course.grading.results.length === allAssignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
   await putCourse(course);
   gradingResultsExpanded = true;
-  showToast(course.grading.status === "complete" ? "모든 학생의 AI 채점을 완료했습니다." : "일부 학생 채점에 실패했습니다. 결과 목록을 확인해 주세요.");
+  showToast(course.grading.status === "complete" ? "모든 학생의 AI 채점을 완료했습니다." : "일부 학생 채점에 실패했습니다. 오류 원인을 확인한 뒤 실패 학생만 다시 채점할 수 있습니다.");
   renderCourse(course.id, "grading");
 }
 
@@ -1052,11 +1122,18 @@ function updateGradingProgress(completed, total) {
   card.querySelector("[data-progress-bar]").style.width = `${total ? Math.round((completed / total) * 100) : 0}%`;
 }
 
-async function splitStudentPdf(sourceBlob, pageNumbers, index = 0) {
+async function splitStudentPdf(sourceBlob, pageNumbers, index = 0, { anonymize = false } = {}) {
   const source = await PDFLib.PDFDocument.load(await sourceBlob.arrayBuffer(), { ignoreEncryption: false, updateMetadata: false });
   const output = await PDFLib.PDFDocument.create();
   const pages = await output.copyPages(source, pageNumbers.map((page) => page - 1));
-  pages.forEach((page) => output.addPage(page));
+  pages.forEach((page, pageIndex) => {
+    output.addPage(page);
+    if (!anonymize) return;
+    const { width, height } = page.getSize();
+    const maskHeight = pageIndex === 0 ? 50 : 18;
+    const maskY = pageIndex === 0 ? Math.max(0, height - 170) : Math.max(0, height - maskHeight);
+    page.drawRectangle({ x: 0, y: maskY, width, height: maskHeight, color: PDFLib.rgb(1, 1, 1), opacity: 1 });
+  });
   const bytes = await output.save({ useObjectStreams: true, addDefaultPage: false });
   return new File([bytes], `student-${String(index + 1).padStart(3, "0")}_pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
 }
@@ -1090,8 +1167,9 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>채점기준에 따른 점수</strong><span>교사가 수정 가능</span></div>
           <div class="teacher-score-list">
-            ${(result.questionResults || []).map((item, index) => `<article><div><strong>${escapeHtml(item.questionNumber)}번 · ${escapeHtml(item.evaluationElement || item.criterion)}</strong><p>${escapeHtml(item.criterion)}</p><p>${escapeHtml(item.evidence)}</p><small>${escapeHtml(item.feedback)}</small></div><label>점수<input data-teacher-score="${index}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(result.teacherScores?.[index] ?? item.score)}"><span>/ ${formatScore(item.maxScore)}</span></label></article>`).join("")}
+            ${(result.questionResults || []).map((item, index) => `<article><div><strong>${escapeHtml(item.questionNumber)}번 · ${escapeHtml(item.evaluationElement || item.criterion)}</strong><p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p><p><b>적용 기준:</b> ${escapeHtml(item.criterion)}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence)}</p><small>${escapeHtml(item.feedback)} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>점수<input data-teacher-score="${index}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(result.teacherScores?.[index] ?? item.score)}"><span>/ ${formatScore(item.maxScore)}</span></label></article>`).join("")}
           </div>
+          ${result.needsTeacherReview ? `<div class="teacher-review-alert"><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(result.teacherTotal ?? result.totalScore)} / ${formatScore(result.maxScore)}</strong></div>
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
           ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item) => `<div><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><p>${escapeHtml(item.feedback)}</p></div>`).join("")}</div>` : ""}
@@ -1159,11 +1237,11 @@ async function renderSettings() {
           <label data-custom-model ${knownModel ? "hidden" : ""}>사용자 지정 모델 ID<input name="customModel" value="${knownModel ? "" : escapeHtml(savedModel)}" placeholder="예: gemini-3.7-flash"></label>
           <label>Gemini API 키<span class="secret-input-row"><input name="apiKey" type="password" autocomplete="off" placeholder="${hasSavedKey ? "저장된 키를 다시 테스트하려면 비워 두세요" : "Google AI Studio API 키"}"><button type="button" data-toggle-secret>보기</button></span></label>
           <label class="save-key-choice"><input name="persistKey" type="checkbox" checked> 이 브라우저에 암호화하여 저장</label>
-          <p class="settings-status" data-api-status>${keyStatus?.testedAt ? `${escapeHtml(keyStatus.model)} · ${formatDateTime(keyStatus.testedAt)} 테스트 성공` : "저장 전에 선택 모델 접근 권한을 테스트합니다."}</p>
+          <p class="settings-status" data-api-status>${keyStatus?.generationVerified ? `${escapeHtml(keyStatus.model)} · ${formatDateTime(keyStatus.testedAt)} 실제 생성 테스트 성공` : keyStatus?.testedAt ? "이전 연결은 모델 조회만 확인했습니다. 실제 생성 테스트를 다시 실행해 주세요." : "저장 전에 모델 조회와 실제 구조화 응답 생성을 모두 테스트합니다."}</p>
           <div class="settings-actions"><button class="primary-action" type="submit">키 테스트 후 저장</button>${hasSavedKey ? `<button class="secondary-action danger-action" type="button" data-delete-api-key>저장된 키 삭제</button>` : ""}</div>
         </form>
       </section>
-      <section class="key-safety-grid"><article><span>1</span><div><strong>무료 API 주의</strong><p>실제 학생 자료는 결제가 연결된 학교 관리 프로젝트 사용을 권장합니다.</p></div></article><article><span>2</span><div><strong>최소 전송</strong><p>채점 요청에는 학생 이름 대신 익명 채점번호를 사용합니다.</p></div></article><article><span>3</span><div><strong>스캔 원본</strong><p>답안 이미지에 적힌 이름은 AI가 볼 수 있으므로 익명 답안지를 권장합니다.</p></div></article></section>
+      <section class="key-safety-grid"><article><span>1</span><div><strong>실제 생성 확인</strong><p>모델 조회뿐 아니라 짧은 구조화 응답 생성까지 성공해야 저장됩니다.</p></div></article><article><span>2</span><div><strong>최소 전송</strong><p>고정 학생정보 영역을 가린 사본과 익명 채점번호를 사용합니다.</p></div></article><article><span>3</span><div><strong>교사 최종 확인</strong><p>자유롭게 적은 이름이나 흐린 필기는 교사가 원본과 함께 확인해야 합니다.</p></div></article></section>
     </div>`;
   const form = app.querySelector("#api-key-form");
   const input = form.elements.apiKey;
@@ -1184,8 +1262,8 @@ async function renderSettings() {
       if (form.elements.persistKey.checked) await saveGeminiApiKey(key);
       else await deleteSetting(GEMINI_SECRET_SETTING);
       await putSetting(GEMINI_MODEL_SETTING, result.model);
-      await putSetting(GEMINI_STATUS_SETTING, { testedAt: new Date().toISOString(), model: result.model });
-      status.textContent = `${result.displayName} 연결 테스트에 성공했습니다.`;
+      await putSetting(GEMINI_STATUS_SETTING, { testedAt: new Date().toISOString(), model: result.model, generationVerified: Boolean(result.generationVerified) });
+      status.textContent = `${result.displayName} 조회와 실제 구조화 응답 생성 테스트에 성공했습니다.`;
       status.className = "settings-status is-success";
       showToast("Gemini API 키를 확인하고 저장했습니다.");
       window.setTimeout(renderSettings, 600);

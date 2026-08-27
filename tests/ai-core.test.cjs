@@ -114,15 +114,22 @@ test("normalizePageAssignments rejects duplicate pages and fills unmatched stude
   assert.equal(result.needsTeacherReview, true);
 });
 
-test("testApiKey validates model access without generating content", async () => {
-  let calledUrl = "";
+test("testApiKey validates model access with a real structured generation", async () => {
+  const calledUrls = [];
   const result = await AI.testApiKey(VALID_KEY, async (url, options) => {
-    calledUrl = url;
+    calledUrls.push(url);
     assert.equal(options.headers["x-goog-api-key"], VALID_KEY);
+    if (options.method === "POST") {
+      const request = JSON.parse(options.body);
+      assert.equal(request.generationConfig.responseMimeType, "application/json");
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ok: true }) }] } }] }), { status: 200 });
+    }
     return new Response(JSON.stringify({ name: "models/gemini-3.7-flash", displayName: "Gemini 3.7 Flash" }), { status: 200 });
   });
-  assert.match(calledUrl, /models\/gemini-3\.7-flash$/);
+  assert.match(calledUrls[0], /models\/gemini-3\.7-flash$/);
+  assert.match(calledUrls[1], /models\/gemini-3\.7-flash:generateContent$/);
   assert.equal(result.model, "gemini-3.7-flash");
+  assert.equal(result.generationVerified, true);
 });
 
 test("testApiKey explains an invalid key response", async () => {
@@ -133,15 +140,17 @@ test("testApiKey explains an invalid key response", async () => {
 });
 
 test("testApiKey tests the selected model id", async () => {
-  let calledUrl = "";
+  const calledUrls = [];
   const result = await AI.testApiKey(VALID_KEY, {
     model: "gemini-3-flash-preview",
-    fetchImpl: async (url) => {
-      calledUrl = url;
+    fetchImpl: async (url, options) => {
+      calledUrls.push(url);
+      if (options.method === "POST") return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ok: true }) }] } }] }), { status: 200 });
       return new Response(JSON.stringify({ name: "models/gemini-3-flash-preview", displayName: "Gemini 3 Flash" }), { status: 200 });
     },
   });
-  assert.match(calledUrl, /models\/gemini-3-flash-preview$/);
+  assert.match(calledUrls[0], /models\/gemini-3-flash-preview$/);
+  assert.match(calledUrls[1], /models\/gemini-3-flash-preview:generateContent$/);
   assert.equal(result.model, "gemini-3-flash-preview");
 });
 
@@ -159,29 +168,70 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
     strengths: ["정확함"],
     improvements: [],
     nextSteps: ["설명 확장"],
-    questionResults: [{ questionNumber: "1", criterion: "정확성", score: 2, maxScore: 2, evidence: "정답", feedback: "잘했습니다.", confidence: "high" }],
+    questionResults: [{ questionNumber: "1", answerReading: "2라고 씀", criterion: "정확성", score: 2, maxScore: 2, evidence: "정답", feedback: "잘했습니다.", confidence: "high" }],
     needsTeacherReview: false,
     reviewReasons: [],
   };
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
-    metadata: { title: "평가", totalScore: 2, achievementGroups: [] },
+    metadata: { title: "평가", totalScore: 2, achievementGroups: [], requireBlankComparison: true, identityRedacted: true },
     files: [
       { role: "rubric", file: fakeFile("rubric.pdf", "application/pdf", "rubric") },
       { role: "example", file: fakeFile("example.pdf", "application/pdf", "example") },
+      { role: "blank", file: fakeFile("blank.pdf", "application/pdf", "blank") },
       { role: "studentAnswer", file: fakeFile("student.png", "image/png", "answer") },
     ],
+    retryDelayMs: 0,
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.responseMimeType, "application/json");
       assert.equal(body.generationConfig.responseSchema.type, "object");
-      assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 3);
+      assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
+      assert.equal(body.generationConfig.temperature, 0.1);
+      assert.match(body.contents[0].parts[0].text, /같은 페이지끼리 비교/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(responsePayload) }] } }] }), { status: 200 });
     },
   });
   assert.equal(result.totalScore, 2);
   assert.equal(result.questionResults[0].confidence, "high");
+  assert.equal(result.questionResults[0].answerReading, "2라고 씀");
   assert.equal(result.model, "gemini-3.7-flash");
+});
+
+test("gradeAnswer requires a blank answer sheet for scanned-paper grading", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = { name: "student.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
+  await assert.rejects(
+    AI.gradeAnswer({
+      apiKey: VALID_KEY,
+      metadata: { requireBlankComparison: true, rubricCriteria: [], exampleAnswers: [] },
+      files: [{ role: "studentAnswer", file }],
+    }),
+    /빈 답안지 PDF가 필요합니다/,
+  );
+});
+
+test("gradeAnswer retries a temporary rate-limit response", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  let attempts = 0;
+  const responsePayload = {
+    studentIdentifier: "S001", totalScore: 0, maxScore: 0, overallAchievementLevel: "검토 필요", summary: "확인 필요",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [], needsTeacherReview: true, reviewReasons: ["무응답"],
+  };
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: { requireBlankComparison: true, rubricCriteria: [], exampleAnswers: [] },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    retryDelayMs: 0,
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) return new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(responsePayload) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(result.needsTeacherReview, true);
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
