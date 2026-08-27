@@ -386,6 +386,7 @@ a { color: inherit; text-decoration: none; }
 .grading-toolbar { background: rgba(233, 239, 255, 0.34); }
 .grading-state { padding: 7px 10px; border-radius: 999px; background: rgba(24, 33, 56, 0.08); color: var(--muted); font-size: 9px; font-weight: 950; }
 .state-running { background: var(--sand); color: #765516; }
+.state-stopped { background: #e9edf5; color: #43516d; }
 .state-complete { background: var(--mint); color: #27634c; }
 .state-partial, .state-failed { background: #ffe4de; color: #8b2e20; }
 .grading-control { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 23px 27px; }
@@ -750,10 +751,19 @@ a { color: inherit; text-decoration: none; }
 .grading-launch-card, .grading-result-summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 27px; }
 .grading-launch-card strong, .grading-result-summary strong { font-size: 12px; }
 .grading-launch-card p, .grading-result-summary p { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
+.grading-run-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.stop-grading-action { padding: 10px 14px; border: 1px solid #9c3d31; border-radius: 10px; background: #fff4f1; color: #8b2e20; cursor: pointer; font-size: 9px; font-weight: 900; }
+.stop-grading-action:hover { background: #ffe7e1; }
+.stop-grading-action:disabled { cursor: wait; opacity: .65; }
+.stop-grading-action[hidden] { display: none; }
 .grading-progress-card { padding: 16px 27px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(242,217,167,.24); }
 .grading-progress-card > div { display: flex; justify-content: space-between; margin-bottom: 9px; color: var(--muted); font-size: 9px; }
-.grading-progress-card > span { display: block; overflow: hidden; height: 9px; border-radius: 99px; background: rgba(24,33,56,.1); }
-.grading-progress-card i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
+.grading-progress-card > div:first-child span { font-weight: 800; }
+.grading-progress-card .grading-progress-meta { margin-top: -3px; margin-bottom: 8px; font-size: 8px; }
+.grading-progress-card > span { position: relative; display: block; overflow: hidden; height: 9px; border-radius: 99px; background: rgba(24,33,56,.1); }
+.grading-progress-card i { display: block; height: 100%; border-radius: inherit; background: var(--blue); transition: width .25s ease; }
+.grading-progress-card > span.is-active::after { position: absolute; top: 0; bottom: 0; left: -28%; width: 28%; border-radius: inherit; background: linear-gradient(90deg,transparent,rgba(255,255,255,.88),transparent); content: ""; animation: grading-progress-sweep 1.35s linear infinite; }
+@keyframes grading-progress-sweep { to { left: 100%; } }
 .grading-result-summary { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(185,234,210,.14); }
 .grading-prerequisite { display: flex; align-items: center; gap: 14px; padding: 14px 27px; border-top: 1px solid var(--line); background: rgba(242,217,167,.24); }
 .grading-prerequisite strong { font-size: 9px; }
@@ -852,3 +862,4 @@ a { color: inherit; text-decoration: none; }
   .student-review-actions, .detail-ai-actions { grid-template-columns: 1fr; }
   .grading-prerequisite, .grading-result-actions { align-items: stretch; flex-direction: column; }
 }
+

@@ -27,6 +27,7 @@ let editingDesignId = "";
 let selectedTargetClass = "1";
 let gradingResultsExpanded = false;
 let previewUrls = [];
+let activeGradingRun = null;
 
 window.addEventListener("hashchange", renderRoute);
 document.addEventListener("click", (event) => {
@@ -965,12 +966,19 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const results = grading.results || [];
   const errors = grading.errors || [];
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
-  const statusLabel = ({ running: "채점 진행 중", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[grading.status] || "채점 전";
+  const isActivelyRunning = activeGradingRun?.courseId === course.id && !activeGradingRun.controller.signal.aborted;
+  const displayStatus = grading.status === "running" && !isActivelyRunning ? "stopped" : grading.status || "idle";
+  const statusLabel = ({ running: "채점 진행 중", stopped: "채점 멈춤", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[displayStatus] || "채점 전";
   const progressTotal = grading.totalCount || submission?.assignments?.length || 0;
   const progress = progressTotal ? Math.round(((grading.completedCount || 0) / progressTotal) * 100) : 0;
+  const elapsed = isActivelyRunning
+    ? Number(grading.elapsedMs || 0) + Math.max(0, Date.now() - activeGradingRun.startedAt)
+    : Number(grading.elapsedMs || 0);
+  const canContinue = ["running", "stopped", "partial"].includes(displayStatus) && results.length < progressTotal;
+  const runButtonLabel = canContinue ? "AI 채점 계속" : grading.status === "complete" ? "AI 채점 다시 실행" : "AI 채점 실행";
   const scanReady = Boolean(submission && design?.blankFile);
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>빈 답안지와 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(grading.status || "idle")}">${statusLabel}</span></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>빈 답안지와 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
       <article class="is-ready"><span>2</span><div><strong>신원 영역 가림</strong><p>원본은 유지하고 AI 전송용 사본의 학생정보 영역만 가립니다.</p></div></article>
@@ -978,12 +986,13 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     </div>
     <div class="grading-launch-card">
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
-      ${hasApiKey ? `<button class="primary-action" type="button" data-run-grading ${!scanReady || grading.status === "running" ? "disabled" : ""}>AI 채점 실행</button>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
+      ${hasApiKey ? `<div class="grading-run-actions"><button class="primary-action" type="button" data-run-grading ${!scanReady || isActivelyRunning ? "disabled" : ""}>${runButtonLabel}</button><button class="stop-grading-action" type="button" data-stop-grading ${isActivelyRunning ? "" : "hidden"}>채점 멈추기</button></div>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
     ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>빈 답안지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 답안지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
-    <div class="grading-progress-card" ${grading.status === "running" ? "" : "hidden"} data-grading-progress>
-      <div><span>학생 답안을 순서대로 채점하고 있습니다.</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}</strong></div>
-      <span><i data-progress-bar style="width:${progress}%"></i></span>
+    <div class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress>
+      <div><span data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : "학생 답안을 순서대로 채점하고 있습니다."))}</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}명 완료</strong></div>
+      <div class="grading-progress-meta"><span data-progress-time>경과 ${formatElapsedTime(elapsed)}</span><span data-progress-percent>${progress}%</span></div>
+      <span class="${isActivelyRunning ? "is-active" : ""}" data-progress-track><i data-progress-bar style="width:${progress}%"></i></span>
     </div>
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
@@ -1007,6 +1016,7 @@ function gradingErrorRow(error, student) {
 function bindGradingTab(course, targetStudents) {
   app.querySelector("[data-toggle-results]")?.addEventListener("click", () => { gradingResultsExpanded = !gradingResultsExpanded; renderCourse(course.id, "grading"); });
   app.querySelector("[data-run-grading]")?.addEventListener("click", () => startCourseGrading(course, targetStudents));
+  app.querySelector("[data-stop-grading]")?.addEventListener("click", () => stopCourseGrading(course.id));
   app.querySelector("[data-retry-failed]")?.addEventListener("click", () => startCourseGrading(course, targetStudents, { retryFailedOnly: true }));
   app.querySelector("[data-edit-linked-design]")?.addEventListener("click", () => {
     editingDesignId = course.submission?.designId || "";
@@ -1016,6 +1026,10 @@ function bindGradingTab(course, targetStudents) {
 }
 
 async function startCourseGrading(course, targetStudents, { retryFailedOnly = false } = {}) {
+  if (activeGradingRun?.courseId === course.id && !activeGradingRun.controller.signal.aborted) {
+    showToast("현재 이 수업의 AI 채점이 진행 중입니다.");
+    return;
+  }
   const apiKey = await loadGeminiApiKey();
   if (!apiKey) { navigate("/settings"); return; }
   const submission = course.submission;
@@ -1031,10 +1045,21 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     return;
   }
   const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
-  const failedStudentIds = new Set((course.grading?.errors || []).map((item) => item.studentId));
-  const assignments = retryFailedOnly ? allAssignments.filter((item) => failedStudentIds.has(item.studentId)) : allAssignments;
+  const previousGrading = course.grading || {};
+  const previousResults = Array.isArray(previousGrading.results) ? previousGrading.results : [];
+  const previousErrors = Array.isArray(previousGrading.errors) ? previousGrading.errors : [];
+  const completedStudentIds = new Set(previousResults.map((item) => item.studentId));
+  const failedStudentIds = new Set(previousErrors.map((item) => item.studentId));
+  const canResume = !retryFailedOnly
+    && ["running", "stopped", "partial"].includes(previousGrading.status)
+    && completedStudentIds.size < allAssignments.length;
+  const assignments = retryFailedOnly
+    ? allAssignments.filter((item) => failedStudentIds.has(item.studentId))
+    : canResume
+      ? allAssignments.filter((item) => !completedStudentIds.has(item.studentId))
+      : allAssignments;
   if (!assignments.length) { showToast("채점할 학생 답안 페이지가 없습니다."); return; }
-  const actionLabel = retryFailedOnly ? "실패 학생을 다시 채점" : "AI 채점을 실행";
+  const actionLabel = retryFailedOnly ? "실패 학생을 다시 채점" : canResume ? "남은 학생의 AI 채점을 계속" : "AI 채점을 실행";
   if (!window.confirm(`${assignments.length}명의 ${actionLabel}할까요? AI 전송용 사본에서는 고정 학생정보 영역을 가리고 S001 같은 익명 번호를 사용합니다. 자유롭게 적은 이름은 남을 수 있으므로 원본도 확인해 주세요.`)) return;
   const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
   const keyStatus = await getSetting(GEMINI_STATUS_SETTING);
@@ -1045,57 +1070,169 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   }
   const maxScore = rubricTotalScore(design.rubricCriteria || []);
   if (maxScore <= 0) { showToast("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요."); return; }
+  const assignmentStudentIds = new Set(assignments.map((item) => item.studentId));
+  const preservePrevious = retryFailedOnly || canResume;
+  const keptResults = preservePrevious ? previousResults.filter((item) => !retryFailedOnly || !assignmentStudentIds.has(item.studentId)) : [];
+  const keptErrors = preservePrevious ? previousErrors.filter((item) => !assignmentStudentIds.has(item.studentId)) : [];
+  const baseElapsedMs = preservePrevious ? Number(previousGrading.elapsedMs || 0) : 0;
   course.grading = {
     status: "running",
-    startedAt: new Date().toISOString(),
-    completedCount: 0,
-    totalCount: assignments.length,
-    results: retryFailedOnly ? [...(course.grading?.results || [])] : [],
-    errors: [],
+    startedAt: preservePrevious && previousGrading.startedAt ? previousGrading.startedAt : new Date().toISOString(),
+    sessionStartedAt: new Date().toISOString(),
+    completedCount: keptResults.length + keptErrors.length,
+    totalCount: allAssignments.length,
+    results: [...keptResults],
+    errors: [...keptErrors],
     model: selectedModel,
     blankComparison: true,
     identityRedacted: true,
+    designId: design.id,
+    submissionUpdatedAt: submission.updatedAt,
+    elapsedMs: baseElapsedMs,
+    currentStage: "첫 학생의 답안을 준비하고 있습니다.",
+  };
+  const controller = new AbortController();
+  activeGradingRun = {
+    courseId: course.id,
+    controller,
+    startedAt: Date.now(),
+    baseElapsedMs,
+    completed: course.grading.completedCount,
+    total: allAssignments.length,
   };
   await putCourse(course);
-  updateGradingProgress(0, assignments.length);
+  updateGradingProgress(course.grading.completedCount, allAssignments.length, {
+    stage: course.grading.currentStage,
+    elapsedMs: baseElapsedMs,
+    running: true,
+  });
   const startButton = app.querySelector("[data-run-grading]");
   if (startButton) { startButton.disabled = true; startButton.textContent = "채점 진행 중…"; }
+  const stopButton = app.querySelector("[data-stop-grading]");
+  if (stopButton) { stopButton.hidden = false; stopButton.disabled = false; stopButton.textContent = "채점 멈추기"; }
+  const stateLabel = app.querySelector(".grading-state");
+  if (stateLabel) { stateLabel.className = "grading-state state-running"; stateLabel.textContent = "채점 진행 중"; }
+  const elapsedTimer = window.setInterval(() => {
+    if (activeGradingRun?.courseId !== course.id || activeGradingRun.controller.signal.aborted) return;
+    updateGradingProgress(course.grading.completedCount, allAssignments.length, {
+      stage: course.grading.currentStage,
+      elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
+      running: true,
+    });
+  }, 1000);
+  let stopped = false;
   for (const assignment of assignments) {
+    if (controller.signal.aborted) { stopped = true; break; }
+    const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
+    const currentLabel = currentStudent?.number ? `${currentStudent.number}번 학생` : "현재 학생";
+    course.grading.currentStudentId = assignment.studentId;
+    course.grading.currentStage = `${currentLabel} · 답안 PDF 준비 중`;
+    updateGradingProgress(course.grading.completedCount, allAssignments.length, {
+      stage: course.grading.currentStage,
+      elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
+      running: true,
+    });
     try {
-      course.grading.results.push(await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile }));
+      const nextResult = await gradeStudentAssignment({
+        course,
+        design,
+        targetStudents,
+        assignment,
+        apiKey,
+        selectedModel,
+        blankFile,
+        signal: controller.signal,
+        onStage: (stage) => {
+          course.grading.currentStage = `${currentLabel} · ${stage}`;
+          updateGradingProgress(course.grading.completedCount, allAssignments.length, {
+            stage: course.grading.currentStage,
+            elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
+            running: true,
+          });
+        },
+      });
+      course.grading.results = course.grading.results.filter((item) => item.studentId !== assignment.studentId);
+      course.grading.results.push(nextResult);
+      course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
     } catch (error) {
+      if (controller.signal.aborted || error?.name === "AbortError") { stopped = true; break; }
+      course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
       course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
     }
-    course.grading.completedCount += 1;
+    course.grading.completedCount = course.grading.results.length + course.grading.errors.length;
+    activeGradingRun.completed = course.grading.completedCount;
     await putCourse(course);
-    updateGradingProgress(course.grading.completedCount, assignments.length);
+    updateGradingProgress(course.grading.completedCount, allAssignments.length, {
+      stage: `${currentLabel} 채점 완료 · 다음 학생 준비 중`,
+      elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
+      running: true,
+    });
   }
-  course.grading.finishedAt = new Date().toISOString();
-  course.grading.status = course.grading.results.length === allAssignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
+  window.clearInterval(elapsedTimer);
+  course.grading.elapsedMs = baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt);
+  delete course.grading.currentStudentId;
+  if (stopped || controller.signal.aborted) {
+    course.grading.status = "stopped";
+    course.grading.stoppedAt = new Date().toISOString();
+    course.grading.currentStage = "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다.";
+  } else {
+    course.grading.finishedAt = new Date().toISOString();
+    course.grading.status = course.grading.results.length === allAssignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
+    course.grading.currentStage = course.grading.status === "complete" ? "모든 학생의 채점이 완료되었습니다." : "일부 학생 채점이 완료되지 않았습니다.";
+  }
   await putCourse(course);
+  activeGradingRun = null;
   gradingResultsExpanded = true;
-  showToast(course.grading.status === "complete" ? "모든 학생의 AI 채점을 완료했습니다." : "일부 학생 채점에 실패했습니다. 오류 원인을 확인한 뒤 실패 학생만 다시 채점할 수 있습니다.");
+  showToast(course.grading.status === "stopped"
+    ? "AI 채점을 멈췄습니다. 완료된 결과는 저장되었으며 다시 실행하면 남은 학생부터 계속합니다."
+    : course.grading.status === "complete"
+      ? "모든 학생의 AI 채점을 완료했습니다."
+      : "일부 학생 채점에 실패했습니다. 오류 원인을 확인한 뒤 실패 학생만 다시 채점할 수 있습니다.");
   renderCourse(course.id, "grading");
 }
 
-function updateGradingProgress(completed, total) {
+function stopCourseGrading(courseId) {
+  const run = activeGradingRun;
+  if (!run || run.courseId !== courseId || run.controller.signal.aborted) {
+    showToast("현재 진행 중인 AI 채점이 없습니다.");
+    return;
+  }
+  run.controller.abort();
+  const button = app.querySelector("[data-stop-grading]");
+  if (button) { button.disabled = true; button.textContent = "멈추는 중…"; }
+  updateGradingProgress(run.completed, run.total, {
+    stage: "현재 요청을 안전하게 중단하고 완료된 결과를 저장하고 있습니다.",
+    elapsedMs: run.baseElapsedMs + Math.max(0, Date.now() - run.startedAt),
+    running: false,
+  });
+}
+
+function updateGradingProgress(completed, total, { stage = "학생 답안을 순서대로 채점하고 있습니다.", elapsedMs = 0, running = false } = {}) {
   const card = app.querySelector("[data-grading-progress]");
   if (!card) return;
   card.hidden = false;
-  card.querySelector("[data-progress-copy]").textContent = `${completed} / ${total}`;
-  card.querySelector("[data-progress-bar]").style.width = `${total ? Math.round((completed / total) * 100) : 0}%`;
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+  card.querySelector("[data-progress-stage]").textContent = stage;
+  card.querySelector("[data-progress-copy]").textContent = `${completed} / ${total}명 완료`;
+  card.querySelector("[data-progress-time]").textContent = `경과 ${formatElapsedTime(elapsedMs)}`;
+  card.querySelector("[data-progress-percent]").textContent = `${progress}%`;
+  card.querySelector("[data-progress-bar]").style.width = `${progress}%`;
+  card.querySelector("[data-progress-track]").classList.toggle("is-active", running);
 }
 
-async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile }) {
+async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
   if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const resolvedBlankFile = blankFile || asFile(design.blankFile);
   const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
   const maxScore = rubricTotalScore(design.rubricCriteria || []);
   if (maxScore <= 0) throw new Error("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요.");
+  onStage?.("학생 답안 페이지 분리·개인정보 가림 중");
   const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const files = [
     ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
     ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
@@ -1103,9 +1240,11 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     { role: "blank", file: resolvedBlankFile },
     { role: "studentAnswer", file: studentFile },
   ];
+  onStage?.("Gemini가 답안을 판독하고 채점·피드백 작성 중");
   const result = await ChaejeomAI.gradeAnswer({
     apiKey,
     model: selectedModel,
+    signal,
     metadata: {
       title: design.taskName,
       subject: course.subject,
@@ -1542,6 +1681,16 @@ function formatScore(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, "");
 }
 
+function formatElapsedTime(value) {
+  const totalSeconds = Math.max(0, Math.floor(Number(value || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function friendlyError(error) {
   if (error?.name === "QuotaExceededError") return "브라우저 저장 용량이 부족합니다. 불필요한 수업 또는 원본 파일을 삭제해 주세요.";
   return error?.message || "작업을 완료하지 못했습니다.";
@@ -1565,3 +1714,4 @@ function renderNotFound() {
 function renderFatal(error) {
   app.innerHTML = `<div class="page-shell"><div class="course-empty"><span>!</span><h2>화면을 불러오지 못했습니다.</h2><p>${escapeHtml(friendlyError(error))}</p><button class="primary-action" type="button" onclick="location.reload()">다시 불러오기</button></div></div>`;
 }
+

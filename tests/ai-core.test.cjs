@@ -418,6 +418,37 @@ test("gradeAnswer retries a temporary rate-limit response", async () => {
   assert.equal(result.needsTeacherReview, true);
 });
 
+test("gradeAnswer aborts the active request without retrying", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const controller = new AbortController();
+  let attempts = 0;
+  const grading = AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: {
+      totalScore: 2,
+      requireBlankComparison: true,
+      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "설명", scoreLevels: [{ score: 2, criterion: "정확함" }, { score: 0, criterion: "오답" }] }],
+      achievementGroups: [],
+      exampleAnswers: [],
+    },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    signal: controller.signal,
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      attempts += 1;
+      return new Promise((_resolve, reject) => {
+        if (options.signal.aborted) reject(new DOMException("aborted", "AbortError"));
+        else options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      });
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  controller.abort();
+  await assert.rejects(grading, (error) => error?.name === "AbortError");
+  assert.equal(attempts, 1);
+});
+
 test("gradeAnswer automatically repairs empty per-question and achievement results", async () => {
   const bytes = new TextEncoder().encode("pdf");
   const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });

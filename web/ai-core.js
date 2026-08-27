@@ -260,7 +260,7 @@
     return normalizePageAssignments(parsed, normalizedRoster, actualPageCount, selectedModel);
   }
 
-  async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 1200 }) {
+  async function gradeAnswer({ apiKey, metadata, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 1200, signal }) {
     const key = validateApiKey(apiKey);
     const selectedModel = validateModelId(model);
     const normalizedFiles = Array.isArray(files) ? files.filter((item) => item?.file) : [];
@@ -294,8 +294,10 @@
         responseSchema,
         maxAttempts: 3,
         baseDelayMs: retryDelayMs,
+        signal,
       }));
     } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
       throw new Error(`Gemini 채점 요청을 보내지 못했습니다. (${error.message})`);
     }
 
@@ -329,8 +331,10 @@
           responseSchema: buildScoreRepairSchema(metadata),
           maxAttempts: 2,
           baseDelayMs: retryDelayMs,
+          signal,
         }));
       } catch (error) {
+        if (signal?.aborted || error?.name === "AbortError") throw error;
         throw new Error(`Gemini의 누락된 문항별 채점 결과를 다시 요청하지 못했습니다. (${error.message})`);
       }
       if (!repairResponse.ok) throw new Error(geminiErrorMessage(repairResponse.status, repairBody, selectedModel));
@@ -750,20 +754,32 @@ ${JSON.stringify(roster)}
         const delay = Number.isFinite(retryAfter) && retryAfter > 0
           ? Math.min(60000, retryAfter * 1000)
           : Math.min(15000, baseDelayMs * (2 ** (attempt - 1)));
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await sleep(delay, options?.signal);
       } catch (error) {
+        if (options?.signal?.aborted || error?.name === "AbortError") throw error;
         lastError = error;
         if (attempt === maxAttempts) throw error;
         const delay = Math.min(15000, baseDelayMs * (2 ** (attempt - 1)));
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await sleep(delay, options?.signal);
       }
     }
     if (lastResponse) return lastResponse;
     throw lastError || new Error("Gemini 요청에 실패했습니다.");
   }
 
-  function sleep(milliseconds) {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  function sleep(milliseconds, signal) {
+    if (signal?.aborted) return Promise.reject(new DOMException("AI 채점이 중단되었습니다.", "AbortError"));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener?.("abort", handleAbort);
+        resolve();
+      }, milliseconds);
+      const handleAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException("AI 채점이 중단되었습니다.", "AbortError"));
+      };
+      signal?.addEventListener?.("abort", handleAbort, { once: true });
+    });
   }
 
   function arrayBufferToBase64(buffer) {
@@ -805,13 +821,14 @@ ${JSON.stringify(roster)}
     return config;
   }
 
-  async function fetchGradingResponse({ fetchImpl, url, key, parts, model, responseSchema, maxAttempts, baseDelayMs }) {
+  async function fetchGradingResponse({ fetchImpl, url, key, parts, model, responseSchema, maxAttempts, baseDelayMs, signal }) {
     const send = (schema) => fetchWithRetry(fetchImpl, url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-goog-api-key": key,
       },
+      signal,
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
         generationConfig: gradingGenerationConfig(model, schema),
