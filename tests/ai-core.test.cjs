@@ -2,9 +2,28 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const AI = require("../ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
+
+function loadSchoolMathHelpers() {
+  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  const start = source.indexOf("function toTeacherFriendlyMath");
+  const end = source.indexOf("function renderMathPreview", start);
+  assert.ok(start >= 0 && end > start, "school math helpers must exist");
+  return new Function(`${source.slice(start, end)}; return { toTeacherFriendlyMath, friendlyMathToLatex };`)();
+}
+
+test("complex extracted formulas are shown as teacher-friendly math", () => {
+  const { toTeacherFriendlyMath, friendlyMathToLatex } = loadSchoolMathHelpers();
+  const raw = String.raw`\frac{180}{720} \times 100 = \frac{1}{4} \times 100 = 25\\%\frac{1500}{5000} \times 100 = \frac{3}{10} \times 100 = 30\\%`;
+  const friendly = toTeacherFriendlyMath(raw);
+  assert.equal(friendly, "180/720 × 100 = 1/4 × 100 = 25%\n1500/5000 × 100 = 3/10 × 100 = 30%");
+  assert.match(friendlyMathToLatex(friendly), /\\frac\{180\}\{720\}/);
+  assert.match(friendlyMathToLatex(friendly), /\\begin\{aligned\}/);
+});
 
 function assertSchemaEnumsAreStrings(value, path = "responseSchema") {
   if (!value || typeof value !== "object") return;
@@ -610,4 +629,3 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
-

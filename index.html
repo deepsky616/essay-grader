@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fffaf0" />
+    <meta
+      name="description"
+      content="수업별 평가 설계, 학급 답안 자동분할, AI 채점과 교사 검토를 지원하는 시스템"
+    />
+    <title>AI 서-논술형 평가지원시스템</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.4/dist/katex.min.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260827-13" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.18.4/dist/katex.min.js" defer></script>
+    <script src="./student-workflow.js?v=20260827-13" defer></script>
+    <script src="./ai-core.js?v=20260827-13" defer></script>
+    <script src="./school-app.js?v=20260827-13" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app">본문으로 건너뛰기</a>
+    <header class="topbar">
+      <a class="brand" href="#/" aria-label="AI 서-논술형 평가지원시스템 첫 화면">
+        <span class="brand-mark" aria-hidden="true">AI</span>
+        <span>
+          <strong>AI 서-논술형</strong>
+          <small>평가지원시스템</small>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="주요 메뉴">
+        <a href="#/" data-nav="home">나의 평가</a>
+        <a href="#/students" data-nav="students">학생 관리</a>
+        <a href="#/settings" data-nav="settings">설정</a>
+      </nav>
+      <div class="header-end">
+        <span class="mode-badge">기기 저장 · Gemini BYOK</span>
+        <span class="teacher-chip"><span>선</span><strong>선생님</strong></span>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1">
+      <section class="loading-state" aria-live="polite">
+        <span class="loading-dot" aria-hidden="true"></span>
+        <p>AI 서-논술형 평가지원시스템을 여는 중입니다.</p>
+      </section>
+    </main>
+
+    <dialog id="notice-dialog" class="notice-dialog">
+      <form method="dialog">
+        <button class="dialog-close" value="close" aria-label="닫기">×</button>
+        <p class="section-kicker">개인정보 보호와 GitHub Pages 작동 방식</p>
+        <h2>파일은 이 브라우저 안에만 저장됩니다.</h2>
+        <p>
+          GitHub Pages는 정적 호스팅이어서 서버 데이터베이스나 비밀 API 키를 둘 수 없습니다.
+          이 버전은 선택한 파일을 브라우저의 IndexedDB에 저장하며 GitHub 저장소로 전송하지 않습니다.
+        </p>
+        <ul>
+          <li>같은 기기와 같은 브라우저에서만 다시 열 수 있습니다.</li>
+          <li>브라우저 데이터를 지우면 저장된 평가도 함께 삭제됩니다.</li>
+          <li>Gemini API 키는 테스트 성공 후 이 브라우저에 암호화 저장할 수 있습니다.</li>
+          <li>학생 명단·수업·설계·답안·채점 결과는 현재 브라우저에 저장하며 다른 기기와 동기화되지 않습니다.</li>
+          <li>개인정보 최소 전송 모드에서는 페이지 분석 명단에서 이름을 제외하고, 채점에는 익명 번호만 사용합니다.</li>
+          <li>단, 스캔 답안에 보이는 이름과 평가 자료·학생 답안은 페이지 분석 및 자동 채점 시 Google Gemini API로 전송됩니다.</li>
+        </ul>
+        <button class="primary-action" value="close">확인했습니다</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
