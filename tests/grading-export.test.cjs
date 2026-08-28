@@ -149,3 +149,13 @@ test("result distribution source exposes five default-on output item controls", 
   assert.match(source, /selectedResultReportSections\(dialog\)/);
   assert.match(source, /buildPrintDocument\(reports, `\$\{design\.taskName\}_채점결과`, sectionOptions\)/);
 });
+
+test("result distribution keeps print actions beside output settings and removes close actions", () => {
+  const dialogStart = schoolSource.indexOf("function renderResultDistributionDialog");
+  const dialogEnd = schoolSource.indexOf("function selectedResultReportSections", dialogStart);
+  const dialogSource = schoolSource.slice(dialogStart, dialogEnd);
+  assert.match(dialogSource, /result-output-buttons[^]*data-toggle-result-output-settings[^]*data-print-selected-result[^]*data-print-all-results/);
+  assert.doesNotMatch(dialogSource, /data-close-result-distribution/);
+  assert.doesNotMatch(dialogSource, /result-distribution-actions/);
+});
+

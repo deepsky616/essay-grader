@@ -1174,8 +1174,8 @@ function renderResultDistributionDialog(course, targetStudents, results) {
   const ordered = [...results].filter((result) => studentMap.has(result.studentId)).sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
   return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
     <div class="result-distribution-shell">
-      <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div><button type="button" data-close-result-distribution aria-label="닫기">×</button></div>
-      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
+      <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div></div>
+      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><div class="result-output-buttons"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
       <section class="result-output-settings" data-result-output-settings hidden>
         <div><strong>출력할 항목을 선택하세요.</strong><p>선택 내용은 미리보기, 개별 출력, 전체 출력과 PDF 저장에 동일하게 적용됩니다.</p></div>
         <div class="result-output-options">
@@ -1187,7 +1187,6 @@ function renderResultDistributionDialog(course, targetStudents, results) {
         </div>
       </section>
       <div class="result-print-preview" data-result-report-preview></div>
-      <div class="result-distribution-actions"><button class="secondary-action" type="button" data-close-result-distribution>닫기</button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div>
     </div>
   </dialog>`;
 }
@@ -1223,7 +1222,6 @@ function openResultDistributionDialog(course, targetStudents) {
   };
   if (!dialog.dataset.bound) {
     dialog.dataset.bound = "true";
-    dialog.querySelectorAll("[data-close-result-distribution]").forEach((button) => button.addEventListener("click", () => dialog.close()));
     select.addEventListener("change", renderPreview);
     settingsButton.addEventListener("click", () => {
       settingsPanel.hidden = !settingsPanel.hidden;
@@ -2187,3 +2185,4 @@ function renderNotFound() {
 function renderFatal(error) {
   app.innerHTML = `<div class="page-shell"><div class="course-empty"><span>!</span><h2>화면을 불러오지 못했습니다.</h2><p>${escapeHtml(friendlyError(error))}</p><button class="primary-action" type="button" onclick="location.reload()">다시 불러오기</button></div></div>`;
 }
+
