@@ -91,10 +91,15 @@ test("selected output sections control both preview and printable PDF content", 
 test("grading detail source exposes rubric score buttons and the requested review flow", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
   assert.match(source, /data-score-choice/);
+  assert.match(source, /aria-label="\$\{formatScore\(score\)\}점"/);
+  assert.match(source, />\$\{formatScore\(score\)\}<\/button>/);
+  assert.doesNotMatch(source, />\$\{formatScore\(score\)\}점<\/button>/);
   assert.match(source, /data-reset-teacher-scores>점수 초기화/);
   assert.match(source, /data-restore-ai-scores>점수 그대로 적용/);
   assert.match(source, /data-regrade-student>AI 채점 재실행/);
   assert.match(source, /resultStatus\.textContent = "검토 완료"/);
+  assert.match(source, /textarea data-achievement-feedback=/);
+  assert.match(source, /result\.achievementResults = \(result\.achievementResults \|\| \[\]\)\.map/);
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 

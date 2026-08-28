@@ -802,17 +802,17 @@ a { color: inherit; text-decoration: none; }
 .question-score-group-head > strong { font-size: 11px; }
 .question-score-group-head span { color: var(--muted); font-size: 8px; }
 .question-score-group-head b { margin-left: 5px; color: var(--blue); font-size: 10px; }
-.teacher-score-list article { display: grid; grid-template-columns: 1fr 110px; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.teacher-score-list article { display: grid; grid-template-columns: minmax(0,1fr) 150px; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .question-score-group article:last-child { border-bottom: 0; }
 .teacher-score-list strong { font-size: 9px; }
 .teacher-score-list p, .teacher-score-list small { display: block; margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 .teacher-score-list .answer-reading { padding: 7px 9px; border-radius: 7px; background: rgba(233,239,255,.5); color: var(--ink); }
 .teacher-score-list .visual-reading { padding: 7px 9px; border-radius: 7px; background: rgba(185,234,210,.22); color: var(--ink); }
 .missing-score-label { display: inline-block; margin: 5px 0 0; padding: 4px 7px; border-radius: 999px; background: #ffe4de; color: #8b2e20; font-size: 7px; font-style: normal; font-weight: 900; }
-.score-choice-field { min-width: 120px; margin: 0; padding: 0; border: 0; }
+.score-choice-field { min-width: 0; margin: 0; padding: 0; border: 0; }
 .score-choice-field legend { margin-bottom: 7px; color: var(--muted); font-size: 8px; font-weight: 900; }
-.score-choice-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-.score-choice-buttons button { min-width: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); cursor: pointer; font-size: 8px; font-weight: 900; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
+.score-choice-buttons { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding: 0 2px 3px; }
+.score-choice-buttons button { flex: 1 0 34px; min-width: 34px; padding: 8px 7px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); cursor: pointer; font-size: 9px; font-weight: 900; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 .score-choice-buttons button:hover { border-color: var(--blue); color: var(--blue); transform: translateY(-1px); }
 .score-choice-buttons button.is-selected { border-color: var(--ink); background: var(--blue); color: white; box-shadow: 2px 2px 0 var(--ink); }
 .teacher-total { position: sticky; z-index: 2; top: 0; display: flex; justify-content: space-between; padding: 16px 17px; border-bottom: 2px solid var(--ink); background: var(--sand); font-size: 10px; }
@@ -828,9 +828,11 @@ a { color: inherit; text-decoration: none; }
 .teacher-review-alert p { margin: 7px 0 0; font-size: 8px; line-height: 1.55; }
 .student-achievement-feedback { margin: 0 16px 15px; border: 1px solid var(--line); border-radius: 10px; }
 .student-achievement-feedback > strong { display: block; padding: 11px 12px; background: rgba(185,234,210,.2); font-size: 9px; }
-.student-achievement-feedback div { padding: 10px 12px; border-top: 1px solid var(--line); }
+.student-achievement-feedback label { display: grid; gap: 7px; padding: 11px 12px; border-top: 1px solid var(--line); }
 .student-achievement-feedback span { color: var(--blue); font-size: 8px; font-weight: 900; }
-.student-achievement-feedback p { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.student-achievement-feedback textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; color: var(--ink); font: inherit; font-size: 9px; line-height: 1.55; }
+.student-achievement-feedback textarea:focus { border-color: var(--blue); outline: 3px solid rgba(44,80,190,.14); }
+.student-achievement-feedback small { color: var(--muted); font-size: 7px; font-weight: 500; line-height: 1.45; }
 .full-button { width: calc(100% - 32px); margin: 0 16px 16px; }
 .detail-ai-actions { display: grid; grid-template-columns: 1fr; gap: 9px; padding: 0 16px 16px; }
 .detail-ai-actions button { width: 100%; }

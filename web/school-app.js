@@ -1829,7 +1829,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design) {
       ${entries.map(({ item, index }) => {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
-        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-group="${groupIndex}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-pressed="${score === selectedScore}">${formatScore(score)}점</button>`).join("")}</div></fieldset></article>`;
+        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-group="${groupIndex}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
       }).join("")}
     </section>`;
   }).join("");
@@ -1882,7 +1882,7 @@ async function openStudentResult(course, targetStudents, studentId) {
           ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview ? `<div class="teacher-review-alert"><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
-          ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item) => `<div><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><p>${escapeHtml(item.feedback)}</p></div>`).join("")}</div>` : ""}
+          ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item, index) => `<label><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><textarea data-achievement-feedback="${index}" rows="3" aria-label="${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)} 피드백">${escapeHtml(item.feedback || "")}</textarea><small>AI가 작성한 내용을 교사가 직접 수정할 수 있습니다.</small></label>`).join("")}</div>` : ""}
           <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>AI 채점 재실행</button></div>
         </section>
       </div>
@@ -1936,6 +1936,10 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.totalScore = Math.round(questionRows.reduce((sum, item) => sum + Number(item.score || 0), 0) * 100) / 100;
     result.maxScore = summary.maxScore;
     result.teacherFeedback = panel.querySelector("[data-teacher-feedback]").value.trim();
+    result.achievementResults = (result.achievementResults || []).map((item, index) => ({
+      ...item,
+      feedback: panel.querySelector(`[data-achievement-feedback="${index}"]`)?.value.trim() ?? item.feedback,
+    }));
     result.teacherConfirmed = true;
     result.teacherReviewedAt = new Date().toISOString();
     await putCourse(course);
