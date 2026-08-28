@@ -134,6 +134,12 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
+test("student grading detail gives the scoring panel more horizontal space", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  assert.match(styles, /\.student-review-grid \{[^}]*grid-template-columns: minmax\(0,\.88fr\) minmax\(520px,1\.12fr\)/);
+  assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.student-review-grid \{ grid-template-columns: 1fr; \}/);
+});
+
 test("result distribution source exposes five default-on output item controls", () => {
   const source = schoolSource;
   assert.match(source, /data-toggle-result-output-settings[^>]*>출력 항목 설정/);
