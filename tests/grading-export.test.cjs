@@ -153,13 +153,14 @@ test("result distribution source exposes five default-on output item controls", 
   assert.match(source, /buildPrintDocument\(reports, `\$\{design\.taskName\}_채점결과`, sectionOptions\)/);
 });
 
-test("result distribution keeps print actions beside output settings and removes close actions", () => {
+test("result distribution keeps print actions beside output settings and exposes a close action", () => {
   const dialogStart = schoolSource.indexOf("function renderResultDistributionDialog");
   const dialogEnd = schoolSource.indexOf("function selectedResultReportSections", dialogStart);
   const dialogSource = schoolSource.slice(dialogStart, dialogEnd);
   assert.match(dialogSource, /result-output-buttons[^]*data-toggle-result-output-settings[^]*data-print-selected-result[^]*data-print-all-results/);
-  assert.doesNotMatch(dialogSource, /data-close-result-distribution/);
+  assert.match(dialogSource, /data-close-result-distribution[^>]*aria-label="결과지 출력·배부 창 닫기"/);
   assert.doesNotMatch(dialogSource, /result-distribution-actions/);
+  assert.match(schoolSource, /data-close-result-distribution[^]*addEventListener\("click", \(\) => dialog\.close\(\)\)/);
 });
 
 test("student answer PDF previews open fitted to the available panel width", () => {
