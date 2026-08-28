@@ -12,6 +12,14 @@ const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_STUDENTS = 500;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const COURSE_SUBJECTS_BY_GRADE = Object.freeze({
+  "1": Object.freeze(["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"]),
+  "2": Object.freeze(["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"]),
+  "3": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "체육", "음악", "미술", "영어"]),
+  "4": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "체육", "음악", "미술", "영어"]),
+  "5": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "실과", "체육", "음악", "미술", "영어"]),
+  "6": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "실과", "체육", "음악", "미술", "영어"]),
+});
 const ACHIEVEMENT_LEVEL_EXAMPLES = {
   "상": "예: 기준을 정확히 이해하고 조건에 맞게 수행할 수 있다.",
   "중": "예: 기준을 이해하고 기본 조건에 맞게 수행할 수 있다.",
@@ -93,7 +101,7 @@ async function renderHome() {
     <div class="page-shell school-shell">
       <section class="school-hero">
         <div>
-          <p class="eyebrow">2026학년도 2학기 · 6학년 수학</p>
+          <p class="eyebrow">2026학년도 2학기 · 초등 1~6학년</p>
           <h1>AI 서-논술형<br><span>평가지원시스템</span></h1>
           <p>학생 명단을 관리하고, 수업별 평가 설계부터 과제물 분할·AI 채점·교사 검토까지 한 흐름으로 진행하세요.</p>
           <div class="hero-actions">
@@ -167,12 +175,12 @@ async function renderCourseForm(courseId = "") {
         <div class="simple-form-heading">
           <p class="section-kicker">CLASS SETUP</p>
           <h1>${course ? "수업 정보를 수정합니다." : "새 수업을 추가합니다."}</h1>
-          <p>현재 운영 범위는 2026학년도 2학기, 6학년 수학으로 고정되어 있습니다.</p>
+          <p>학년을 선택하면 해당 학년군에서 운영하는 과목을 선택할 수 있습니다.</p>
         </div>
         <form id="course-form" class="course-form">
           <label>학기<select name="semester" disabled><option selected>2026학년도 2학기</option></select></label>
-          <label>학년<select name="grade" disabled><option selected>6학년</option></select></label>
-          <label>과목<select name="subject" disabled><option selected>수학</option></select></label>
+          <label>학년<select name="grade">${gradeOptions(course?.grade || "6")}</select></label>
+          <label>과목<select name="subject">${subjectOptions(course?.grade || "6", course?.subject || "수학")}</select></label>
           <label class="full-field">수업명<input name="title" value="${escapeHtml(course?.title || "")}" placeholder="예: 6학년 2학기 서·논술형 평가" required maxlength="80"></label>
           <div class="form-bottom-actions">
             <a class="secondary-action" href="#/">취소</a>
@@ -181,21 +189,33 @@ async function renderCourseForm(courseId = "") {
         </form>
       </section>
     </div>`;
-  app.querySelector("#course-form").addEventListener("submit", async (event) => {
+  const form = app.querySelector("#course-form");
+  form.elements.grade.addEventListener("change", () => {
+    const previousSubject = form.elements.subject.value;
+    form.elements.subject.innerHTML = subjectOptions(form.elements.grade.value, previousSubject);
+  });
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const grade = event.currentTarget.elements.grade.value;
+    const subject = event.currentTarget.elements.subject.value;
     const title = event.currentTarget.elements.title.value.trim();
     if (!title) return;
+    const gradeChanged = Boolean(course && String(course.grade) !== grade);
+    if (gradeChanged && (course.targetStudentIds?.length || course.submission || course.grading)
+      && !window.confirm("수업 학년을 변경하면 기존 평가 대상, 과제물 분할, AI 채점 결과가 초기화됩니다. 변경할까요?")) return;
     const now = new Date().toISOString();
     const saved = {
       ...(course || {}),
       id: course?.id || crypto.randomUUID(),
       semester: "2026-2",
       semesterLabel: "2026학년도 2학기",
-      grade: "6",
-      subject: "수학",
+      grade,
+      subject,
       title,
-      targetStudentIds: course?.targetStudentIds || [],
+      targetStudentIds: gradeChanged ? [] : (course?.targetStudentIds || []),
       designs: course?.designs || [],
+      submission: gradeChanged ? null : (course?.submission || null),
+      grading: gradeChanged ? null : (course?.grading || null),
       createdAt: course?.createdAt || now,
       updatedAt: now,
     };
@@ -222,7 +242,7 @@ async function renderStudentManagement() {
       <section class="student-create-grid">
         <form id="student-form" class="student-create-card">
           <div><p class="section-kicker">개별 생성</p><h2>학생 한 명 추가</h2></div>
-          <label>학년<select name="grade"><option value="6">6학년</option></select></label>
+          <label>학년<select name="grade">${gradeOptions("6")}</select></label>
           <label>반<select name="className">${classOptions("1")}</select></label>
           <label>번호<input name="number" type="number" min="1" max="99" required placeholder="1"></label>
           <label>이름<input name="name" required maxlength="40" placeholder="홍길동"></label>
@@ -358,7 +378,7 @@ function downloadStudentTemplate() {
   const guideSheet = window.XLSX.utils.aoa_to_sheet([
     ["학생 명단 작성 안내"],
     ["열 이름", "입력 방법", "예시"],
-    ["학년", "숫자로 입력합니다. 현재 수업은 6학년입니다.", 6],
+    ["학년", "1~6 사이의 숫자로 입력합니다.", 6],
     ["반", "숫자로 입력합니다.", 1],
     ["번호", "반 안에서 중복되지 않는 번호를 입력합니다.", 1],
     ["이름", "학생 이름을 입력합니다.", "홍길동"],
@@ -373,6 +393,20 @@ function downloadStudentTemplate() {
 
 function classOptions(selected = "1") {
   return Array.from({ length: 20 }, (_, index) => String(index + 1)).map((value) => `<option value="${value}" ${value === String(selected) ? "selected" : ""}>${value}반</option>`).join("");
+}
+
+function gradeOptions(selected = "6") {
+  return Array.from({ length: 6 }, (_, index) => String(index + 1)).map((value) => `<option value="${value}" ${value === String(selected) ? "selected" : ""}>${value}학년</option>`).join("");
+}
+
+function courseSubjectsForGrade(grade) {
+  return COURSE_SUBJECTS_BY_GRADE[String(grade)] || COURSE_SUBJECTS_BY_GRADE["6"];
+}
+
+function subjectOptions(grade, selected = "") {
+  const subjects = courseSubjectsForGrade(grade);
+  const preferred = subjects.includes(String(selected)) ? String(selected) : (subjects.includes("수학") ? "수학" : subjects[0]);
+  return subjects.map((subject) => `<option value="${escapeHtml(subject)}" ${subject === preferred ? "selected" : ""}>${escapeHtml(subject)}</option>`).join("");
 }
 
 async function renderCourse(courseId, activeTab) {
@@ -426,13 +460,14 @@ function workflowTab(course, activeTab, id, number, label) {
 }
 
 function renderTargetTab(course, students) {
-  const classStudents = students.filter((student) => student.grade === "6" && student.className === selectedTargetClass);
+  const courseGrade = String(course.grade || "6");
+  const classStudents = students.filter((student) => student.grade === courseGrade && student.className === selectedTargetClass);
   const targetIds = new Set(course.targetStudentIds || []);
   const selectedCount = classStudents.filter((student) => targetIds.has(student.id)).length;
   return `
     <div class="workflow-heading"><div><p class="section-kicker">STEP 1</p><h2>평가 대상</h2><p>학년과 반을 선택한 뒤 학생을 평가 대상에 추가하거나 제외하세요.</p></div><span>${course.targetStudentIds?.length || 0}명 선택</span></div>
     <div class="target-toolbar">
-      <label>학년<select disabled><option>6학년</option></select></label>
+      <label>학년<select disabled><option>${escapeHtml(courseGrade)}학년</option></select></label>
       <label>반<select data-target-class>${classOptions(selectedTargetClass)}</select></label>
       <button class="primary-action" type="button" data-add-targets>평가 대상 추가</button>
       <button class="secondary-action" type="button" data-remove-targets>평가 대상 제외</button>
@@ -446,7 +481,7 @@ function renderTargetTab(course, students) {
             <span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong>
             <em>${targetIds.has(student.id) ? "평가 대상" : "미포함"}</em>
           </label>`).join("")}
-      </div>` : `<div class="inline-empty"><strong>6학년 ${escapeHtml(selectedTargetClass)}반 학생이 없습니다.</strong><p>먼저 첫 페이지의 학생 관리에서 학생을 개별 또는 Excel로 생성해 주세요.</p><a class="primary-action" href="#/students">학생 관리 →</a></div>`}
+      </div>` : `<div class="inline-empty"><strong>${escapeHtml(courseGrade)}학년 ${escapeHtml(selectedTargetClass)}반 학생이 없습니다.</strong><p>먼저 첫 페이지의 학생 관리에서 학생을 개별 또는 Excel로 생성해 주세요.</p><a class="primary-action" href="#/students">학생 관리 →</a></div>`}
     <div class="workflow-next"><span>대상 학생을 확인한 뒤 다음 단계로 이동하세요.</span><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=designs">평가 설계로 →</a></div>`;
 }
 
