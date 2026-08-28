@@ -1,0 +1,71 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const Export = require("../grading-export.js");
+
+const report = {
+  generatedAt: "2026. 8. 28. 오전 9:00",
+  semesterLabel: "2026학년도 2학기",
+  subject: "수학",
+  courseTitle: "비와 비율",
+  assessmentTitle: "백분율 서술형 평가",
+  student: { id: "student-1", grade: "6", className: "4", number: "1", name: "홍길동" },
+  achievementStandards: [{ itemRange: "1-2번", standard: "비율을 여러 형태로 나타낼 수 있다." }],
+  rubricCriteria: [{
+    questionNumber: "1",
+    evaluationElement: "할인율 계산",
+    scoreLevels: [{ score: 2, criterion: "과정과 답이 모두 옳다." }, { score: 1, criterion: "일부 과정이 옳다." }, { score: 0, criterion: "풀이가 없다." }],
+  }],
+  scoreRows: [{ questionNumber: "1", evaluationElement: "할인율 계산", criterion: "과정과 답이 모두 옳다.", score: 2, maxScore: 2 }],
+  totalScore: 2,
+  maxScore: 2,
+  achievementResults: [{ itemRange: "1-2번", achievementLevel: "상", feedback: "비율을 정확히 계산했습니다." }],
+  feedback: "계산 과정을 차근차근 잘 설명했습니다.",
+  reviewStatus: "교사 검토 완료",
+};
+
+test("grading workbook rows follow the reference title, assessment, header, and student layout", () => {
+  const rows = Export.buildWorkbookRows({
+    classTitle: "6-4반 채점 결과",
+    assessmentTitle: "평가: 백분율 서술형 평가",
+    headers: ["학년", "반", "번호", "이름", "총점", "할인율 계산", "AI 채점 수준", "선생님 작성 피드백"],
+    records: [["6", "4", "1", "홍길동", 2, "2 / 2", "상", "잘했습니다."]],
+  });
+  assert.equal(rows.length, 5);
+  assert.equal(rows[0][0], "6-4반 채점 결과");
+  assert.equal(rows[1][0], "평가: 백분율 서술형 평가");
+  assert.deepEqual(rows[3].slice(0, 5), ["학년", "반", "번호", "이름", "총점"]);
+  assert.deepEqual(rows[4].slice(0, 5), ["6", "4", "1", "홍길동", 2]);
+});
+
+test("individual result sheet includes criteria, confirmed scores, feedback, and escaped student text", () => {
+  const html = Export.buildReportHtml({ ...report, student: { ...report.student, name: "<학생>" } });
+  assert.match(html, /백분율 서술형 평가/);
+  assert.match(html, /할인율 계산/);
+  assert.match(html, /2 \/ 2/);
+  assert.match(html, /교사 검토 완료/);
+  assert.match(html, /계산 과정을 차근차근 잘 설명했습니다/);
+  assert.match(html, /&lt;학생&gt;/);
+  assert.doesNotMatch(html, /<strong><학생><\/strong>/);
+});
+
+test("all-student print document places each student on a new printed sheet", () => {
+  const document = Export.buildPrintDocument([report, { ...report, student: { ...report.student, id: "student-2", number: "2", name: "김하늘" } }]);
+  assert.equal((document.match(/class="result-report-sheet"/g) || []).length, 2);
+  assert.match(document, /\.result-report-sheet \+ \.result-report-sheet \{ break-before: page; \}/);
+  assert.match(document, /김하늘/);
+});
+
+test("grading detail source exposes rubric score buttons and the requested review flow", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  assert.match(source, /data-score-choice/);
+  assert.match(source, /data-reset-teacher-scores>점수 초기화/);
+  assert.match(source, /data-restore-ai-scores>점수 그대로 적용/);
+  assert.match(source, /data-regrade-student>AI 채점 재실행/);
+  assert.match(source, /resultStatus\.textContent = "검토 완료"/);
+  assert.doesNotMatch(source, /data-apply-ai-score/);
+});
+

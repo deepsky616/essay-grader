@@ -1065,24 +1065,200 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
-        <div class="grading-result-actions">${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
+        <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
       ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId), design)).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
     <div class="student-result-inline-slot" data-student-result-inline aria-live="polite"></div>
+    ${results.length ? renderResultDistributionDialog(course, targetStudents, results) : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">← 과제물 관리</a><span>AI 결과는 교사가 검토한 뒤 확정해 주세요.</span></div>`;
 }
 
 function gradingResultRow(result, student, design) {
   const summary = resultScoreSummary(result, design);
-  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${result.needsTeacherReview ? "review-label" : "success-label"}">${result.needsTeacherReview ? "검토 필요" : "성공"}</em><span data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
+  const resultStatus = result.teacherConfirmed
+    ? { label: "검토 완료", className: "confirmed-label" }
+    : result.needsTeacherReview
+      ? { label: "검토 필요", className: "review-label" }
+      : { label: "AI 채점 완료", className: "success-label" };
+  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${resultStatus.className}" data-result-status>${resultStatus.label}</em><span data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
 }
 
 function gradingErrorRow(error, student) {
   return `<div class="grading-result-row is-error"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="failure-label">실패</em><span>—</span><small>${escapeHtml(error.message)}</small></div>`;
 }
 
+function orderedGradingResults(course, targetStudents) {
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  return (course.grading?.results || [])
+    .filter((result) => studentMap.has(result.studentId))
+    .sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
+}
+
+function teacherScoreForRow(result, row, index) {
+  const storedIndex = Number.isInteger(row.sourceIndex) && row.sourceIndex >= 0 ? row.sourceIndex : index;
+  return Number(result.teacherScores?.[storedIndex] ?? result.teacherScores?.[index] ?? row.score ?? 0);
+}
+
+function buildStudentReportViewModel(course, design, student, result, index, total) {
+  const summary = resultScoreSummary(result, design);
+  const scoreRows = summary.rows.map((row, rowIndex) => ({
+    questionNumber: row.questionNumber,
+    evaluationElement: row.evaluationElement,
+    criterion: row.criterion,
+    feedback: row.feedback,
+    score: teacherScoreForRow(result, row, rowIndex),
+    maxScore: row.maxScore,
+  }));
+  return {
+    semesterLabel: course.semesterLabel,
+    subject: course.subject,
+    courseTitle: course.title,
+    assessmentTitle: design.taskName,
+    student: {
+      id: student.id,
+      grade: student.grade,
+      className: student.className,
+      number: student.number,
+      name: student.name,
+    },
+    achievementStandards: (design.achievementGroups || []).map((item) => ({ itemRange: item.itemRange, standard: item.standard })),
+    rubricCriteria: normalizeRubricCriteria(design.rubricCriteria || []),
+    scoreRows,
+    totalScore: Number(result.teacherTotal ?? scoreRows.reduce((sum, item) => sum + item.score, 0)),
+    maxScore: summary.maxScore,
+    achievementResults: result.achievementResults || [],
+    feedback: result.teacherFeedback || result.summary || "",
+    reviewStatus: result.teacherConfirmed ? "교사 검토 완료" : "교사 검토 전",
+    generatedAt: formatDateTime(result.teacherReviewedAt || result.regradedAt || course.grading?.finishedAt || new Date().toISOString()),
+    sequenceLabel: `${index + 1} / ${total}`,
+  };
+}
+
+function renderResultDistributionDialog(course, targetStudents, results) {
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  const ordered = [...results].filter((result) => studentMap.has(result.studentId)).sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
+  return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
+    <div class="result-distribution-shell">
+      <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div><button type="button" data-close-result-distribution aria-label="닫기">×</button></div>
+      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><span>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</span></div>
+      <div class="result-print-preview" data-result-report-preview></div>
+      <div class="result-distribution-actions"><button class="secondary-action" type="button" data-close-result-distribution>닫기</button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div>
+    </div>
+  </dialog>`;
+}
+
+function openResultDistributionDialog(course, targetStudents) {
+  const dialog = app.querySelector("[data-result-distribution-dialog]");
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  const ordered = orderedGradingResults(course, targetStudents);
+  if (!dialog || !design || !ordered.length || !window.ChaejeomExport) {
+    showToast("출력할 채점 결과를 준비하지 못했습니다.");
+    return;
+  }
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  const select = dialog.querySelector("[data-result-report-student]");
+  const preview = dialog.querySelector("[data-result-report-preview]");
+  const renderPreview = () => {
+    const resultIndex = ordered.findIndex((item) => item.studentId === select.value);
+    const safeIndex = resultIndex >= 0 ? resultIndex : 0;
+    const result = ordered[safeIndex];
+    preview.innerHTML = window.ChaejeomExport.buildReportHtml(buildStudentReportViewModel(course, design, studentMap.get(result.studentId), result, safeIndex, ordered.length));
+    preview.scrollTop = 0;
+  };
+  if (!dialog.dataset.bound) {
+    dialog.dataset.bound = "true";
+    dialog.querySelectorAll("[data-close-result-distribution]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+    select.addEventListener("change", renderPreview);
+    dialog.querySelector("[data-print-selected-result]").addEventListener("click", () => printStudentResults(course, targetStudents, [select.value]));
+    dialog.querySelector("[data-print-all-results]").addEventListener("click", () => printStudentResults(course, targetStudents, ordered.map((item) => item.studentId)));
+  }
+  renderPreview();
+  if (!dialog.open) dialog.showModal();
+}
+
+function printStudentResults(course, targetStudents, studentIds) {
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  const ordered = orderedGradingResults(course, targetStudents);
+  const selectedIds = new Set(studentIds);
+  const selected = ordered.filter((result) => selectedIds.has(result.studentId));
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  if (!design || !selected.length || !window.ChaejeomExport) { showToast("출력할 학생 결과가 없습니다."); return; }
+  const reports = selected.map((result) => {
+    const originalIndex = ordered.findIndex((item) => item.studentId === result.studentId);
+    return buildStudentReportViewModel(course, design, studentMap.get(result.studentId), result, originalIndex, ordered.length);
+  });
+  const frame = document.createElement("iframe");
+  frame.className = "result-print-frame";
+  frame.title = "학생 채점 결과 인쇄";
+  frame.srcdoc = window.ChaejeomExport.buildPrintDocument(reports, `${design.taskName}_채점결과`);
+  frame.addEventListener("load", () => {
+    const cleanup = () => window.setTimeout(() => frame.remove(), 400);
+    try {
+      frame.contentWindow.addEventListener("afterprint", cleanup, { once: true });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+      window.setTimeout(cleanup, 60000);
+    } catch {
+      frame.remove();
+      showToast("인쇄 창을 열지 못했습니다. 브라우저의 인쇄 허용 설정을 확인해 주세요.");
+    }
+  }, { once: true });
+  document.body.append(frame);
+  showToast("인쇄 창에서 프린터를 선택하거나 PDF로 저장할 수 있습니다.");
+}
+
+function safeExcelText(value) {
+  const text = String(value ?? "");
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+function downloadGradingResultsExcel(course, targetStudents) {
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  if (!window.XLSX || !window.ChaejeomExport || !design) { showToast("채점 결과 Excel을 만들지 못했습니다. 인터넷 연결을 확인해 주세요."); return; }
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const resultMap = new Map((course.grading?.results || []).map((result) => [result.studentId, result]));
+  const errorMap = new Map((course.grading?.errors || []).map((error) => [error.studentId, error]));
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  const assignedStudents = (course.submission?.assignments || [])
+    .map((assignment) => studentMap.get(assignment.studentId))
+    .filter(Boolean)
+    .sort(studentSort);
+  const headers = ["학년", "반", "번호", "이름", "총점", ...rubricCriteria.map((item) => `문제 ${item.questionNumber} - ${item.evaluationElement}`), "AI 채점 수준", "선생님 작성 피드백"];
+  const records = assignedStudents.map((student) => {
+    const result = resultMap.get(student.id);
+    if (!result) {
+      const error = errorMap.get(student.id);
+      return [student.grade, student.className, student.number, safeExcelText(student.name), null, ...rubricCriteria.map(() => ""), error ? "채점 실패" : "채점 결과 없음", safeExcelText(error?.message || "")];
+    }
+    const report = buildStudentReportViewModel(course, design, student, result, 0, assignedStudents.length);
+    const levelSummary = (result.achievementResults || []).map((item) => `${item.itemRange || "성취기준"}: ${item.achievementLevel || "교사 확인"}`).join(" / ");
+    return [student.grade, student.className, student.number, safeExcelText(student.name), report.totalScore, ...report.scoreRows.map((item) => `${formatScore(item.score)} / ${formatScore(item.maxScore)}`), safeExcelText(levelSummary || (result.teacherConfirmed ? "검토 완료" : "교사 검토 전")), safeExcelText(report.feedback)];
+  });
+  const classLabels = [...new Set(assignedStudents.map((student) => `${student.grade}-${student.className}반`))];
+  const rows = window.ChaejeomExport.buildWorkbookRows({
+    classTitle: `${classLabels.length === 1 ? classLabels[0] : `${course.grade}학년 전체`} 채점 결과`,
+    assessmentTitle: `평가: ${design.taskName}`,
+    headers,
+    records,
+  });
+  const workbook = window.XLSX.utils.book_new();
+  const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+  const lastColumn = window.XLSX.utils.encode_col(headers.length - 1);
+  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } }];
+  worksheet["!cols"] = [{ wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, ...rubricCriteria.map(() => ({ wch: 24 })), { wch: 30 }, { wch: 72 }];
+  worksheet["!rows"] = [{ hpt: 24 }, { hpt: 22 }, { hpt: 8 }, { hpt: 42 }, ...records.map(() => ({ hpt: 56 }))];
+  if (records.length) worksheet["!autofilter"] = { ref: `A4:${lastColumn}${records.length + 4}` };
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, "채점 결과");
+  workbook.Props = { Title: `${design.taskName} 채점 결과`, Subject: `${course.semesterLabel} ${course.subject}`, Author: "AI 서-논술형 평가지원시스템" };
+  const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  window.XLSX.writeFile(workbook, `채점결과_${dateStamp}.xlsx`, { compression: true });
+  showToast(`${records.length}명의 채점 결과 Excel을 내려받았습니다.`);
+}
+
 function bindGradingTab(course, targetStudents) {
   app.querySelector("[data-toggle-results]")?.addEventListener("click", () => { gradingResultsExpanded = !gradingResultsExpanded; renderCourse(course.id, "grading"); });
+  app.querySelector("[data-download-grading-results]")?.addEventListener("click", () => downloadGradingResultsExcel(course, targetStudents));
+  app.querySelector("[data-open-result-distribution]")?.addEventListener("click", () => openResultDistributionDialog(course, targetStudents));
   app.querySelector("[data-run-grading]")?.addEventListener("click", () => startCourseGrading(course, targetStudents));
   app.querySelector("[data-stop-grading]")?.addEventListener("click", () => stopCourseGrading(course.id));
   app.querySelector("[data-retry-failed]")?.addEventListener("click", () => startCourseGrading(course, targetStudents, { retryFailedOnly: true }));
@@ -1552,7 +1728,23 @@ function resultScoreSummary(result, design) {
   return { total: Number(total || 0), maxScore, rows };
 }
 
-function renderQuestionScoreGroups(rows, teacherScores) {
+function scoreChoicesForResultRow(item, design) {
+  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || []);
+  const rubric = rubricCriteria.find((candidate) => item?.criterionId && candidate.id === item.criterionId)
+    || rubricCriteria.find((candidate) => candidate.questionNumber === String(item?.questionNumber || "").trim()
+      && candidate.evaluationElement === String(item?.evaluationElement || "").trim());
+  const configured = (rubric?.scoreLevels || []).map((level) => Number(level.score)).filter(Number.isFinite);
+  const fallback = [Number(item?.maxScore || 0), 0].filter(Number.isFinite);
+  return [...new Set(configured.length ? configured : fallback)].sort((a, b) => b - a);
+}
+
+function nearestScoreChoice(value, choices) {
+  const numeric = Number(value || 0);
+  if (!choices.length || choices.includes(numeric)) return numeric;
+  return choices.reduce((nearest, candidate) => Math.abs(candidate - numeric) < Math.abs(nearest - numeric) ? candidate : nearest, choices[0]);
+}
+
+function renderQuestionScoreGroups(rows, teacherScores, design) {
   const groups = new Map();
   rows.forEach((item, index) => {
     const questionNumber = String(item.questionNumber || index + 1);
@@ -1564,7 +1756,11 @@ function renderQuestionScoreGroups(rows, teacherScores) {
     const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
     return `<section class="question-score-group">
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><span>문항 배점 결과 <b data-question-total="${groupIndex}">${formatScore(subtotal)} / ${formatScore(submax)}점</b></span></div>
-      ${entries.map(({ item, index }) => `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><label>배점 결과<input data-teacher-score="${index}" data-score-group="${groupIndex}" type="number" min="0" max="${Number(item.maxScore || 0)}" step="0.5" value="${Number(teacherScores[index] ?? item.score ?? 0)}"><span>/ ${formatScore(item.maxScore)}점</span></label></article>`).join("")}
+      ${entries.map(({ item, index }) => {
+        const choices = scoreChoicesForResultRow(item, design);
+        const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
+        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> ${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</p><small>${escapeHtml(item.feedback || "")} · 확신도 ${escapeHtml(item.confidence || "low")}</small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-group="${groupIndex}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-pressed="${score === selectedScore}">${formatScore(score)}점</button>`).join("")}</div></fieldset></article>`;
+      }).join("")}
     </section>`;
   }).join("");
 }
@@ -1594,9 +1790,12 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.dataset.previewUrl = previewUrl;
   const summary = resultScoreSummary(result, design);
   const questionRows = summary.rows;
-  const teacherScores = questionRows.map((item) => item.sourceIndex >= 0
-    ? Number(result.teacherScores?.[item.sourceIndex] ?? item.score ?? 0)
-    : Number(item.score || 0));
+  const teacherScores = questionRows.map((item) => {
+    const rawScore = item.sourceIndex >= 0
+      ? Number(result.teacherScores?.[item.sourceIndex] ?? item.score ?? 0)
+      : Number(item.score || 0);
+    return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
+  });
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
@@ -1605,15 +1804,16 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${previewUrl}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
+          <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
           <div class="teacher-score-list">
-            ${renderQuestionScoreGroups(questionRows, teacherScores)}
+            ${renderQuestionScoreGroups(questionRows, teacherScores, design)}
           </div>
+          <div class="score-bulk-actions"><button class="secondary-action" type="button" data-reset-teacher-scores>점수 초기화</button><button class="primary-action" type="button" data-restore-ai-scores>점수 그대로 적용</button></div>
           ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview ? `<div class="teacher-review-alert"><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
-          <div class="teacher-total"><span>문항별 배점 합계 · 교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
           ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item) => `<div><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><p>${escapeHtml(item.feedback)}</p></div>`).join("")}</div>` : ""}
-          <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>이 학생 AI 재채점</button><button class="secondary-action" type="button" data-apply-ai-score>AI 점수 그대로 적용</button></div>
+          <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>AI 채점 재실행</button></div>
         </section>
       </div>
       <div class="student-review-actions">
@@ -1624,6 +1824,12 @@ async function openStudentResult(course, targetStudents, studentId) {
     </div></section>`;
   const panel = slot.querySelector(".student-result-inline");
   const scoreInputs = Array.from(panel.querySelectorAll("[data-teacher-score]"));
+  const scoreButtons = Array.from(panel.querySelectorAll("[data-score-choice]"));
+  const syncScoreChoiceStates = () => scoreButtons.forEach((button) => {
+    const selected = Number(scoreInputs[Number(button.dataset.scoreIndex)]?.value) === Number(button.dataset.scoreChoice);
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
   const updateTotal = () => {
     const total = scoreInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
     panel.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(summary.maxScore)}점`;
@@ -1635,9 +1841,25 @@ async function openStudentResult(course, targetStudents, studentId) {
       label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
     });
   };
-  scoreInputs.forEach((input) => input.addEventListener("input", updateTotal));
-  const saveCurrent = async (applyOriginal = false) => {
-    if (applyOriginal) scoreInputs.forEach((input, index) => { input.value = questionRows[index]?.score ?? 0; });
+  scoreButtons.forEach((button) => button.addEventListener("click", () => {
+    const input = scoreInputs[Number(button.dataset.scoreIndex)];
+    if (!input) return;
+    input.value = button.dataset.scoreChoice;
+    syncScoreChoiceStates();
+    updateTotal();
+  }));
+  panel.querySelector("[data-reset-teacher-scores]").addEventListener("click", () => {
+    scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(0, scoreChoicesForResultRow(questionRows[index], design)); });
+    syncScoreChoiceStates();
+    updateTotal();
+  });
+  panel.querySelector("[data-restore-ai-scores]").addEventListener("click", () => {
+    scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(questionRows[index]?.score ?? 0, scoreChoicesForResultRow(questionRows[index], design)); });
+    syncScoreChoiceStates();
+    updateTotal();
+    showToast("AI가 제안한 문제별 점수를 다시 적용했습니다.");
+  });
+  const saveCurrent = async () => {
     result.questionResults = questionRows.map(({ sourceIndex, missingResult, ...item }) => item);
     result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
     result.teacherTotal = Math.round(result.teacherScores.reduce((sum, value) => sum + value, 0) * 100) / 100;
@@ -1649,6 +1871,11 @@ async function openStudentResult(course, targetStudents, studentId) {
     await putCourse(course);
     const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
     if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}`;
+    const resultStatus = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-status]`);
+    if (resultStatus) {
+      resultStatus.textContent = "검토 완료";
+      resultStatus.className = "confirmed-label";
+    }
   };
   const closeCurrent = () => {
     if (slot.dataset.previewUrl) {
@@ -1660,12 +1887,6 @@ async function openStudentResult(course, targetStudents, studentId) {
   };
   panel.querySelector("[data-close-student-result]").addEventListener("click", closeCurrent);
   panel.querySelector("[data-regrade-student]").addEventListener("click", (event) => regradeSingleStudent(course, targetStudents, studentId, event.currentTarget));
-  panel.querySelector("[data-apply-ai-score]").addEventListener("click", async () => {
-    await saveCurrent(true);
-    updateTotal();
-    showToast("AI 점수와 피드백을 그대로 적용했습니다.");
-    panel.querySelector(".student-review-actions span").textContent = "교사 검토 저장됨";
-  });
   panel.querySelector("[data-previous-student]")?.addEventListener("click", async () => {
     await saveCurrent();
     openStudentResult(course, targetStudents, orderedResults[currentIndex - 1].studentId);
@@ -1675,6 +1896,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     if (currentIndex < orderedResults.length - 1) openStudentResult(course, targetStudents, orderedResults[currentIndex + 1].studentId);
     else { showToast("마지막 학생까지 교사 검토 내용을 저장했습니다."); renderCourse(course.id, "grading"); }
   });
+  syncScoreChoiceStates();
   updateTotal();
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
