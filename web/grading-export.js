@@ -81,14 +81,14 @@
     const scoreIsFirstContent = !sections.achievementStandards && !sections.rubricCriteria;
     return `<article class="result-report-sheet" data-report-student="${escapeHtml(student.id || "")}">
       <div class="report-topline"><span>AI 서·논술형 평가지원시스템</span><span>${escapeHtml(report.generatedAt || "")}</span></div>
-      <div class="report-student-line"><span>${escapeHtml(student.grade || "-")}학년 ${escapeHtml(student.className || "-")}반 ${escapeHtml(student.number || "-")}번</span><strong>${escapeHtml(student.name || "학생")}</strong></div>
+      <div class="report-student-line"><span class="report-student-meta">${student.schoolName ? `<b>${escapeHtml(student.schoolName)}</b>` : ""}<span>${escapeHtml(student.grade || "-")}학년 ${escapeHtml(student.className || "-")}반 ${escapeHtml(student.number || "-")}번</span></span><strong>${escapeHtml(student.name || "학생")}</strong></div>
       <header class="report-title-block"><p>${escapeHtml(report.semesterLabel || "")} · ${escapeHtml(report.subject || "")}</p><h1>${escapeHtml(report.assessmentTitle || report.courseTitle || "평가")} <em>채점 결과</em></h1><small>${escapeHtml(report.courseTitle || "")}</small></header>
       ${sections.achievementStandards ? `<section class="report-section" data-report-section="achievementStandards"><h2>성취기준</h2>${achievementStandardsHtml(report.achievementStandards)}</section>` : ""}
       ${sections.rubricCriteria ? `<section class="report-section report-criteria" data-report-section="rubricCriteria"><h2>채점기준</h2>${rubricHtml(report.rubricCriteria)}</section>` : ""}
       ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
       ${sections.achievementResults ? `<section data-report-section="achievementResults">${achievementResultsHtml(report.achievementResults)}</section>` : ""}
       ${sections.feedback ? `<section class="report-section report-feedback" data-report-section="feedback"><h2>선생님 피드백</h2><div>${multiline(report.feedback || "피드백이 아직 작성되지 않았습니다.")}</div></section>` : ""}
-      <footer><span>${escapeHtml(report.semesterLabel || "")} ${escapeHtml(report.subject || "")} 평가 결과</span><span>${escapeHtml(student.grade || "-")}-${escapeHtml(student.className || "-")}-${escapeHtml(student.number || "-")}</span></footer>
+      <footer><span>${student.schoolName ? `${escapeHtml(student.schoolName)} · ` : ""}${escapeHtml(report.semesterLabel || "")} ${escapeHtml(report.subject || "")} 평가 결과</span><span>${escapeHtml(student.grade || "-")}-${escapeHtml(student.className || "-")}-${escapeHtml(student.number || "-")}</span></footer>
     </article>`;
   }
 
@@ -103,6 +103,8 @@
       .report-topline, .report-student-line, .report-total, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .report-topline { color: #77737f; font-size: 8pt; }
       .report-student-line { margin-top: 10px; padding-bottom: 8px; border-bottom: 3px solid #7338ff; }
+      .report-student-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+      .report-student-meta b { color: #5d2cd0; font-size: 10pt; }
       .report-student-line strong { font-size: 12pt; }
       .report-title-block { margin: 0 0 22px; padding: 26px 20px 22px; background: #f6f2ff; }
       .report-title-block p, .report-title-block small { margin: 0; color: #5c5863; }
@@ -147,3 +149,4 @@
 
   return { buildWorkbookRows, buildReportHtml, buildPrintDocument, formatScore, normalizeSectionOptions };
 });
+

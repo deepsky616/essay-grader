@@ -6,6 +6,7 @@
   root.StudentWorkflow = api;
 })(typeof globalThis !== "undefined" ? globalThis : window, function createStudentWorkflow() {
   const HEADER_ALIASES = {
+    schoolName: ["학교명", "학교", "school", "schoolname"],
     grade: ["학년", "grade"],
     className: ["반", "학급", "class", "classname"],
     number: ["번호", "출석번호", "학번", "no", "number"],
@@ -73,6 +74,7 @@
     const headerIndex = normalizedRows.findIndex((row) => headerScore(row) >= 2);
     const headers = headerIndex >= 0 ? normalizedRows[headerIndex] : [];
     const indexes = {
+      schoolName: findHeaderIndex(headers, HEADER_ALIASES.schoolName, -1),
       grade: findHeaderIndex(headers, HEADER_ALIASES.grade, headerIndex >= 0 ? -1 : 0),
       className: findHeaderIndex(headers, HEADER_ALIASES.className, headerIndex >= 0 ? -1 : 1),
       number: findHeaderIndex(headers, HEADER_ALIASES.number, headerIndex >= 0 ? -1 : 2),
@@ -80,6 +82,7 @@
     };
     const dataRows = normalizedRows.slice(headerIndex >= 0 ? headerIndex + 1 : 0);
     const students = dataRows.map((row) => ({
+      schoolName: cell(row, indexes.schoolName) || clean(defaults.schoolName),
       grade: normalizeGrade(cell(row, indexes.grade) || clean(defaults.grade)),
       className: normalizeClassName(cell(row, indexes.className) || clean(defaults.className)),
       number: normalizeNumber(cell(row, indexes.number)),
@@ -92,6 +95,7 @@
   function normalizeRoster(students) {
     return dedupeStudents((Array.isArray(students) ? students : []).map((student) => ({
       id: clean(student?.id),
+      schoolName: clean(student?.schoolName),
       grade: normalizeGrade(student?.grade),
       className: normalizeClassName(student?.className),
       number: normalizeNumber(student?.number),
@@ -180,7 +184,7 @@
   function dedupeStudents(students) {
     const seen = new Set();
     return students.filter((student) => {
-      const key = [clean(student.grade), clean(student.className), normalizeNumber(student.number), clean(student.name)].join("|").toLocaleLowerCase("ko-KR");
+      const key = [clean(student.schoolName), clean(student.grade), clean(student.className), normalizeNumber(student.number), clean(student.name)].join("|").toLocaleLowerCase("ko-KR");
       if (!key.replace(/\|/g, "") || seen.has(key)) return false;
       seen.add(key);
       return true;

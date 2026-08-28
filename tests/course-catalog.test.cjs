@@ -44,9 +44,19 @@ test("course form and evaluation targets follow the selected course grade", () =
   assert.match(source, /targetStudentIds: gradeChanged \? \[\]/);
 });
 
-test("downloaded student roster template leaves every data-row grade blank", () => {
-  assert.match(source, /rosterRows\.push\(\["", "", "", ""\]\)/);
+test("downloaded student roster template includes school name and leaves every data row blank", () => {
+  assert.match(source, /const rosterRows = \[\["학교명", "학년", "반", "번호", "이름"\]\]/);
+  assert.match(source, /rosterRows\.push\(\["", "", "", "", ""\]\)/);
   assert.doesNotMatch(source, /rosterRows\.push\(\[6, "", "", ""\]\)/);
   assert.match(source, /StudentWorkflow\.parseRosterRows\(rows\)/);
   assert.doesNotMatch(source, /StudentWorkflow\.parseRosterRows\(rows, \{ grade: "6" \}\)/);
 });
+
+test("home and navigation use the requested AI essay-assessment title", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);
+  assert.doesNotMatch(source, /2026학년도 2학기 · 초등 1~6학년/);
+  assert.match(html, /AI 서·논술형/);
+  assert.doesNotMatch(html, /AI 서-논술형/);
+});
+

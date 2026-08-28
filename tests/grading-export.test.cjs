@@ -20,7 +20,7 @@ const report = {
   subject: "수학",
   courseTitle: "비와 비율",
   assessmentTitle: "백분율 서술형 평가",
-  student: { id: "student-1", grade: "6", className: "4", number: "1", name: "홍길동" },
+  student: { id: "student-1", schoolName: "한빛초등학교", grade: "6", className: "4", number: "1", name: "홍길동" },
   achievementStandards: [{ itemRange: "1-2번", standard: "비율을 여러 형태로 나타낼 수 있다." }],
   rubricCriteria: [{
     questionNumber: "1",
@@ -75,6 +75,8 @@ test("grading download uses final numeric scores and one level column per achiev
 test("individual result sheet includes criteria, confirmed scores, feedback, and escaped student text", () => {
   const html = Export.buildReportHtml({ ...report, student: { ...report.student, name: "<학생>" } });
   assert.match(html, /백분율 서술형 평가/);
+  assert.match(html, /한빛초등학교/);
+  assert.match(html, /report-student-meta/);
   assert.match(html, /할인율 계산/);
   assert.match(html, /2 \/ 2/);
   assert.match(html, /교사 검토 완료/);
@@ -88,6 +90,7 @@ test("all-student print document places each student on a new printed sheet", ()
   assert.equal((document.match(/class="result-report-sheet"/g) || []).length, 2);
   assert.match(document, /\.result-report-sheet \+ \.result-report-sheet \{ break-before: page; \}/);
   assert.match(document, /김하늘/);
+  assert.match(document, /한빛초등학교/);
 });
 
 test("result sheet enables all five printable sections by default", () => {

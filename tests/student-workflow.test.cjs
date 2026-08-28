@@ -18,9 +18,17 @@ test("parseDelimited and parseRosterRows load a Korean CSV roster", () => {
   const rows = Workflow.parseDelimited('학년,반,번호,이름\n6,2,1,"김,하늘"\n6,2,2,이바다');
   const roster = Workflow.parseRosterRows(rows);
   assert.deepEqual(roster, [
-    { grade: "6", className: "2", number: "1", name: "김,하늘" },
-    { grade: "6", className: "2", number: "2", name: "이바다" },
+    { schoolName: "", grade: "6", className: "2", number: "1", name: "김,하늘" },
+    { schoolName: "", grade: "6", className: "2", number: "2", name: "이바다" },
   ]);
+});
+
+test("parseRosterRows preserves a school name from the Excel-style roster", () => {
+  const roster = Workflow.parseRosterRows([
+    ["학교명", "학년", "반", "번호", "이름"],
+    ["한빛초등학교", "6", "4", "1", "홍길동"],
+  ]);
+  assert.deepEqual(roster, [{ schoolName: "한빛초등학교", grade: "6", className: "4", number: "1", name: "홍길동" }]);
 });
 
 test("parseRosterRows fills missing grade and class from assessment defaults", () => {
@@ -28,7 +36,7 @@ test("parseRosterRows fills missing grade and class from assessment defaults", (
     ["번호", "이름"],
     ["01", "홍길동"],
   ], { grade: 5, className: "3" });
-  assert.deepEqual(roster, [{ grade: "5", className: "3", number: "01", name: "홍길동" }]);
+  assert.deepEqual(roster, [{ schoolName: "", grade: "5", className: "3", number: "01", name: "홍길동" }]);
 });
 
 test("parsePageNumbers expands ranges and reports invalid pages", () => {

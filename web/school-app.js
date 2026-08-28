@@ -101,8 +101,7 @@ async function renderHome() {
     <div class="page-shell school-shell">
       <section class="school-hero">
         <div>
-          <p class="eyebrow">2026학년도 2학기 · 초등 1~6학년</p>
-          <h1>AI 서-논술형<br><span>평가지원시스템</span></h1>
+          <h1>AI 서·논술형<br><span>평가지원시스템</span></h1>
           <p>학생 명단을 관리하고, 수업별 평가 설계부터 과제물 분할·AI 채점·교사 검토까지 한 흐름으로 진행하세요.</p>
           <div class="hero-actions">
             <a class="primary-action" href="#/courses/new">수업 추가 <span aria-hidden="true">＋</span></a>
@@ -228,20 +227,21 @@ async function renderCourseForm(courseId = "") {
 async function renderStudentManagement() {
   const students = await listStudents();
   const studentGroups = Array.from(students.reduce((groups, student) => {
-    const key = `${student.grade}|${student.className}`;
-    if (!groups.has(key)) groups.set(key, { grade: student.grade, className: student.className, students: [] });
+    const key = `${student.schoolName || ""}|${student.grade}|${student.className}`;
+    if (!groups.has(key)) groups.set(key, { schoolName: student.schoolName || "", grade: student.grade, className: student.className, students: [] });
     groups.get(key).students.push(student);
     return groups;
-  }, new Map()).values()).sort((a, b) => numericSort(a.grade, b.grade) || numericSort(a.className, b.className));
+  }, new Map()).values()).sort((a, b) => numericSort(a.schoolName, b.schoolName) || numericSort(a.grade, b.grade) || numericSort(a.className, b.className));
   app.innerHTML = `
     <div class="page-shell school-shell">
       <section class="page-intro student-intro">
-        <div><p class="eyebrow">학생 관리</p><h1>한 번 등록하고,<br><span>수업마다 선택하세요.</span></h1><p>학년·반·번호·이름으로 학생을 개별 생성하거나 Excel·CSV 명단을 일괄 등록할 수 있습니다.</p></div>
+        <div><p class="eyebrow">학생 관리</p><h1>한 번 등록하고,<br><span>수업마다 선택하세요.</span></h1><p>학교명·학년·반·번호·이름으로 학생을 개별 생성하거나 Excel·CSV 명단을 일괄 등록할 수 있습니다.</p></div>
         <a class="secondary-action" href="#/">나의 평가 목록으로</a>
       </section>
       <section class="student-create-grid">
         <form id="student-form" class="student-create-card">
           <div><p class="section-kicker">개별 생성</p><h2>학생 한 명 추가</h2></div>
+          <label class="full-field">학교명<input name="schoolName" required maxlength="80" value="${escapeHtml(students.find((student) => student.schoolName)?.schoolName || "")}" placeholder="예: 한빛초등학교"></label>
           <label>학년<select name="grade">${gradeOptions("6")}</select></label>
           <label>반<select name="className">${classOptions("1")}</select></label>
           <label>번호<input name="number" type="number" min="1" max="99" required placeholder="1"></label>
@@ -249,7 +249,7 @@ async function renderStudentManagement() {
           <button class="primary-action" type="submit">개별 생성</button>
         </form>
         <div class="student-import-card">
-          <div><p class="section-kicker">Excel 일괄 생성</p><h2>학생 명단 불러오기</h2><p>첫 행에 학년, 반, 번호, 이름 열을 사용해 주세요.</p></div>
+          <div><p class="section-kicker">Excel 일괄 생성</p><h2>학생 명단 불러오기</h2><p>첫 행에 학교명, 학년, 반, 번호, 이름 열을 사용해 주세요.</p></div>
           <label class="file-pick-button">Excel·CSV 선택<input data-student-import type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values"></label>
           <button class="secondary-action" type="button" data-download-student-template>명단 양식 Excel</button>
           <p data-student-import-status>최대 ${MAX_STUDENTS}명까지 현재 브라우저에 저장됩니다.</p>
@@ -258,10 +258,10 @@ async function renderStudentManagement() {
       <section class="student-list-card">
         <div class="board-toolbar"><div><p class="section-kicker">STUDENT ROSTER</p><h2>학생 목록</h2></div><div class="student-list-actions"><strong>${students.length}명</strong>${students.length ? `<button class="secondary-action danger-action" type="button" data-delete-all-students>학생 전체 삭제</button>` : ""}</div></div>
         ${students.length ? `
-          <div class="student-class-summary">${studentGroups.map((group) => `<div><span>${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반 · ${group.students.length}명</span><button type="button" data-delete-student-group="${escapeHtml(group.grade)}|${escapeHtml(group.className)}">이 학년·반 전체 삭제</button></div>`).join("")}</div>
+          <div class="student-class-summary">${studentGroups.map((group) => `<div><span>${escapeHtml(group.schoolName || "학교 미입력")} · ${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반 · ${group.students.length}명</span><button type="button" data-delete-student-group="${escapeHtml(group.schoolName)}|${escapeHtml(group.grade)}|${escapeHtml(group.className)}">이 학년·반 전체 삭제</button></div>`).join("")}</div>
           <div class="student-management-table">
-            <div class="student-management-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
-            ${students.map((student) => `<div class="student-management-row"><span>${escapeHtml(student.grade)}학년</span><span>${escapeHtml(student.className)}반</span><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><button type="button" data-delete-student="${escapeHtml(student.id)}">삭제</button></div>`).join("")}
+            <div class="student-management-head"><span>학교명</span><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
+            ${students.map((student) => `<div class="student-management-row"><span>${escapeHtml(student.schoolName || "미입력")}</span><span>${escapeHtml(student.grade)}학년</span><span>${escapeHtml(student.className)}반</span><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><button type="button" data-delete-student="${escapeHtml(student.id)}">삭제</button></div>`).join("")}
           </div>` : `<div class="course-empty"><span>명</span><h3>등록된 학생이 없습니다.</h3><p>개별 생성 또는 Excel 일괄 생성으로 학생 목록을 준비해 주세요.</p></div>`}
       </section>
     </div>`;
@@ -271,6 +271,7 @@ async function renderStudentManagement() {
     const form = event.currentTarget;
     try {
       await addStudents([{
+        schoolName: form.elements.schoolName.value,
         grade: form.elements.grade.value,
         className: form.elements.className.value,
         number: form.elements.number.value,
@@ -289,11 +290,11 @@ async function renderStudentManagement() {
     renderStudentManagement();
   });
   app.querySelectorAll("[data-delete-student-group]").forEach((button) => button.addEventListener("click", async () => {
-    const [grade, className] = button.dataset.deleteStudentGroup.split("|");
-    const groupStudents = students.filter((student) => student.grade === grade && student.className === className);
-    if (!groupStudents.length || !window.confirm(`${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제할까요? 해당 학생은 수업 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
+    const [schoolName, grade, className] = button.dataset.deleteStudentGroup.split("|");
+    const groupStudents = students.filter((student) => (student.schoolName || "") === schoolName && student.grade === grade && student.className === className);
+    if (!groupStudents.length || !window.confirm(`${schoolName || "학교 미입력"} · ${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제할까요? 해당 학생은 수업 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
     await removeStudents(groupStudents.map((student) => student.id));
-    showToast(`${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제했습니다.`);
+    showToast(`${schoolName || "학교 미입력"} · ${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제했습니다.`);
     renderStudentManagement();
   }));
   app.querySelectorAll("[data-delete-student]").forEach((button) => button.addEventListener("click", async () => {
@@ -349,8 +350,8 @@ async function addStudents(input) {
   const map = new Map(existing.map((student) => [studentKey(student), student]));
   for (const raw of input) {
     const normalized = StudentWorkflow.normalizeRoster([raw])[0];
-    if (!normalized?.grade || !normalized.className || !normalized.number || !normalized.name) throw new Error("학년, 반, 번호, 이름을 모두 입력해 주세요.");
-    const sameNumber = existing.find((student) => student.grade === normalized.grade && student.className === normalized.className && student.number === normalized.number);
+    if (!normalized?.schoolName || !normalized.grade || !normalized.className || !normalized.number || !normalized.name) throw new Error("학교명, 학년, 반, 번호, 이름을 모두 입력해 주세요.");
+    const sameNumber = existing.find((student) => (student.schoolName || "") === normalized.schoolName && student.grade === normalized.grade && student.className === normalized.className && student.number === normalized.number);
     if (sameNumber && sameNumber.name !== normalized.name) throw new Error(`${normalized.grade}학년 ${normalized.className}반 ${normalized.number}번 학생이 이미 등록되어 있습니다.`);
     if (map.has(studentKey(normalized))) continue;
     const student = { ...normalized, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
@@ -366,23 +367,24 @@ function downloadStudentTemplate() {
     return;
   }
 
-  const rosterRows = [["학년", "반", "번호", "이름"]];
-  for (let row = 0; row < 40; row += 1) rosterRows.push(["", "", "", ""]);
+  const rosterRows = [["학교명", "학년", "반", "번호", "이름"]];
+  for (let row = 0; row < 40; row += 1) rosterRows.push(["", "", "", "", ""]);
 
   const workbook = window.XLSX.utils.book_new();
   const rosterSheet = window.XLSX.utils.aoa_to_sheet(rosterRows);
-  rosterSheet["!cols"] = [{ wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
-  rosterSheet["!autofilter"] = { ref: "A1:D41" };
+  rosterSheet["!cols"] = [{ wch: 28 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
+  rosterSheet["!autofilter"] = { ref: "A1:E41" };
   window.XLSX.utils.book_append_sheet(workbook, rosterSheet, "학생명단");
 
   const guideSheet = window.XLSX.utils.aoa_to_sheet([
     ["학생 명단 작성 안내"],
     ["열 이름", "입력 방법", "예시"],
+    ["학교명", "학교 이름을 입력합니다.", "한빛초등학교"],
     ["학년", "1~6 사이의 숫자로 입력합니다.", 6],
     ["반", "숫자로 입력합니다.", 1],
     ["번호", "반 안에서 중복되지 않는 번호를 입력합니다.", 1],
     ["이름", "학생 이름을 입력합니다.", "홍길동"],
-    ["주의", "학생명단 시트의 열 이름은 변경하지 마세요.", "학년 / 반 / 번호 / 이름"],
+    ["주의", "학생명단 시트의 열 이름은 변경하지 마세요.", "학교명 / 학년 / 반 / 번호 / 이름"],
   ]);
   guideSheet["!cols"] = [{ wch: 18 }, { wch: 48 }, { wch: 28 }];
   window.XLSX.utils.book_append_sheet(workbook, guideSheet, "작성 안내");
@@ -1151,6 +1153,7 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
     assessmentTitle: design.taskName,
     student: {
       id: student.id,
+      schoolName: student.schoolName || "",
       grade: student.grade,
       className: student.className,
       number: student.number,
@@ -1175,7 +1178,7 @@ function renderResultDistributionDialog(course, targetStudents, results) {
   return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
     <div class="result-distribution-shell">
       <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div></div>
-      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><div class="result-output-buttons"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
+      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${student.schoolName ? `${escapeHtml(student.schoolName)} · ` : ""}${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><div class="result-output-buttons"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
       <section class="result-output-settings" data-result-output-settings hidden>
         <div><strong>출력할 항목을 선택하세요.</strong><p>선택 내용은 미리보기, 개별 출력, 전체 출력과 PDF 저장에 동일하게 적용됩니다.</p></div>
         <div class="result-output-options">
@@ -1326,7 +1329,7 @@ function downloadGradingResultsExcel(course, targetStudents) {
   worksheet["!rows"] = [{ hpt: 24 }, { hpt: 22 }, { hpt: 8 }, { hpt: 42 }, ...records.map(() => ({ hpt: 56 }))];
   if (records.length) worksheet["!autofilter"] = { ref: `A4:${lastColumn}${records.length + 4}` };
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "채점 결과");
-  workbook.Props = { Title: `${design.taskName} 채점 결과`, Subject: `${course.semesterLabel} ${course.subject}`, Author: "AI 서-논술형 평가지원시스템" };
+  workbook.Props = { Title: `${design.taskName} 채점 결과`, Subject: `${course.semesterLabel} ${course.subject}`, Author: "AI 서·논술형 평가지원시스템" };
   const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   window.XLSX.writeFile(workbook, `채점결과_${dateStamp}.xlsx`, { compression: true });
   showToast(`${records.length}명의 채점 결과 Excel을 내려받았습니다.`);
@@ -2143,11 +2146,11 @@ function clearPreviewUrls() {
   previewUrls = [];
 }
 
-function studentKey(student) { return [student.grade, student.className, student.number, student.name].join("|").toLocaleLowerCase("ko-KR"); }
+function studentKey(student) { return [student.schoolName, student.grade, student.className, student.number, student.name].join("|").toLocaleLowerCase("ko-KR"); }
 function numericSort(a, b) { return String(a).localeCompare(String(b), "ko-KR", { numeric: true }); }
 function studentSort(a, b) {
   if (!a || !b) return a ? -1 : b ? 1 : 0;
-  return numericSort(a.grade, b.grade) || numericSort(a.className, b.className) || numericSort(a.number, b.number) || a.name.localeCompare(b.name, "ko-KR");
+  return numericSort(a.schoolName || "", b.schoolName || "") || numericSort(a.grade, b.grade) || numericSort(a.className, b.className) || numericSort(a.number, b.number) || a.name.localeCompare(b.name, "ko-KR");
 }
 
 function downloadText(name, text, type) {
