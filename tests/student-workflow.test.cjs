@@ -3,6 +3,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Workflow = require("../web/student-workflow.js");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const schoolAppSource = fs.readFileSync(path.join(__dirname, "../web/school-app.js"), "utf8");
+
+test("student management uses clear Excel bulk-create labels and supports more than 500 students", () => {
+  assert.match(schoolAppSource, /const MAX_STUDENTS = 5000;/);
+  assert.match(schoolAppSource, /<h2>학생 일괄 생성<\/h2>/);
+  assert.match(schoolAppSource, />Excel 파일 업로드<input data-student-import/);
+  assert.doesNotMatch(schoolAppSource, /학생 명단 불러오기|Excel·CSV 선택/);
+});
 
 test("decodeTextBytes automatically reads a Windows Korean CP949 roster", () => {
   const cp949Bytes = Buffer.from("C7D0B3E22CB9DD2CB9F8C8A32CC0CCB8A70D0A362C312C312CB0ADBFACBFEC0D0A", "hex");

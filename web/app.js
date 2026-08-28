@@ -12,7 +12,7 @@ const ROSTER_PROFILES_SETTING = "student-roster-profiles";
 const LOCAL_DATA_CRYPTO_SETTING = "local-data-crypto-key";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ASSESSMENT_BYTES = 60 * 1024 * 1024;
-const MAX_ROSTER_STUDENTS = 500;
+const MAX_ROSTER_STUDENTS = 5000;
 const ACCEPTED_TYPES = new Set([
   "application/pdf",
   "image/jpeg",

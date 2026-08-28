@@ -10,7 +10,7 @@ const GEMINI_CRYPTO_SETTING = "gemini-crypto-key";
 const GEMINI_STATUS_SETTING = "gemini-key-status";
 const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_STUDENTS = 500;
+const MAX_STUDENTS = 5000;
 const GRADING_PARALLELISM = 4;
 const MIN_GRADING_PARALLELISM = 2;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
@@ -258,8 +258,8 @@ async function renderStudentManagement() {
           <button class="primary-action" type="submit">개별 생성</button>
         </form>
         <div class="student-import-card">
-          <div><p class="section-kicker">Excel 일괄 생성</p><h2>학생 명단 불러오기</h2><p>첫 행에 학교명, 학년, 반, 번호, 이름 열을 사용해 주세요.</p></div>
-          <label class="file-pick-button">Excel·CSV 선택<input data-student-import type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values"></label>
+          <div><p class="section-kicker">Excel 일괄 생성</p><h2>학생 일괄 생성</h2><p>첫 행에 학교명, 학년, 반, 번호, 이름 열을 사용해 주세요.</p></div>
+          <label class="file-pick-button">Excel 파일 업로드<input data-student-import type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values"></label>
           <button class="secondary-action" type="button" data-download-student-template>명단 양식 Excel</button>
           <p data-student-import-status>최대 ${MAX_STUDENTS}명까지 현재 브라우저에 저장됩니다.</p>
         </div>
