@@ -733,7 +733,7 @@ a { color: inherit; text-decoration: none; }
 .mini-panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: rgba(24,33,56,.05); }
 .mini-panel-head strong { font-size: 10px; }
 .mini-panel-head span { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.pdf-preview-panel iframe, .student-answer-preview iframe { display: block; width: 100%; height: 570px; border: 0; background: #eceff3; }
+.pdf-preview-panel iframe, .student-answer-preview iframe { display: block; width: 100%; height: clamp(620px,76vh,920px); border: 0; background: #eceff3; }
 .split-list { max-height: 520px; overflow: auto; }
 .split-row { display: grid; grid-template-columns: 24px 50px minmax(100px,1fr) auto; gap: 8px; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .split-row.is-included { background: rgba(185,234,210,.14); }
@@ -794,7 +794,7 @@ a { color: inherit; text-decoration: none; }
 .inline-detail-close { align-self: center; padding: 9px 13px; border: 1px solid var(--ink); border-radius: 9px; background: white; color: var(--blue); cursor: pointer; font-size: 8px; font-weight: 900; }
 .student-review-grid { display: grid; grid-template-columns: minmax(0,.88fr) minmax(520px,1.12fr); min-height: 720px; }
 .student-answer-preview { border-right: 1px solid var(--line); }
-.student-answer-preview iframe { height: 760px; }
+.student-answer-preview iframe { height: clamp(720px,82vh,1040px); }
 .teacher-score-panel { overflow: auto; max-height: 820px; }
 .question-score-group { border-bottom: 2px solid var(--ink); }
 .question-score-group:last-child { border-bottom: 0; }

@@ -963,7 +963,7 @@ function renderSubmissionTab(course, targetStudents) {
         <div class="submission-workspace">
           <section class="pdf-preview-panel">
             <div class="mini-panel-head"><strong>학급 PDF 미리보기</strong><span>${escapeHtml(submission.sourceFile.name)}</span></div>
-            <iframe src="${previewUrl}" title="업로드된 학급 답안 PDF 미리보기"></iframe>
+            <iframe src="${fitPdfPreviewUrl(previewUrl)}" title="업로드된 학급 답안 PDF 미리보기"></iframe>
           </section>
           <section class="split-student-panel">
             <div class="mini-panel-head"><strong>학생 번호별 자동 분할</strong><span>체크 해제 시 다음 학생부터 페이지를 당겨 배정</span></div>
@@ -1878,7 +1878,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     <div class="student-result-shell">
       <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.recognitionPassCompleted ? "2단계 판독 완료" : "직접 채점"}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
-        <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${previewUrl}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
+        <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
           <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
@@ -2117,6 +2117,11 @@ function createPreviewUrl(blob) {
   const url = URL.createObjectURL(blob);
   previewUrls.push(url);
   return url;
+}
+
+function fitPdfPreviewUrl(url) {
+  if (!url) return "";
+  return `${url.split("#")[0]}#view=FitH&zoom=page-width&pagemode=none`;
 }
 
 function clearPreviewUrls() {

@@ -159,3 +159,11 @@ test("result distribution keeps print actions beside output settings and removes
   assert.doesNotMatch(dialogSource, /result-distribution-actions/);
 });
 
+test("student answer PDF previews open fitted to the available panel width", () => {
+  assert.match(schoolSource, /function fitPdfPreviewUrl\(url\)/);
+  assert.match(schoolSource, /#view=FitH&zoom=page-width&pagemode=none/);
+  assert.match(schoolSource, /학생 답안 PDF[^]*iframe src="\$\{fitPdfPreviewUrl\(previewUrl\)\}"/);
+  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  assert.match(styles, /\.student-answer-preview iframe \{ height: clamp\(720px,82vh,1040px\); \}/);
+});
+
