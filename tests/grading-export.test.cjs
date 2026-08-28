@@ -4,8 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const Export = require("../grading-export.js");
-const schoolSource = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+const Export = require("../web/grading-export.js");
+const schoolSource = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
 
 function loadAchievementLevelForExport() {
   const start = schoolSource.indexOf("function achievementLevelForExport");
@@ -137,20 +137,24 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
-test("course grading uses three parallel workers and only precision-rechecks low-confidence answers", () => {
-  assert.match(schoolSource, /const GRADING_PARALLELISM = 3/);
+test("course grading uses adaptive four-worker grading and selectively rechecks uncertain criteria", () => {
+  assert.match(schoolSource, /const GRADING_PARALLELISM = 4/);
+  assert.match(schoolSource, /const MIN_GRADING_PARALLELISM = 2/);
   assert.match(schoolSource, /Promise\.all\(Array\.from\(\{ length: workerCount \}/);
-  assert.match(schoolSource, /function needsPrecisionReview\(result\)/);
-  assert.match(schoolSource, /item\?\.confidence === "low"/);
-  assert.match(schoolSource, /통합 판독·채점·피드백 작성 중/);
+  assert.match(schoolSource, /function needsPrecisionReview\(result, metadata\)/);
+  assert.match(schoolSource, /selectPrecisionCriterionIds/);
+  assert.match(schoolSource, /원본 우선 1차 판독·채점 중/);
+  assert.match(schoolSource, /prepareEnhancedAnswerImages\(studentFile/);
+  assert.match(schoolSource, /mergePrecisionGradingResult/);
   assert.match(schoolSource, /precisionReview: true/);
+  assert.match(schoolSource, /isGeminiRateLimitError/);
   const assignmentStart = schoolSource.indexOf("async function gradeStudentAssignment");
   const assignmentEnd = schoolSource.indexOf("async function regradeSingleStudent", assignmentStart);
   assert.doesNotMatch(schoolSource.slice(assignmentStart, assignmentEnd), /ChaejeomAI\.recognizeAnswer/);
 });
 
 test("student grading detail gives the scoring panel more horizontal space", () => {
-  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.student-review-grid \{[^}]*grid-template-columns: minmax\(0,\.88fr\) minmax\(520px,1\.12fr\)/);
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.student-review-grid \{ grid-template-columns: 1fr; \}/);
 });
@@ -179,7 +183,7 @@ test("student answer PDF previews open fitted to the available panel width", () 
   assert.match(schoolSource, /function fitPdfPreviewUrl\(url\)/);
   assert.match(schoolSource, /#view=FitH&zoom=page-width&pagemode=none/);
   assert.match(schoolSource, /학생 답안 PDF[^]*iframe src="\$\{fitPdfPreviewUrl\(previewUrl\)\}"/);
-  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.student-answer-preview iframe \{ height: clamp\(720px,82vh,1040px\); \}/);
 });
 
@@ -192,7 +196,7 @@ test("teacher confirmation dismisses the review-required guidance and persists A
 });
 
 test("problem scoring panel uses readable text and score button sizes", () => {
-  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.question-score-group-head > strong \{ font-size: 14px; \}/);
   assert.match(styles, /\.teacher-score-list p \{[^}]*font-size: 11px;[^}]*line-height: 1\.65;/);
   assert.match(styles, /\.teacher-score-list small \{[^}]*font-size: 10px;/);
@@ -201,7 +205,7 @@ test("problem scoring panel uses readable text and score button sizes", () => {
 });
 
 test("AI and achievement feedback editors match the readable grading text scale", () => {
-  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.feedback-edit-field \{[^}]*font-size: 12px;/);
   assert.match(styles, /\.feedback-edit-field textarea \{[^}]*font-size: 12px;[^}]*line-height: 1\.7;/);
   assert.match(styles, /\.student-achievement-feedback > strong \{[^}]*font-size: 12px;/);
@@ -211,7 +215,7 @@ test("AI and achievement feedback editors match the readable grading text scale"
 });
 
 test("grading confidence is shown as accessible white badges with distinct colors", () => {
-  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(schoolSource, /confidence-badge confidence-\$\{confidence\}/);
   assert.match(schoolSource, /\["high", "medium", "low"\]\.includes\(item\.confidence\)/);
   assert.match(styles, /\.confidence-badge \{[^}]*background: #fff;[^}]*font-size: 10px;/);

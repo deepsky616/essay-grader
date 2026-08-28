@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
 
 function loadSubjectCatalog() {
   const start = source.indexOf("const COURSE_SUBJECTS_BY_GRADE");
@@ -70,7 +70,7 @@ test("student management filters roster cards to the selected school", () => {
 });
 
 test("home and navigation use the requested AI essay-assessment title", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);
   assert.doesNotMatch(source, /2026학년도 2학기 · 초등 1~6학년/);
   assert.match(html, /AI 서·논술형/);

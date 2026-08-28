@@ -4,12 +4,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const AI = require("../ai-core.js");
+const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
 function loadSchoolMathHelpers() {
-  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
   const start = source.indexOf("function toTeacherFriendlyMath");
   const end = source.indexOf("function renderMathPreview", start);
   assert.ok(start >= 0 && end > start, "school math helpers must exist");
@@ -108,6 +108,62 @@ test("normalizeGradingResult recomputes totals and flags invalid scores", () => 
   assert.equal(result.totalScore, 3);
   assert.equal(result.needsTeacherReview, true);
   assert.ok(result.reviewReasons.length >= 2);
+});
+
+test("selective precision review targets uncertain questions and their achievement range", () => {
+  const metadata = {
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] },
+      { id: "r2", questionNumber: "2", evaluationElement: "설명", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 1, criterion: "부분" }, { score: 0, criterion: "오답" }] },
+      { id: "r3", questionNumber: "3", evaluationElement: "도형", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 1, criterion: "부분" }, { score: 0, criterion: "오답" }] },
+    ],
+  };
+  const selected = AI.selectPrecisionCriterionIds({
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1", answerReading: "12", evidence: "계산식", score: 2, confidence: "high" },
+      { criterionId: "r2", questionNumber: "2", answerReading: "숫자가 흐림", evidence: "", score: 1, confidence: "medium" },
+      { criterionId: "r3", questionNumber: "3", answerReading: "도형 완성", evidence: "대응점 일치", score: 2, confidence: "high" },
+    ],
+    achievementResults: [{ itemRange: "1-2번", confidence: "medium" }],
+  }, metadata);
+  assert.deepEqual(selected, ["r2", "r1"]);
+});
+
+test("precision results replace only reviewed criteria and recompute the total locally", () => {
+  const metadata = {
+    totalScore: 6,
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] },
+      { id: "r2", questionNumber: "2", evaluationElement: "설명", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 1, criterion: "부분" }, { score: 0, criterion: "오답" }] },
+      { id: "r3", questionNumber: "3", evaluationElement: "도형", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 1, criterion: "부분" }, { score: 0, criterion: "오답" }] },
+    ],
+    achievementGroups: [{ id: "a1", itemRange: "1-2번", standard: "계산하고 설명한다", levels: [{ label: "상" }, { label: "중" }, { label: "하" }] }],
+  };
+  const base = {
+    studentIdentifier: "S001", totalScore: 3, maxScore: 6, overallAchievementLevel: "중", summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], needsTeacherReview: true, reviewReasons: ["2번 글씨가 흐립니다."],
+    achievementResults: [{ achievementStandardId: "a1", itemRange: "1-2번", achievementLevel: "중", evidence: "일부 확인", feedback: "다시 확인", confidence: "medium" }],
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1", evaluationElement: "계산", answerReading: "12", criterion: "정확", score: 2, maxScore: 2, evidence: "계산식", feedback: "좋음", confidence: "high" },
+      { criterionId: "r2", questionNumber: "2", evaluationElement: "설명", answerReading: "흐림", criterion: "오답", score: 0, maxScore: 2, evidence: "", feedback: "확인", confidence: "medium" },
+      { criterionId: "r3", questionNumber: "3", evaluationElement: "도형", answerReading: "완성", criterion: "부분", score: 1, maxScore: 2, evidence: "일부", feedback: "확인", confidence: "high" },
+    ],
+  };
+  const precision = {
+    studentIdentifier: "S001", totalScore: 3, maxScore: 6, overallAchievementLevel: "상", summary: "다시 확인한 결과 설명이 타당합니다.",
+    strengths: ["계산과 설명"], improvements: [], nextSteps: [], needsTeacherReview: false, reviewReasons: [],
+    achievementResults: [{ achievementStandardId: "a1", itemRange: "1-2번", achievementLevel: "상", evidence: "계산과 설명 확인", feedback: "잘했습니다.", confidence: "high" }],
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1", evaluationElement: "계산", answerReading: "12", criterion: "정확", score: 2, maxScore: 2, evidence: "계산식", feedback: "좋음", confidence: "high" },
+      { criterionId: "r2", questionNumber: "2", evaluationElement: "설명", answerReading: "근거를 씀", criterion: "부분", score: 1, maxScore: 2, evidence: "설명 확인", feedback: "좋음", confidence: "high" },
+    ],
+  };
+  const merged = AI.mergePrecisionGradingResult(base, precision, ["r1", "r2"], metadata, "gemini-2.5-flash");
+  assert.deepEqual(merged.questionResults.map((item) => item.score), [2, 1, 1]);
+  assert.equal(merged.totalScore, 4);
+  assert.equal(merged.achievementResults[0].achievementLevel, "상");
+  assert.equal(merged.needsTeacherReview, false);
+  assert.deepEqual(merged.precisionReviewedCriterionIds, ["r1", "r2"]);
 });
 
 test("normalizeGradingResult validates achievement levels and keeps roster identity", () => {
@@ -367,7 +423,8 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
       assert.equal(body.generationConfig.maxOutputTokens, 8192);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
-      assert.equal("temperature" in body.generationConfig, false);
+      assert.equal(body.generationConfig.temperature, 0.1);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 512);
       assert.match(body.contents[0].parts[0].text, /같은 페이지끼리 비교/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(responsePayload) }] } }] }), { status: 200 });
     },
@@ -375,7 +432,7 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
   assert.equal(result.totalScore, 2);
   assert.equal(result.questionResults[0].confidence, "high");
   assert.equal(result.questionResults[0].answerReading, "2라고 씀");
-  assert.equal(result.model, "gemini-3.7-flash");
+  assert.equal(result.model, "gemini-2.5-flash");
 });
 
 test("precision grading uses a bounded extra thinking budget", async () => {
@@ -395,7 +452,7 @@ test("precision grading uses a bounded extra thinking budget", async () => {
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.maxOutputTokens, 8192);
-      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 1024);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
       assert.match(body.contents[0].parts[0].text, /정밀 재검토/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
     },
@@ -632,7 +689,7 @@ test("matchAnswerPages sends the combined PDF and normalizes roster assignments"
     answerFile: file,
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
-      assert.equal("temperature" in body.generationConfig, false);
+      assert.equal(body.generationConfig.temperature, 0.1);
       assert.equal(body.generationConfig.responseSchema.type, "object");
       assert.match(body.contents[0].parts[0].text, /학생 명단/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({

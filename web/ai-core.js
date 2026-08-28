@@ -5,15 +5,15 @@
   if (typeof module === "object" && module.exports) module.exports = api;
   root.ChaejeomAI = api;
 })(typeof globalThis !== "undefined" ? globalThis : window, function createChaejeomAI() {
-  const MODEL = "gemini-3.7-flash";
+  const MODEL = "gemini-2.5-flash";
   const SUPPORTED_MODELS = [
-    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", note: "최신 안정 · 채점 품질 우선", recommended: true },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "권장 · 속도와 채점 품질 균형", recommended: true },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", note: "최신 안정 · 채점 품질 우선" },
     { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", note: "안정 · 균형형" },
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", note: "안정 · 일반 처리" },
     { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", note: "안정 · 비용 절약" },
     { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", note: "안정 · 빠른 처리" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", note: "프리뷰 · 변경 가능" },
-    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "안정 · 호환성" },
     { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "안정 · 최저 비용" },
   ];
   const MAX_INLINE_BYTES = 18 * 1024 * 1024;
@@ -480,6 +480,99 @@
     }));
   }
 
+  function rubricCriteriaForResponse(metadata = {}) {
+    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const requestedIds = new Set(textList(metadata.precisionCriterionIds));
+    if (!metadata.precisionReview || !requestedIds.size) return rubricCriteria;
+    const selected = rubricCriteria.filter((item) => requestedIds.has(item.id));
+    return selected.length ? selected : rubricCriteria;
+  }
+
+  function selectPrecisionCriterionIds(result, metadata = {}) {
+    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const selected = new Set();
+    const suspiciousReading = /판독 불가|확인 불가|식별 불가|결과 없음|잘림|흐림|겹친|추정/;
+    const questionResults = Array.isArray(result?.questionResults) ? result.questionResults : [];
+    for (const item of questionResults) {
+      const score = numeric(item?.score);
+      const needsReview = item?.confidence !== "high"
+        || Boolean(item?.missingResult)
+        || Boolean(item?.scoreAdjusted)
+        || !text(item?.answerReading)
+        || suspiciousReading.test(`${text(item?.answerReading)} ${text(item?.evidence)}`)
+        || (score > 0 && !text(item?.evidence));
+      if (!needsReview) continue;
+      const matched = rubricCriteria.find((rubric) => rubric.id === text(item?.criterionId))
+        || rubricCriteria.find((rubric) => rubric.questionNumber === text(item?.questionNumber)
+          && rubric.evaluationElement === text(item?.evaluationElement));
+      if (matched) selected.add(matched.id);
+    }
+
+    const uncertainAchievements = (Array.isArray(result?.achievementResults) ? result.achievementResults : [])
+      .filter((item) => item?.confidence !== "high");
+    for (const achievement of uncertainAchievements) {
+      const rangeNumbers = (text(achievement?.itemRange).match(/\d+/g) || []).map(Number).filter(Number.isFinite);
+      const isRange = /[-~～—–]/.test(text(achievement?.itemRange)) && rangeNumbers.length >= 2;
+      const matching = rubricCriteria.filter((rubric) => {
+        const questionNumber = Number((rubric.questionNumber.match(/\d+/) || [])[0]);
+        if (!Number.isFinite(questionNumber) || !rangeNumbers.length) return false;
+        if (isRange) return questionNumber >= Math.min(rangeNumbers[0], rangeNumbers[1])
+          && questionNumber <= Math.max(rangeNumbers[0], rangeNumbers[1]);
+        return rangeNumbers.includes(questionNumber);
+      });
+      for (const rubric of matching.length ? matching : rubricCriteria) selected.add(rubric.id);
+    }
+    return Array.from(selected);
+  }
+
+  function mergePrecisionGradingResult(baseResult, precisionResult, criterionIds, metadata = {}, model = MODEL) {
+    const targetIds = new Set(textList(criterionIds));
+    if (!targetIds.size) return baseResult;
+    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const baseRows = new Map((Array.isArray(baseResult?.questionResults) ? baseResult.questionResults : [])
+      .map((item) => [text(item?.criterionId), item]));
+    const precisionRows = new Map((Array.isArray(precisionResult?.questionResults) ? precisionResult.questionResults : [])
+      .map((item) => [text(item?.criterionId), item]));
+    const questionResults = rubricCriteria.map((rubric) => (
+      targetIds.has(rubric.id) && precisionRows.has(rubric.id)
+        ? precisionRows.get(rubric.id)
+        : baseRows.get(rubric.id)
+    )).filter(Boolean);
+
+    const targetRubrics = rubricCriteria.filter((rubric) => targetIds.has(rubric.id));
+    const unresolvedBaseReasons = textList(baseResult?.reviewReasons).filter((reason) => {
+      if (/1차 통합 채점|사전 판독/.test(reason)) return false;
+      return !targetRubrics.some((rubric) => reason.includes(`${rubric.questionNumber}번`)
+        || (rubric.evaluationElement && reason.includes(`‘${rubric.evaluationElement}’`)));
+    });
+    const raw = {
+      studentIdentifier: text(baseResult?.studentIdentifier),
+      totalScore: questionResults.reduce((sum, item) => sum + numeric(item?.score), 0),
+      maxScore: numeric(metadata.totalScore || baseResult?.maxScore),
+      overallAchievementLevel: text(precisionResult?.overallAchievementLevel) || text(baseResult?.overallAchievementLevel),
+      summary: text(precisionResult?.summary) || text(baseResult?.summary),
+      strengths: textList(precisionResult?.strengths).length ? textList(precisionResult.strengths) : textList(baseResult?.strengths),
+      improvements: textList(precisionResult?.improvements).length ? textList(precisionResult.improvements) : textList(baseResult?.improvements),
+      nextSteps: textList(precisionResult?.nextSteps).length ? textList(precisionResult.nextSteps) : textList(baseResult?.nextSteps),
+      achievementResults: Array.isArray(precisionResult?.achievementResults) && precisionResult.achievementResults.length
+        ? precisionResult.achievementResults
+        : baseResult?.achievementResults,
+      questionResults,
+      needsTeacherReview: false,
+      reviewReasons: [...unresolvedBaseReasons, ...textList(precisionResult?.reviewReasons)],
+    };
+    const merged = normalizeGradingResult(raw, {
+      ...metadata,
+      precisionReview: false,
+      precisionCriterionIds: [],
+      preReadings: [],
+    }, model);
+    return {
+      ...merged,
+      precisionReviewedCriterionIds: Array.from(targetIds),
+    };
+  }
+
   function buildRecognitionPrompt(rubricCriteria) {
     const targets = rubricCriteria.map((item) => ({
       criterionId: item.id,
@@ -566,6 +659,7 @@ ${JSON.stringify(targets)}
       })),
       recognitionWarnings: textList(metadata.recognitionWarnings),
       precisionReview: Boolean(metadata.precisionReview),
+      precisionCriterionIds: textList(metadata.precisionCriterionIds),
       blankComparisonRequired: Boolean(metadata.requireBlankComparison),
       identityRedacted: Boolean(metadata.identityRedacted),
       student: metadata.student ? {
@@ -593,15 +687,17 @@ ${JSON.stringify(targets)}
 5. 각 평가요소의 answerReading에는 학생이 실제로 쓴 핵심 답·식·그림을 먼저 객관적으로 옮겨 적으세요. 보이지 않으면 ‘판독 불가’, 쓰지 않았으면 ‘무응답’으로 기록하고 내용을 만들지 마세요.
 6. 도형 문항은 점의 위치, 선분의 연결, 대칭축과의 대응, 격자 칸 수를 빈 답안지와 대조해 판정합니다. 흐린 연필선·겹친 선·지운 흔적은 낮은 confidence와 구체적인 교사 검토 사유를 남기세요.
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 needsTeacherReview와 reviewReasons에 기록합니다.
-8. questionResults에는 rubricCriteria의 모든 평가요소를 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사합니다. 같은 문제 번호에 평가요소가 여러 개여도 합치거나 생략하지 마세요.
-9. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. totalScore는 questionResults의 score 합계여야 합니다.
+${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
+    ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
+    : "8. questionResults에는 rubricCriteria의 모든 평가요소를 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사합니다. 같은 문제 번호에 평가요소가 여러 개여도 합치거나 생략하지 마세요."}
+9. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. totalScore는 이번 questionResults에 포함된 점수의 합계여야 합니다.
 10. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
 11. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
 12. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 가려지지 않은 이름이 보이더라도 응답에 옮겨 적지 마세요.
 13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 14. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
 15. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
-${safeMetadata.precisionReview ? "16. 이것은 1차 통합 채점에서 확신도가 낮았던 답안의 정밀 재검토입니다. preReadings의 낮은 확신도 항목을 원본·빈 답안지·필기 강조본과 다시 비교하고, 추측하지 말고 전체 점수와 피드백을 완성하세요." : ""}
+${safeMetadata.precisionReview ? "16. 이것은 1차 통합 채점에서 검증이 필요했던 문항의 정밀 재검토입니다. 지정된 문항을 원본·빈 답안지·필기 강조본과 다시 비교하고, 전체 답안 맥락을 고려해 종합 피드백과 성취기준별 결과도 갱신하세요. 여전히 불명확하면 추측하지 말고 낮은 confidence를 유지하세요." : ""}
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -634,7 +730,7 @@ ${JSON.stringify(safeMetadata)}
   }
 
   function buildScoreRepairPrompt(metadata = {}) {
-    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const rubricCriteria = rubricCriteriaForResponse(metadata);
     const achievementGroups = (Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : []).map((group, index) => ({
       id: text(group?.id) || `achievement-${index + 1}`,
       itemRange: text(group?.itemRange),
@@ -666,7 +762,7 @@ ${JSON.stringify(achievementGroups)}
 
   function hasCompleteGradingPayload(payload, metadata = {}) {
     if (!payload || typeof payload !== "object") return false;
-    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const rubricCriteria = rubricCriteriaForResponse(metadata);
     const questionResults = Array.isArray(payload.questionResults) ? payload.questionResults : [];
     if (rubricCriteria.length) {
       if (questionResults.length !== rubricCriteria.length) return false;
@@ -709,7 +805,7 @@ ${JSON.stringify(roster)}
     if (!raw || typeof raw !== "object") throw new Error("채점 결과 형식이 올바르지 않습니다.");
     const assessmentMax = positiveNumber(metadata.totalScore, positiveNumber(raw.maxScore, 0));
     const reviewReasons = [...textList(raw.reviewReasons), ...textList(metadata.recognitionWarnings)];
-    const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
+    const rubricCriteria = rubricCriteriaForResponse(metadata);
     const preReadings = Array.isArray(metadata.preReadings) ? metadata.preReadings : [];
     const rawQuestionResults = Array.isArray(raw.questionResults) ? raw.questionResults : [];
     const usedRawIndexes = new Set();
@@ -728,12 +824,17 @@ ${JSON.stringify(roster)}
       const maxScore = matchedRubric ? matchedRubric.maxScore : Math.max(0, numeric(item?.maxScore));
       const originalScore = numeric(item?.score);
       let score = clamp(originalScore, 0, maxScore);
-      if (score !== originalScore) reviewReasons.push(`${item?.questionNumber || index + 1}번 문항 점수가 허용 범위를 벗어나 자동 보정되었습니다.`);
+      let scoreAdjusted = false;
+      if (score !== originalScore) {
+        scoreAdjusted = true;
+        reviewReasons.push(`${item?.questionNumber || index + 1}번 문항 점수가 허용 범위를 벗어나 자동 보정되었습니다.`);
+      }
       const allowedScores = matchedRubric?.scoreLevels?.map((level) => level.score) || [];
       if (allowedScores.length && !allowedScores.includes(score)) {
         const closest = allowedScores.reduce((best, value) => Math.abs(value - score) < Math.abs(best - score) ? value : best, allowedScores[0]);
         reviewReasons.push(`${matchedRubric.questionNumber}번 ‘${matchedRubric.evaluationElement}’ 점수가 입력된 배점 단계와 달라 ${roundScore(closest)}점으로 보정되었습니다.`);
         score = closest;
+        scoreAdjusted = true;
       }
       const selectedLevel = matchedRubric?.scoreLevels?.find((level) => level.score === score);
       const criterionId = matchedRubric?.id || text(item?.criterionId);
@@ -757,6 +858,8 @@ ${JSON.stringify(roster)}
         evidence: text(item?.evidence),
         feedback: text(item?.feedback) || (missing ? "이 평가요소는 교사가 답안 원본을 확인해 주세요." : ""),
         confidence,
+        missingResult: missing,
+        scoreAdjusted,
       };
     });
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
@@ -983,7 +1086,7 @@ ${JSON.stringify(roster)}
       responseMimeType: "application/json",
     });
     if (responseSchema) config.responseSchema = responseSchema;
-    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 1024 };
+    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 2048 };
     else if (/^gemini-3(?:\.|-)/i.test(model)) config.thinkingConfig = { thinkingLevel: "medium" };
     return config;
   }
@@ -1160,6 +1263,8 @@ ${JSON.stringify(roster)}
     buildPrompt,
     buildPageMatchPrompt,
     normalizeGradingResult,
+    selectPrecisionCriterionIds,
+    mergePrecisionGradingResult,
     normalizePageAssignments,
     arrayBufferToBase64,
   };

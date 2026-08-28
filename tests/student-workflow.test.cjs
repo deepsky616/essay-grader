@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const Workflow = require("../student-workflow.js");
+const Workflow = require("../web/student-workflow.js");
 
 test("decodeTextBytes automatically reads a Windows Korean CP949 roster", () => {
   const cp949Bytes = Buffer.from("C7D0B3E22CB9DD2CB9F8C8A32CC0CCB8A70D0A362C312C312CB0ADBFACBFEC0D0A", "hex");

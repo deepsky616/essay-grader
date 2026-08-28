@@ -11,7 +11,8 @@ const GEMINI_STATUS_SETTING = "gemini-key-status";
 const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_STUDENTS = 500;
-const GRADING_PARALLELISM = 3;
+const GRADING_PARALLELISM = 4;
+const MIN_GRADING_PARALLELISM = 2;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const COURSE_SUBJECTS_BY_GRADE = Object.freeze({
   "1": Object.freeze(["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"]),
@@ -1117,7 +1118,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
       <article class="is-ready"><span>2</span><div><strong>필기·도형 고해상도 보정</strong><p>신원 영역을 가린 뒤 흐린 연필선과 작은 수식을 강조한 AI 전송용 이미지를 만듭니다.</p></div></article>
-      <article class="is-ready"><span>3</span><div><strong>빠른 통합 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 채점하고, 확신도가 낮은 답안만 자동으로 정밀 재검토합니다.</p></div></article>
+      <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 검증에 걸린 문항만 고해상도로 다시 확인합니다. 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
@@ -1478,6 +1479,9 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   let stopped = false;
   const pendingAssignments = [...assignments];
   const activeStages = new Map();
+  const rateLimitRetries = new Map();
+  let desiredParallelism = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
+  activeGradingRun.parallelism = desiredParallelism;
   let saveQueue = Promise.resolve();
   const queueCourseSave = () => {
     const snapshot = {
@@ -1504,6 +1508,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   };
   const processNextAssignment = async (workerIndex) => {
     while (!controller.signal.aborted) {
+      if (workerIndex >= desiredParallelism) return;
       const assignment = pendingAssignments.shift();
       if (!assignment) return;
       const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
@@ -1530,6 +1535,20 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
         course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
       } catch (error) {
         if (controller.signal.aborted || error?.name === "AbortError") { stopped = true; break; }
+        if (isGeminiRateLimitError(error)) {
+          const retries = (rateLimitRetries.get(assignment.studentId) || 0) + 1;
+          rateLimitRetries.set(assignment.studentId, retries);
+          if (desiredParallelism > MIN_GRADING_PARALLELISM) desiredParallelism -= 1;
+          activeGradingRun.parallelism = desiredParallelism;
+          if (retries <= 2) {
+            pendingAssignments.push(assignment);
+            activeStages.set(workerIndex, `사용량 제한 감지 · ${desiredParallelism}명 동시 처리로 조정`);
+            refreshParallelProgress();
+            await waitForGradingRetry(1500 * retries, controller.signal);
+            activeStages.delete(workerIndex);
+            continue;
+          }
+        }
         course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
         course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
       }
@@ -1541,8 +1560,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     }
     if (controller.signal.aborted) stopped = true;
   };
-  const workerCount = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
-  activeGradingRun.parallelism = workerCount;
+  const workerCount = desiredParallelism;
   await Promise.all(Array.from({ length: workerCount }, (_, workerIndex) => processNextAssignment(workerIndex)));
   await saveQueue;
   window.clearInterval(elapsedTimer);
@@ -1584,6 +1602,25 @@ function stopCourseGrading(courseId) {
   });
 }
 
+function isGeminiRateLimitError(error) {
+  return /HTTP 429|RESOURCE_EXHAUSTED|사용량.*한도|요청 횟수.*한도/i.test(String(error?.message || ""));
+}
+
+function waitForGradingRetry(milliseconds, signal) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener?.("abort", handleAbort);
+      resolve();
+    }, milliseconds);
+    const handleAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener?.("abort", handleAbort, { once: true });
+  });
+}
+
 function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`, elapsedMs = 0, running = false } = {}) {
   const card = app.querySelector("[data-grading-progress]");
   if (!card) return;
@@ -1597,9 +1634,8 @@ function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PAR
   card.querySelector("[data-progress-track]").classList.toggle("is-active", running);
 }
 
-function needsPrecisionReview(result) {
-  const questionResults = Array.isArray(result?.questionResults) ? result.questionResults : [];
-  return questionResults.some((item) => item?.confidence === "low" || /판독 불가|확인 불가|식별 불가/.test(`${item?.answerReading || ""} ${item?.evidence || ""}`));
+function needsPrecisionReview(result, metadata) {
+  return ChaejeomAI.selectPrecisionCriterionIds(result, metadata).length > 0;
 }
 
 function preliminaryReadingsFromResult(result) {
@@ -1610,7 +1646,7 @@ function preliminaryReadingsFromResult(result) {
     answerReading: item.answerReading || "",
     visualDescription: item.visualDescription || "",
     confidence: item.confidence || "low",
-    reviewReason: item.confidence === "low" ? "1차 통합 채점에서 판독 확신도가 낮았습니다." : "",
+    reviewReason: item.confidence !== "high" ? `1차 통합 채점의 확신도가 ${item.confidence || "low"}였습니다.` : "",
   }));
 }
 
@@ -1627,35 +1663,16 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   onStage?.("학생 답안 페이지 분리·개인정보 가림 중");
   const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
   const referenceFiles = [
-    ...(design.rubricFile ? [{ role: "rubric", file: asFile(design.rubricFile) }] : []),
-    ...(design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
+    ...(!structuredExamples.length && design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
     ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
   ];
-  let enhancedFiles = [];
   const recognitionWarnings = [];
-  try {
-    onStage?.("흐린 필기·도형 고해상도 보정 중");
-    enhancedFiles = await prepareEnhancedAnswerImages(studentFile, { signal });
-  } catch (error) {
-    if (signal?.aborted || error?.name === "AbortError") throw error;
-    recognitionWarnings.push(`필기 강조본을 만들지 못해 원본 PDF로 판독했습니다. (${friendlyError(error)})`);
-  }
-  const fixedBytes = [...referenceFiles.map((item) => item.file), resolvedBlankFile, studentFile].reduce((sum, file) => sum + Number(file?.size || 0), 0);
-  const enhancedBudget = Math.max(0, ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - (256 * 1024));
-  let retainedBytes = 0;
-  const retainedEnhancedFiles = enhancedFiles.filter((file) => {
-    if (retainedBytes + file.size > enhancedBudget) return false;
-    retainedBytes += file.size;
-    return true;
-  });
-  if (retainedEnhancedFiles.length < enhancedFiles.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 필기 강조 페이지는 제외했습니다.");
-  enhancedFiles = retainedEnhancedFiles;
-  const files = [
+  const firstPassFiles = [
     ...referenceFiles,
     { role: "blank", file: resolvedBlankFile },
     { role: "studentAnswer", file: studentFile },
-    ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
   ];
   const baseMetadata = {
     title: design.taskName,
@@ -1670,30 +1687,60 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     identityRedacted: true,
     student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
   };
-  onStage?.("통합 판독·채점·피드백 작성 중");
+  onStage?.("원본 우선 1차 판독·채점 중");
   let result = await ChaejeomAI.gradeAnswer({
     apiKey,
     model: selectedModel,
     signal,
     metadata: baseMetadata,
-    files,
+    files: firstPassFiles,
   });
+  let enhancedFiles = [];
   let precisionPassCompleted = false;
-  if (needsPrecisionReview(result) && !signal?.aborted) {
+  const precisionCriterionIds = ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata);
+  if (needsPrecisionReview(result, baseMetadata) && precisionCriterionIds.length && !signal?.aborted) {
     try {
-      onStage?.("낮은 확신도 항목 정밀 재검토 중");
-      result = await ChaejeomAI.gradeAnswer({
+      onStage?.(`${precisionCriterionIds.length}개 문항 고해상도 보정 중`);
+      try {
+        enhancedFiles = await prepareEnhancedAnswerImages(studentFile, { signal });
+      } catch (error) {
+        if (signal?.aborted || error?.name === "AbortError") throw error;
+        recognitionWarnings.push(`필기 강조본을 만들지 못해 원본 PDF로 정밀 재검토했습니다. (${friendlyError(error)})`);
+      }
+      const fixedBytes = [...referenceFiles.map((item) => item.file), resolvedBlankFile, studentFile]
+        .reduce((sum, file) => sum + Number(file?.size || 0), 0);
+      const enhancedBudget = Math.max(0, ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - (256 * 1024));
+      let retainedBytes = 0;
+      const retainedEnhancedFiles = enhancedFiles.filter((file) => {
+        if (retainedBytes + file.size > enhancedBudget) return false;
+        retainedBytes += file.size;
+        return true;
+      });
+      if (retainedEnhancedFiles.length < enhancedFiles.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 필기 강조 페이지는 제외했습니다.");
+      enhancedFiles = retainedEnhancedFiles;
+      const precisionFiles = [
+        ...firstPassFiles,
+        ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
+      ];
+      const targetIdSet = new Set(precisionCriterionIds);
+      onStage?.(`${precisionCriterionIds.length}개 문항 선별 정밀 재검토 중`);
+      const precisionResult = await ChaejeomAI.gradeAnswer({
         apiKey,
         model: selectedModel,
         signal,
         metadata: {
           ...baseMetadata,
           precisionReview: true,
-          preReadings: preliminaryReadingsFromResult(result),
-          recognitionWarnings: [...recognitionWarnings, "1차 통합 채점에서 낮은 확신도 항목이 확인되어 자동 정밀 재검토를 수행합니다."],
+          precisionCriterionIds,
+          preReadings: preliminaryReadingsFromResult(result).filter((item) => targetIdSet.has(item.criterionId)),
+          recognitionWarnings,
         },
-        files,
+        files: precisionFiles,
       });
+      result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
+        ...baseMetadata,
+        recognitionWarnings,
+      }, selectedModel);
       precisionPassCompleted = true;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -1712,6 +1759,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     teacherFeedback: result.summary,
     recognitionEnhanced: enhancedFiles.length > 0,
     recognitionPassCompleted: precisionPassCompleted,
+    precisionTargetCount: precisionCriterionIds.length,
     fastIntegratedPass: true,
     teacherConfirmed: false,
     regradedAt: new Date().toISOString(),
