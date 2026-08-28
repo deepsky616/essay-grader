@@ -5,6 +5,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const Export = require("../grading-export.js");
+const schoolSource = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+
+function loadAchievementLevelForExport() {
+  const start = schoolSource.indexOf("function achievementLevelForExport");
+  const end = schoolSource.indexOf("function downloadGradingResultsExcel", start);
+  assert.ok(start >= 0 && end > start, "achievement export helper must exist");
+  return new Function(`${schoolSource.slice(start, end)}; return achievementLevelForExport;`)();
+}
 
 const report = {
   generatedAt: "2026. 8. 28. 오전 9:00",
@@ -39,6 +47,29 @@ test("grading workbook rows follow the reference title, assessment, header, and 
   assert.equal(rows[1][0], "평가: 백분율 서술형 평가");
   assert.deepEqual(rows[3].slice(0, 5), ["학년", "반", "번호", "이름", "총점"]);
   assert.deepEqual(rows[4].slice(0, 5), ["6", "4", "1", "홍길동", 2]);
+});
+
+test("achievement levels export into separate columns by standard id, range, or order", () => {
+  const achievementLevelForExport = loadAchievementLevelForExport();
+  const result = { achievementResults: [
+    { achievementStandardId: "a1", itemRange: "1-2번", achievementLevel: "상" },
+    { achievementStandardId: "a2", itemRange: "3-4번", achievementLevel: "중" },
+  ] };
+  assert.equal(achievementLevelForExport(result, { id: "a1", itemRange: "1-2번" }, 0), "상");
+  assert.equal(achievementLevelForExport(result, { id: "missing", itemRange: "3-4번" }, 1), "중");
+  assert.equal(achievementLevelForExport({ achievementResults: [] }, { id: "a3" }, 2), "검토 필요");
+});
+
+test("grading download uses final numeric scores and one level column per achievement standard", () => {
+  const start = schoolSource.indexOf("function downloadGradingResultsExcel");
+  const end = schoolSource.indexOf("function bindGradingTab", start);
+  const downloadSource = schoolSource.slice(start, end);
+  assert.match(downloadSource, /const achievementHeaders = achievementGroups\.map/);
+  assert.match(downloadSource, /성취기준 \$\{index \+ 1\} 수준/);
+  assert.match(downloadSource, /report\.scoreRows\.map\(\(item\) => Number\(item\.score \|\| 0\)\)/);
+  assert.match(downloadSource, /achievementGroups\.map\(\(group, index\) => safeExcelText\(achievementLevelForExport/);
+  assert.doesNotMatch(downloadSource, /AI 채점 수준/);
+  assert.doesNotMatch(downloadSource, /formatScore\(item\.score\).*formatScore\(item\.maxScore\)/s);
 });
 
 test("individual result sheet includes criteria, confirmed scores, feedback, and escaped student text", () => {
@@ -89,7 +120,7 @@ test("selected output sections control both preview and printable PDF content", 
 });
 
 test("grading detail source exposes rubric score buttons and the requested review flow", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  const source = schoolSource;
   assert.match(source, /data-score-choice/);
   assert.match(source, /aria-label="\$\{formatScore\(score\)\}점"/);
   assert.match(source, />\$\{formatScore\(score\)\}<\/button>/);
@@ -104,7 +135,7 @@ test("grading detail source exposes rubric score buttons and the requested revie
 });
 
 test("result distribution source exposes five default-on output item controls", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  const source = schoolSource;
   assert.match(source, /data-toggle-result-output-settings[^>]*>출력 항목 설정/);
   for (const section of ["achievementStandards", "rubricCriteria", "scoreRows", "achievementResults", "feedback"]) {
     assert.match(source, new RegExp(`data-result-output-section="${section}" checked`));

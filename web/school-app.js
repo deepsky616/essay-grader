@@ -1282,10 +1282,19 @@ function safeExcelText(value) {
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
+function achievementLevelForExport(result, group, index) {
+  const achievementResults = Array.isArray(result?.achievementResults) ? result.achievementResults : [];
+  const matched = achievementResults.find((item) => group?.id && item?.achievementStandardId === group.id)
+    || achievementResults.find((item) => group?.itemRange && item?.itemRange === group.itemRange)
+    || achievementResults[index];
+  return matched?.achievementLevel || "검토 필요";
+}
+
 function downloadGradingResultsExcel(course, targetStudents) {
   const design = course.designs?.find((item) => item.id === course.submission?.designId);
   if (!window.XLSX || !window.ChaejeomExport || !design) { showToast("채점 결과 Excel을 만들지 못했습니다. 인터넷 연결을 확인해 주세요."); return; }
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const achievementGroups = Array.isArray(design.achievementGroups) ? design.achievementGroups : [];
   const resultMap = new Map((course.grading?.results || []).map((result) => [result.studentId, result]));
   const errorMap = new Map((course.grading?.errors || []).map((error) => [error.studentId, error]));
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
@@ -1293,16 +1302,16 @@ function downloadGradingResultsExcel(course, targetStudents) {
     .map((assignment) => studentMap.get(assignment.studentId))
     .filter(Boolean)
     .sort(studentSort);
-  const headers = ["학년", "반", "번호", "이름", "총점", ...rubricCriteria.map((item) => `문제 ${item.questionNumber} - ${item.evaluationElement}`), "AI 채점 수준", "선생님 작성 피드백"];
+  const achievementHeaders = achievementGroups.map((group, index) => `성취기준 ${index + 1} 수준 (${group.itemRange || "전체 문항"})`);
+  const headers = ["학년", "반", "번호", "이름", "총점", ...rubricCriteria.map((item) => `문제 ${item.questionNumber} - ${item.evaluationElement}`), ...achievementHeaders, "선생님 작성 피드백"];
   const records = assignedStudents.map((student) => {
     const result = resultMap.get(student.id);
     if (!result) {
       const error = errorMap.get(student.id);
-      return [student.grade, student.className, student.number, safeExcelText(student.name), null, ...rubricCriteria.map(() => ""), error ? "채점 실패" : "채점 결과 없음", safeExcelText(error?.message || "")];
+      return [student.grade, student.className, student.number, safeExcelText(student.name), null, ...rubricCriteria.map(() => ""), ...achievementGroups.map(() => error ? "채점 실패" : "채점 결과 없음"), safeExcelText(error?.message || "")];
     }
     const report = buildStudentReportViewModel(course, design, student, result, 0, assignedStudents.length);
-    const levelSummary = (result.achievementResults || []).map((item) => `${item.itemRange || "성취기준"}: ${item.achievementLevel || "교사 확인"}`).join(" / ");
-    return [student.grade, student.className, student.number, safeExcelText(student.name), report.totalScore, ...report.scoreRows.map((item) => `${formatScore(item.score)} / ${formatScore(item.maxScore)}`), safeExcelText(levelSummary || (result.teacherConfirmed ? "검토 완료" : "교사 검토 전")), safeExcelText(report.feedback)];
+    return [student.grade, student.className, student.number, safeExcelText(student.name), report.totalScore, ...report.scoreRows.map((item) => Number(item.score || 0)), ...achievementGroups.map((group, index) => safeExcelText(achievementLevelForExport(result, group, index))), safeExcelText(report.feedback)];
   });
   const classLabels = [...new Set(assignedStudents.map((student) => `${student.grade}-${student.className}반`))];
   const rows = window.ChaejeomExport.buildWorkbookRows({
@@ -1315,7 +1324,7 @@ function downloadGradingResultsExcel(course, targetStudents) {
   const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
   const lastColumn = window.XLSX.utils.encode_col(headers.length - 1);
   worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } }];
-  worksheet["!cols"] = [{ wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, ...rubricCriteria.map(() => ({ wch: 24 })), { wch: 30 }, { wch: 72 }];
+  worksheet["!cols"] = [{ wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, ...rubricCriteria.map(() => ({ wch: 24 })), ...achievementGroups.map(() => ({ wch: 24 })), { wch: 72 }];
   worksheet["!rows"] = [{ hpt: 24 }, { hpt: 22 }, { hpt: 8 }, { hpt: 42 }, ...records.map(() => ({ hpt: 56 }))];
   if (records.length) worksheet["!autofilter"] = { ref: `A4:${lastColumn}${records.length + 4}` };
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "채점 결과");
