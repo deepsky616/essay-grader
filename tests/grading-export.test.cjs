@@ -175,3 +175,12 @@ test("teacher confirmation dismisses the review-required guidance and persists A
   assert.match(schoolSource, /result\.teacherConfirmed = true;[^]*dismissTeacherReviewAlert\(\)/);
 });
 
+test("problem scoring panel uses readable text and score button sizes", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  assert.match(styles, /\.question-score-group-head > strong \{ font-size: 14px; \}/);
+  assert.match(styles, /\.teacher-score-list p \{[^}]*font-size: 11px;[^}]*line-height: 1\.65;/);
+  assert.match(styles, /\.teacher-score-list small \{[^}]*font-size: 10px;/);
+  assert.match(styles, /\.score-choice-buttons button \{[^}]*min-width: 40px;[^}]*font-size: 12px;/);
+  assert.match(styles, /\.teacher-total strong \{[^}]*font-size: 18px;/);
+});
+
