@@ -258,11 +258,17 @@ async function renderStudentManagement() {
       <section class="student-list-card">
         <div class="board-toolbar"><div><p class="section-kicker">STUDENT ROSTER</p><h2>학생 목록</h2></div><div class="student-list-actions"><strong>${students.length}명</strong>${students.length ? `<button class="secondary-action danger-action" type="button" data-delete-all-students>학생 전체 삭제</button>` : ""}</div></div>
         ${students.length ? `
-          <div class="student-class-summary">${studentGroups.map((group) => `<div><span>${escapeHtml(group.schoolName || "학교 미입력")} · ${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반 · ${group.students.length}명</span><button type="button" data-delete-student-group="${escapeHtml(group.schoolName)}|${escapeHtml(group.grade)}|${escapeHtml(group.className)}">이 학년·반 전체 삭제</button></div>`).join("")}</div>
-          <div class="student-management-table">
-            <div class="student-management-head"><span>학교명</span><span>학년</span><span>반</span><span>번호</span><span>이름</span><span></span></div>
-            ${students.map((student) => `<div class="student-management-row"><span>${escapeHtml(student.schoolName || "미입력")}</span><span>${escapeHtml(student.grade)}학년</span><span>${escapeHtml(student.className)}반</span><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><button type="button" data-delete-student="${escapeHtml(student.id)}">삭제</button></div>`).join("")}
-          </div>` : `<div class="course-empty"><span>명</span><h3>등록된 학생이 없습니다.</h3><p>개별 생성 또는 Excel 일괄 생성으로 학생 목록을 준비해 주세요.</p></div>`}
+          <div class="student-roster-groups">${studentGroups.map((group, groupIndex) => `
+            <section class="student-roster-group" aria-labelledby="student-group-${groupIndex}">
+              <div class="student-roster-group-head">
+                <div><p>${escapeHtml(group.schoolName || "학교 미입력")}</p><h3 id="student-group-${groupIndex}">${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반</h3><span>${group.students.length}명</span></div>
+                <button type="button" data-delete-student-group="${groupIndex}">이 명단 전체 삭제</button>
+              </div>
+              <div class="student-management-table">
+                <div class="student-management-head"><span>번호</span><span>이름</span><span>관리</span></div>
+                ${group.students.map((student) => `<div class="student-management-row"><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><button type="button" data-delete-student="${escapeHtml(student.id)}">삭제</button></div>`).join("")}
+              </div>
+            </section>`).join("")}</div>` : `<div class="course-empty"><span>명</span><h3>등록된 학생이 없습니다.</h3><p>개별 생성 또는 Excel 일괄 생성으로 학생 목록을 준비해 주세요.</p></div>`}
       </section>
     </div>`;
 
@@ -290,11 +296,11 @@ async function renderStudentManagement() {
     renderStudentManagement();
   });
   app.querySelectorAll("[data-delete-student-group]").forEach((button) => button.addEventListener("click", async () => {
-    const [schoolName, grade, className] = button.dataset.deleteStudentGroup.split("|");
-    const groupStudents = students.filter((student) => (student.schoolName || "") === schoolName && student.grade === grade && student.className === className);
-    if (!groupStudents.length || !window.confirm(`${schoolName || "학교 미입력"} · ${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제할까요? 해당 학생은 수업 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
+    const group = studentGroups[Number(button.dataset.deleteStudentGroup)];
+    const groupStudents = group?.students || [];
+    if (!group || !groupStudents.length || !window.confirm(`${group.schoolName || "학교 미입력"} · ${group.grade}학년 ${group.className}반 학생 ${groupStudents.length}명을 모두 삭제할까요? 해당 학생은 수업 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
     await removeStudents(groupStudents.map((student) => student.id));
-    showToast(`${schoolName || "학교 미입력"} · ${grade}학년 ${className}반 학생 ${groupStudents.length}명을 모두 삭제했습니다.`);
+    showToast(`${group.schoolName || "학교 미입력"} · ${group.grade}학년 ${group.className}반 학생 ${groupStudents.length}명을 모두 삭제했습니다.`);
     renderStudentManagement();
   }));
   app.querySelectorAll("[data-delete-student]").forEach((button) => button.addEventListener("click", async () => {

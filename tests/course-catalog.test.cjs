@@ -52,6 +52,15 @@ test("downloaded student roster template includes school name and leaves every d
   assert.doesNotMatch(source, /StudentWorkflow\.parseRosterRows\(rows, \{ grade: "6" \}\)/);
 });
 
+test("student management renders a separate roster for every school, grade, and class group", () => {
+  assert.match(source, /studentGroups\.map\(\(group, groupIndex\) =>/);
+  assert.match(source, /class="student-roster-group"/);
+  assert.match(source, /\$\{escapeHtml\(group\.schoolName \|\| "학교 미입력"\)\}/);
+  assert.match(source, /\$\{escapeHtml\(group\.grade\)\}학년 \$\{escapeHtml\(group\.className\)\}반/);
+  assert.match(source, /group\.students\.map\(\(student\) =>/);
+  assert.match(source, /data-delete-student-group="\$\{groupIndex\}"/);
+});
+
 test("home and navigation use the requested AI essay-assessment title", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);
