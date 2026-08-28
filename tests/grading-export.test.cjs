@@ -167,3 +167,11 @@ test("student answer PDF previews open fitted to the available panel width", () 
   assert.match(styles, /\.student-answer-preview iframe \{ height: clamp\(720px,82vh,1040px\); \}/);
 });
 
+test("teacher confirmation dismisses the review-required guidance and persists AI scores", () => {
+  assert.match(schoolSource, /result\.needsTeacherReview && !result\.teacherConfirmed/);
+  assert.match(schoolSource, /data-teacher-review-alert/);
+  assert.match(schoolSource, /panel\.querySelector\("\[data-teacher-review-alert\]"\)\?\.remove\(\)/);
+  assert.match(schoolSource, /data-restore-ai-scores[^]*await saveCurrent\(\)/);
+  assert.match(schoolSource, /result\.teacherConfirmed = true;[^]*dismissTeacherReviewAlert\(\)/);
+});
+

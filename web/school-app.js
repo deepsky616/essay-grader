@@ -1887,7 +1887,7 @@ async function openStudentResult(course, targetStudents, studentId) {
           </div>
           <div class="score-bulk-actions"><button class="secondary-action" type="button" data-reset-teacher-scores>점수 초기화</button><button class="primary-action" type="button" data-restore-ai-scores>점수 그대로 적용</button></div>
           ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
-          ${result.needsTeacherReview ? `<div class="teacher-review-alert"><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
+          ${result.needsTeacherReview && !result.teacherConfirmed ? `<div class="teacher-review-alert" data-teacher-review-alert><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>성취기준·채점기준·예시답안을 바탕으로 생성된 내용을 직접 수정하거나 그대로 사용할 수 있습니다.</small></label>
           ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item, index) => `<label><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><textarea data-achievement-feedback="${index}" rows="3" aria-label="${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)} 피드백">${escapeHtml(item.feedback || "")}</textarea><small>AI가 작성한 내용을 교사가 직접 수정할 수 있습니다.</small></label>`).join("")}</div>` : ""}
           <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>AI 채점 재실행</button></div>
@@ -1895,7 +1895,7 @@ async function openStudentResult(course, targetStudents, studentId) {
       </div>
       <div class="student-review-actions">
         <button class="secondary-action" type="button" data-previous-student ${currentIndex === 0 ? "disabled" : ""}>← 이전 학생</button>
-        <span>${result.teacherConfirmed ? "교사 검토 저장됨" : "아직 교사 검토 전"}</span>
+        <span data-review-save-status>${result.teacherConfirmed ? "교사 검토 저장됨" : "아직 교사 검토 전"}</span>
         <button class="primary-action" type="button" data-save-next>${currentIndex === orderedResults.length - 1 ? "저장 후 닫기" : "저장 후 다음 학생 →"}</button>
       </div>
     </div></section>`;
@@ -1930,12 +1930,11 @@ async function openStudentResult(course, targetStudents, studentId) {
     syncScoreChoiceStates();
     updateTotal();
   });
-  panel.querySelector("[data-restore-ai-scores]").addEventListener("click", () => {
-    scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(questionRows[index]?.score ?? 0, scoreChoicesForResultRow(questionRows[index], design)); });
-    syncScoreChoiceStates();
-    updateTotal();
-    showToast("AI가 제안한 문제별 점수를 다시 적용했습니다.");
-  });
+  const dismissTeacherReviewAlert = () => {
+    panel.querySelector("[data-teacher-review-alert]")?.remove();
+    const reviewSaveStatus = panel.querySelector("[data-review-save-status]");
+    if (reviewSaveStatus) reviewSaveStatus.textContent = "교사 검토 저장됨";
+  };
   const saveCurrent = async () => {
     result.questionResults = questionRows.map(({ sourceIndex, missingResult, ...item }) => item);
     result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
@@ -1950,6 +1949,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.teacherConfirmed = true;
     result.teacherReviewedAt = new Date().toISOString();
     await putCourse(course);
+    dismissTeacherReviewAlert();
     const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
     if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}`;
     const resultStatus = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-status]`);
@@ -1958,6 +1958,19 @@ async function openStudentResult(course, targetStudents, studentId) {
       resultStatus.className = "confirmed-label";
     }
   };
+  panel.querySelector("[data-restore-ai-scores]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(questionRows[index]?.score ?? 0, scoreChoicesForResultRow(questionRows[index], design)); });
+      syncScoreChoiceStates();
+      updateTotal();
+      await saveCurrent();
+      showToast("AI가 제안한 점수를 그대로 적용하고 교사 검토를 저장했습니다.");
+    } finally {
+      button.disabled = false;
+    }
+  });
   const closeCurrent = () => {
     if (slot.dataset.previewUrl) {
       URL.revokeObjectURL(slot.dataset.previewUrl);
