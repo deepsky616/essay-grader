@@ -348,6 +348,7 @@
     }
 
     const responseSchema = buildGradingResponseSchema(metadata);
+    const generationConfigBuilder = metadata?.precisionReview ? precisionGradingGenerationConfig : gradingGenerationConfig;
     let response;
     let body;
     try {
@@ -361,6 +362,7 @@
         maxAttempts: 3,
         baseDelayMs: retryDelayMs,
         signal,
+        generationConfigBuilder,
       }));
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -398,6 +400,7 @@
           maxAttempts: 2,
           baseDelayMs: retryDelayMs,
           signal,
+          generationConfigBuilder,
         }));
       } catch (error) {
         if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -562,6 +565,7 @@ ${JSON.stringify(targets)}
         reviewReason: item?.reviewReason || "",
       })),
       recognitionWarnings: textList(metadata.recognitionWarnings),
+      precisionReview: Boolean(metadata.precisionReview),
       blankComparisonRequired: Boolean(metadata.requireBlankComparison),
       identityRedacted: Boolean(metadata.identityRedacted),
       student: metadata.student ? {
@@ -597,6 +601,7 @@ ${JSON.stringify(targets)}
 13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 14. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
 15. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
+${safeMetadata.precisionReview ? "16. 이것은 1차 통합 채점에서 확신도가 낮았던 답안의 정밀 재검토입니다. preReadings의 낮은 확신도 항목을 원본·빈 답안지·필기 강조본과 다시 비교하고, 추측하지 말고 전체 점수와 피드백을 완성하세요." : ""}
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -962,11 +967,24 @@ ${JSON.stringify(roster)}
   function gradingGenerationConfig(model, responseSchema) {
     const config = structuredGenerationConfig(model, {
       temperature: 0.1,
-      maxOutputTokens: 16384,
+      maxOutputTokens: 8192,
       responseMimeType: "application/json",
     });
     if (responseSchema) config.responseSchema = responseSchema;
-    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 2048 };
+    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 512 };
+    else if (/^gemini-3(?:\.|-)/i.test(model)) config.thinkingConfig = { thinkingLevel: "low" };
+    return config;
+  }
+
+  function precisionGradingGenerationConfig(model, responseSchema) {
+    const config = structuredGenerationConfig(model, {
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+    });
+    if (responseSchema) config.responseSchema = responseSchema;
+    if (/^gemini-2\.5-flash(?:$|-)/i.test(model)) config.thinkingConfig = { thinkingBudget: 1024 };
+    else if (/^gemini-3(?:\.|-)/i.test(model)) config.thinkingConfig = { thinkingLevel: "medium" };
     return config;
   }
 
@@ -1146,3 +1164,4 @@ ${JSON.stringify(roster)}
     arrayBufferToBase64,
   };
 });
+

@@ -365,7 +365,7 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal("minimum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("maximum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
-      assert.equal(body.generationConfig.maxOutputTokens, 16384);
+      assert.equal(body.generationConfig.maxOutputTokens, 8192);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
       assert.equal("temperature" in body.generationConfig, false);
       assert.match(body.contents[0].parts[0].text, /같은 페이지끼리 비교/);
@@ -376,6 +376,30 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
   assert.equal(result.questionResults[0].confidence, "high");
   assert.equal(result.questionResults[0].answerReading, "2라고 씀");
   assert.equal(result.model, "gemini-3.7-flash");
+});
+
+test("precision grading uses a bounded extra thinking budget", async () => {
+  const bytes = new TextEncoder().encode("pdf");
+  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const payload = {
+    studentIdentifier: "S001", totalScore: 2, maxScore: 2, overallAchievementLevel: "상", summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [], needsTeacherReview: false, reviewReasons: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "정확성", answerReading: "2", criterion: "정확", score: 2, maxScore: 2, evidence: "정답", feedback: "좋음", confidence: "high" }],
+  };
+  await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    model: "gemini-2.5-flash",
+    metadata: { precisionReview: true, totalScore: 2, requireBlankComparison: true, achievementGroups: [], exampleAnswers: [], rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "정확성", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }] },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.generationConfig.maxOutputTokens, 8192);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 1024);
+      assert.match(body.contents[0].parts[0].text, /정밀 재검토/);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
+    },
+  });
 });
 
 test("gradeAnswer keeps the response schema compact for many rubric criteria", async () => {
@@ -582,7 +606,7 @@ test("gradeAnswer automatically repairs empty per-question and achievement resul
       assert.equal("maxItems" in body.generationConfig.responseSchema.properties.questionResults, false);
       assert.equal("minItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
       assert.equal("maxItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
-      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 512);
       if (attempts === 1) assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
@@ -643,3 +667,4 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
+

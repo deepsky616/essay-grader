@@ -11,6 +11,7 @@ const GEMINI_STATUS_SETTING = "gemini-key-status";
 const GEMINI_MODEL_SETTING = "gemini-model";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_STUDENTS = 500;
+const GRADING_PARALLELISM = 3;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const COURSE_SUBJECTS_BY_GRADE = Object.freeze({
   "1": Object.freeze(["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"]),
@@ -1116,7 +1117,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
       <article class="is-ready"><span>2</span><div><strong>필기·도형 고해상도 보정</strong><p>신원 영역을 가린 뒤 흐린 연필선과 작은 수식을 강조한 AI 전송용 이미지를 만듭니다.</p></div></article>
-      <article class="is-ready"><span>3</span><div><strong>판독 후 채점</strong><p>글씨·수식·그림을 먼저 읽고, 두 번째 단계에서 채점기준과 대조합니다.</p></div></article>
+      <article class="is-ready"><span>3</span><div><strong>빠른 통합 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 채점하고, 확신도가 낮은 답안만 자동으로 정밀 재검토합니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
@@ -1124,7 +1125,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     </div>
     ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>빈 답안지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 답안지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
     <div class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress>
-      <div><span data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : "학생 답안을 순서대로 채점하고 있습니다."))}</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}명 완료</strong></div>
+      <div><span data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`))}</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}명 완료</strong></div>
       <div class="grading-progress-meta"><span data-progress-time>경과 ${formatElapsedTime(elapsed)}</span><span data-progress-percent>${progress}%</span></div>
       <span class="${isActivelyRunning ? "is-active" : ""}" data-progress-track><i data-progress-bar style="width:${progress}%"></i></span>
     </div>
@@ -1475,53 +1476,75 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     });
   }, 1000);
   let stopped = false;
-  for (const assignment of assignments) {
-    if (controller.signal.aborted) { stopped = true; break; }
-    const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
-    const currentLabel = currentStudent?.number ? `${currentStudent.number}번 학생` : "현재 학생";
-    course.grading.currentStudentId = assignment.studentId;
-    course.grading.currentStage = `${currentLabel} · 답안 PDF 준비 중`;
+  const pendingAssignments = [...assignments];
+  const activeStages = new Map();
+  let saveQueue = Promise.resolve();
+  const queueCourseSave = () => {
+    const snapshot = {
+      ...course,
+      grading: {
+        ...course.grading,
+        results: [...course.grading.results],
+        errors: [...course.grading.errors],
+      },
+    };
+    saveQueue = saveQueue.then(() => putCourse(snapshot));
+    return saveQueue;
+  };
+  const refreshParallelProgress = () => {
+    const stages = Array.from(activeStages.values());
+    course.grading.currentStage = stages.length
+      ? `${stages.length}명 동시 처리 중 · ${stages.slice(0, 2).join(" / ")}${stages.length > 2 ? " 외" : ""}`
+      : "완료 결과를 저장하고 있습니다.";
     updateGradingProgress(course.grading.completedCount, allAssignments.length, {
       stage: course.grading.currentStage,
       elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
       running: true,
     });
-    try {
-      const nextResult = await gradeStudentAssignment({
-        course,
-        design,
-        targetStudents,
-        assignment,
-        apiKey,
-        selectedModel,
-        blankFile,
-        signal: controller.signal,
-        onStage: (stage) => {
-          course.grading.currentStage = `${currentLabel} · ${stage}`;
-          updateGradingProgress(course.grading.completedCount, allAssignments.length, {
-            stage: course.grading.currentStage,
-            elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
-            running: true,
-          });
-        },
-      });
-      course.grading.results = course.grading.results.filter((item) => item.studentId !== assignment.studentId);
-      course.grading.results.push(nextResult);
-      course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
-    } catch (error) {
-      if (controller.signal.aborted || error?.name === "AbortError") { stopped = true; break; }
-      course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
-      course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
+  };
+  const processNextAssignment = async (workerIndex) => {
+    while (!controller.signal.aborted) {
+      const assignment = pendingAssignments.shift();
+      if (!assignment) return;
+      const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
+      const currentLabel = currentStudent?.number ? `${currentStudent.number}번` : "학생";
+      activeStages.set(workerIndex, `${currentLabel} 답안 준비`);
+      refreshParallelProgress();
+      try {
+        const nextResult = await gradeStudentAssignment({
+          course,
+          design,
+          targetStudents,
+          assignment,
+          apiKey,
+          selectedModel,
+          blankFile,
+          signal: controller.signal,
+          onStage: (stage) => {
+            activeStages.set(workerIndex, `${currentLabel} ${stage}`);
+            refreshParallelProgress();
+          },
+        });
+        course.grading.results = course.grading.results.filter((item) => item.studentId !== assignment.studentId);
+        course.grading.results.push(nextResult);
+        course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
+      } catch (error) {
+        if (controller.signal.aborted || error?.name === "AbortError") { stopped = true; break; }
+        course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
+        course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
+      }
+      course.grading.completedCount = course.grading.results.length + course.grading.errors.length;
+      activeGradingRun.completed = course.grading.completedCount;
+      activeStages.delete(workerIndex);
+      await queueCourseSave();
+      refreshParallelProgress();
     }
-    course.grading.completedCount = course.grading.results.length + course.grading.errors.length;
-    activeGradingRun.completed = course.grading.completedCount;
-    await putCourse(course);
-    updateGradingProgress(course.grading.completedCount, allAssignments.length, {
-      stage: `${currentLabel} 채점 완료 · 다음 학생 준비 중`,
-      elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
-      running: true,
-    });
-  }
+    if (controller.signal.aborted) stopped = true;
+  };
+  const workerCount = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
+  activeGradingRun.parallelism = workerCount;
+  await Promise.all(Array.from({ length: workerCount }, (_, workerIndex) => processNextAssignment(workerIndex)));
+  await saveQueue;
   window.clearInterval(elapsedTimer);
   course.grading.elapsedMs = baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt);
   delete course.grading.currentStudentId;
@@ -1561,7 +1584,7 @@ function stopCourseGrading(courseId) {
   });
 }
 
-function updateGradingProgress(completed, total, { stage = "학생 답안을 순서대로 채점하고 있습니다.", elapsedMs = 0, running = false } = {}) {
+function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`, elapsedMs = 0, running = false } = {}) {
   const card = app.querySelector("[data-grading-progress]");
   if (!card) return;
   card.hidden = false;
@@ -1572,6 +1595,23 @@ function updateGradingProgress(completed, total, { stage = "학생 답안을 순
   card.querySelector("[data-progress-percent]").textContent = `${progress}%`;
   card.querySelector("[data-progress-bar]").style.width = `${progress}%`;
   card.querySelector("[data-progress-track]").classList.toggle("is-active", running);
+}
+
+function needsPrecisionReview(result) {
+  const questionResults = Array.isArray(result?.questionResults) ? result.questionResults : [];
+  return questionResults.some((item) => item?.confidence === "low" || /판독 불가|확인 불가|식별 불가/.test(`${item?.answerReading || ""} ${item?.evidence || ""}`));
+}
+
+function preliminaryReadingsFromResult(result) {
+  return (Array.isArray(result?.questionResults) ? result.questionResults : []).map((item) => ({
+    criterionId: item.criterionId || "",
+    questionNumber: item.questionNumber || "",
+    evaluationElement: item.evaluationElement || "",
+    answerReading: item.answerReading || "",
+    visualDescription: item.visualDescription || "",
+    confidence: item.confidence || "low",
+    reviewReason: item.confidence === "low" ? "1차 통합 채점에서 판독 확신도가 낮았습니다." : "",
+  }));
 }
 
 async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, signal, onStage }) {
@@ -1611,51 +1651,56 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   });
   if (retainedEnhancedFiles.length < enhancedFiles.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 필기 강조 페이지는 제외했습니다.");
   enhancedFiles = retainedEnhancedFiles;
-  let recognition = { readings: [], reviewReasons: [] };
-  try {
-    onStage?.("1단계 · 글씨·수식·그림만 먼저 판독 중");
-    recognition = await ChaejeomAI.recognizeAnswer({
-      apiKey,
-      model: selectedModel,
-      signal,
-      metadata: { rubricCriteria: design.rubricCriteria },
-      files: [
-        { role: "blank", file: resolvedBlankFile },
-        { role: "studentAnswer", file: studentFile },
-        ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
-      ],
-    });
-  } catch (error) {
-    if (signal?.aborted || error?.name === "AbortError") throw error;
-    recognitionWarnings.push(`사전 답안 판독을 완료하지 못해 원본과 강조본을 직접 비교하여 채점했습니다. (${friendlyError(error)})`);
-  }
   const files = [
     ...referenceFiles,
     { role: "blank", file: resolvedBlankFile },
     { role: "studentAnswer", file: studentFile },
     ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
   ];
-  onStage?.("2단계 · 판독 결과를 채점기준과 대조하고 피드백 작성 중");
-  const result = await ChaejeomAI.gradeAnswer({
+  const baseMetadata = {
+    title: design.taskName,
+    subject: course.subject,
+    grade: course.grade,
+    totalScore: maxScore,
+    achievementGroups: design.achievementGroups,
+    rubricCriteria: design.rubricCriteria,
+    exampleAnswers: design.exampleAnswers,
+    recognitionWarnings,
+    requireBlankComparison: true,
+    identityRedacted: true,
+    student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
+  };
+  onStage?.("통합 판독·채점·피드백 작성 중");
+  let result = await ChaejeomAI.gradeAnswer({
     apiKey,
     model: selectedModel,
     signal,
-    metadata: {
-      title: design.taskName,
-      subject: course.subject,
-      grade: course.grade,
-      totalScore: maxScore,
-      achievementGroups: design.achievementGroups,
-      rubricCriteria: design.rubricCriteria,
-      exampleAnswers: design.exampleAnswers,
-      preReadings: recognition.readings,
-      recognitionWarnings: [...recognitionWarnings, ...(recognition.pageNotes || [])],
-      requireBlankComparison: true,
-      identityRedacted: true,
-      student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
-    },
+    metadata: baseMetadata,
     files,
   });
+  let precisionPassCompleted = false;
+  if (needsPrecisionReview(result) && !signal?.aborted) {
+    try {
+      onStage?.("낮은 확신도 항목 정밀 재검토 중");
+      result = await ChaejeomAI.gradeAnswer({
+        apiKey,
+        model: selectedModel,
+        signal,
+        metadata: {
+          ...baseMetadata,
+          precisionReview: true,
+          preReadings: preliminaryReadingsFromResult(result),
+          recognitionWarnings: [...recognitionWarnings, "1차 통합 채점에서 낮은 확신도 항목이 확인되어 자동 정밀 재검토를 수행합니다."],
+        },
+        files,
+      });
+      precisionPassCompleted = true;
+    } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
+      result.needsTeacherReview = true;
+      result.reviewReasons = [...new Set([...(result.reviewReasons || []), `자동 정밀 재검토를 완료하지 못했습니다. (${friendlyError(error)})`])];
+    }
+  }
   return {
     ...result,
     studentId: student.id,
@@ -1666,7 +1711,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     teacherTotal: result.totalScore,
     teacherFeedback: result.summary,
     recognitionEnhanced: enhancedFiles.length > 0,
-    recognitionPassCompleted: recognition.readings.length > 0,
+    recognitionPassCompleted: precisionPassCompleted,
+    fastIntegratedPass: true,
     teacherConfirmed: false,
     regradedAt: new Date().toISOString(),
   };
@@ -1910,7 +1956,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.recognitionPassCompleted ? "2단계 판독 완료" : "직접 채점"}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
         <section class="teacher-score-panel">

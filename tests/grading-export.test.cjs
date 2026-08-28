@@ -137,6 +137,18 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
+test("course grading uses three parallel workers and only precision-rechecks low-confidence answers", () => {
+  assert.match(schoolSource, /const GRADING_PARALLELISM = 3/);
+  assert.match(schoolSource, /Promise\.all\(Array\.from\(\{ length: workerCount \}/);
+  assert.match(schoolSource, /function needsPrecisionReview\(result\)/);
+  assert.match(schoolSource, /item\?\.confidence === "low"/);
+  assert.match(schoolSource, /통합 판독·채점·피드백 작성 중/);
+  assert.match(schoolSource, /precisionReview: true/);
+  const assignmentStart = schoolSource.indexOf("async function gradeStudentAssignment");
+  const assignmentEnd = schoolSource.indexOf("async function regradeSingleStudent", assignmentStart);
+  assert.doesNotMatch(schoolSource.slice(assignmentStart, assignmentEnd), /ChaejeomAI\.recognizeAnswer/);
+});
+
 test("student grading detail gives the scoring panel more horizontal space", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
   assert.match(styles, /\.student-review-grid \{[^}]*grid-template-columns: minmax\(0,\.88fr\) minmax\(520px,1\.12fr\)/);
