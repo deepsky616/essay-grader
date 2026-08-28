@@ -333,7 +333,7 @@ async function importStudentFile(file) {
       const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
       rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false, defval: "" });
     } else rows = StudentWorkflow.parseDelimited(StudentWorkflow.decodeTextBytes(await file.arrayBuffer()));
-    const roster = StudentWorkflow.parseRosterRows(rows, { grade: "6" });
+    const roster = StudentWorkflow.parseRosterRows(rows);
     if (!roster.length) throw new Error("명단에서 학생을 찾지 못했습니다.");
     await addStudents(roster);
     showToast(`${roster.length}명의 학생을 일괄 생성했습니다.`);
@@ -367,7 +367,7 @@ function downloadStudentTemplate() {
   }
 
   const rosterRows = [["학년", "반", "번호", "이름"]];
-  for (let row = 0; row < 40; row += 1) rosterRows.push([6, "", "", ""]);
+  for (let row = 0; row < 40; row += 1) rosterRows.push(["", "", "", ""]);
 
   const workbook = window.XLSX.utils.book_new();
   const rosterSheet = window.XLSX.utils.aoa_to_sheet(rosterRows);

@@ -44,3 +44,9 @@ test("course form and evaluation targets follow the selected course grade", () =
   assert.match(source, /targetStudentIds: gradeChanged \? \[\]/);
 });
 
+test("downloaded student roster template leaves every data-row grade blank", () => {
+  assert.match(source, /rosterRows\.push\(\["", "", "", ""\]\)/);
+  assert.doesNotMatch(source, /rosterRows\.push\(\[6, "", "", ""\]\)/);
+  assert.match(source, /StudentWorkflow\.parseRosterRows\(rows\)/);
+  assert.doesNotMatch(source, /StudentWorkflow\.parseRosterRows\(rows, \{ grade: "6" \}\)/);
+});
