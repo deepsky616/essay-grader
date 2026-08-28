@@ -1177,7 +1177,7 @@ function renderResultDistributionDialog(course, targetStudents, results) {
   const ordered = [...results].filter((result) => studentMap.has(result.studentId)).sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
   return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
     <div class="result-distribution-shell">
-      <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div></div>
+      <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div><button class="result-distribution-close" type="button" data-close-result-distribution aria-label="결과지 출력·배부 창 닫기">닫기 <span aria-hidden="true">×</span></button></div>
       <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${student.schoolName ? `${escapeHtml(student.schoolName)} · ` : ""}${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><div class="result-output-buttons"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
       <section class="result-output-settings" data-result-output-settings hidden>
         <div><strong>출력할 항목을 선택하세요.</strong><p>선택 내용은 미리보기, 개별 출력, 전체 출력과 PDF 저장에 동일하게 적용됩니다.</p></div>
@@ -1226,6 +1226,7 @@ function openResultDistributionDialog(course, targetStudents) {
   if (!dialog.dataset.bound) {
     dialog.dataset.bound = "true";
     select.addEventListener("change", renderPreview);
+    dialog.querySelector("[data-close-result-distribution]").addEventListener("click", () => dialog.close());
     settingsButton.addEventListener("click", () => {
       settingsPanel.hidden = !settingsPanel.hidden;
       settingsButton.setAttribute("aria-expanded", String(!settingsPanel.hidden));
