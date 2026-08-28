@@ -44,6 +44,22 @@ test("course form and evaluation targets follow the selected course grade", () =
   assert.match(source, /targetStudentIds: gradeChanged \? \[\]/);
 });
 
+test("course setup uses the teacher-facing term 교과 instead of 과목", () => {
+  assert.match(source, /해당 학년군에서 운영하는 교과를 선택/);
+  assert.match(source, /<label>교과<select name="subject">/);
+  assert.doesNotMatch(source, /<label>과목<select name="subject">/);
+});
+
+test("assessment design selects curriculum standards by domain and can generate rubric bands with AI", () => {
+  assert.match(source, /name="achievementDomain"/);
+  assert.match(source, /name="achievementCode"/);
+  assert.match(source, /CurriculumStandards\?\.find/);
+  assert.match(source, /\["상", "중", "하"\]\.map/);
+  assert.match(source, /data-open-rubric-ai>채점기준 AI 생성/);
+  assert.match(source, /name="rubricAiBandCount"/);
+  assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
+});
+
 test("downloaded student roster template includes school name and leaves every data row blank", () => {
   assert.match(source, /const rosterRows = \[\["학교명", "학년", "반", "번호", "이름"\]\]/);
   assert.match(source, /rosterRows\.push\(\["", "", "", "", ""\]\)/);

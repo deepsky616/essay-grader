@@ -177,12 +177,12 @@ async function renderCourseForm(courseId = "") {
         <div class="simple-form-heading">
           <p class="section-kicker">CLASS SETUP</p>
           <h1>${course ? "수업 정보를 수정합니다." : "새 수업을 추가합니다."}</h1>
-          <p>학년을 선택하면 해당 학년군에서 운영하는 과목을 선택할 수 있습니다.</p>
+          <p>학년을 선택하면 해당 학년군에서 운영하는 교과를 선택할 수 있습니다.</p>
         </div>
         <form id="course-form" class="course-form">
           <label>학기<select name="semester" disabled><option selected>2026학년도 2학기</option></select></label>
           <label>학년<select name="grade">${gradeOptions(course?.grade || "6")}</select></label>
-          <label>과목<select name="subject">${subjectOptions(course?.grade || "6", course?.subject || "수학")}</select></label>
+          <label>교과<select name="subject">${subjectOptions(course?.grade || "6", course?.subject || "수학")}</select></label>
           <label class="full-field">수업명<input name="title" value="${escapeHtml(course?.title || "")}" placeholder="예: 6학년 2학기 서·논술형 평가" required maxlength="80"></label>
           <div class="form-bottom-actions">
             <a class="secondary-action" href="#/">취소</a>
@@ -554,7 +554,7 @@ function renderDesignTab(course) {
   return `
     <div class="workflow-heading"><div><p class="section-kicker">STEP 2</p><h2>평가 설계</h2><p>성취기준, 문제별 채점기준, 수식·도형을 포함한 예시답안을 설계합니다.</p></div><button class="primary-action" type="button" data-add-design>설계 추가</button></div>
     ${designs.length ? `<div class="design-list">${designs.map((design, index) => designCard(design, index)).join("")}</div>` : `<div class="inline-empty"><strong>아직 평가 설계가 없습니다.</strong><p>설계 추가 버튼을 눌러 평가(과제)명과 기준을 입력해 주세요.</p></div>`}
-    ${editing ? designEditor(editing) : ""}
+    ${editing ? designEditor(editing, course) : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=targets">← 평가 대상</a><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">과제물 관리로 →</a></div>`;
 }
 
@@ -582,26 +582,30 @@ function defaultAchievementLevels() {
   ];
 }
 
-function designEditor(design) {
+function designEditor(design, course) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const curriculumDomains = curriculumForCourse(course);
+  const rubricAiSeeds = rubricCriteria.length ? rubricCriteria : [{ questionNumber: "1", evaluationElement: "", scoreLevels: [] }];
   return `
     <form id="design-form" class="design-editor" data-design-id="${escapeHtml(design.id)}">
       <div class="design-editor-heading"><div><p class="section-kicker">DESIGN EDITOR</p><h3>${design.id ? "평가 설계 수정" : "평가 설계 추가"}</h3></div><button type="button" data-cancel-design>닫기</button></div>
       <label class="design-name-field">평가(과제)명<input name="taskName" value="${escapeHtml(design.taskName)}" placeholder="예: 원의 넓이 서·논술형 평가" required maxlength="100"></label>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>회색 예시는 입력값이 아닌 안내 문구이며 교사가 입력하면 자동으로 사라집니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
-        <div data-achievement-groups>${(design.achievementGroups || []).map(achievementEditor).join("")}</div>
+        <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과의 2022 개정 교육과정을 영역별로 선택하면 A·B·C가 상·중·하로 자동 입력됩니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
+        ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취기준 선택 가능</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 성취기준 자료를 찾지 못했습니다.</span></div>`}
+        <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course)).join("")}</div>
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>문제 번호와 평가요소를 묶고, 그 안에 여러 배점 기준을 나누어 입력하세요.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>직접 추가하거나 평가요소와 급간 수를 입력해 AI로 배점별 기준을 만들 수 있습니다.</p></div><div class="editor-title-actions"><button type="button" data-open-rubric-ai>채점기준 AI 생성</button><button type="button" data-add-rubric>＋ 평가요소 추가</button></div></div>
         <div class="document-auto-row">
           <label>채점기준표 PDF·사진<input name="rubricDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
           <button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>
           <span>${design.rubricFile ? `저장됨: ${escapeHtml(design.rubricFile.name)}` : "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다."}</span>
         </div>
         <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map(rubricEditorGroup).join("")}</div>
+        ${rubricAiDialog(rubricAiSeeds, course)}
       </section>
 
       <section class="design-editor-section">
@@ -627,10 +631,41 @@ function designEditor(design) {
     </form>`;
 }
 
-function achievementEditor(group, index) {
-  return `<article class="achievement-editor-card" data-achievement-group data-group-id="${escapeHtml(group.id || "")}">
+function curriculumForCourse(course) {
+  return globalThis.CurriculumStandards?.forCourse?.(course?.grade, course?.subject) || {};
+}
+
+function achievementCodeFromText(value) {
+  return String(value || "").match(/^\s*\[([^\]]+)]/)?.[1]?.trim() || "";
+}
+
+function curriculumSelection(group, course) {
+  const domains = curriculumForCourse(course);
+  const requestedCode = String(group.standardCode || achievementCodeFromText(group.standard) || "").trim();
+  for (const [domain, standards] of Object.entries(domains)) {
+    const standard = standards.find((item) => item.code === requestedCode);
+    if (standard) return { domain, code: standard.code, standard };
+  }
+  const domain = domains[group.domain] ? group.domain : "";
+  return { domain, code: "", standard: null };
+}
+
+function curriculumDomainOptions(course, selectedDomain = "") {
+  const domains = curriculumForCourse(course);
+  return `<option value="">직접 입력</option>${Object.keys(domains).map((domain) => `<option value="${escapeHtml(domain)}" ${domain === selectedDomain ? "selected" : ""}>${escapeHtml(domain)}</option>`).join("")}`;
+}
+
+function curriculumStandardOptions(course, domain, selectedCode = "") {
+  const standards = curriculumForCourse(course)[domain] || [];
+  return `<option value="">${domain ? "성취기준을 선택하세요" : "영역을 먼저 선택하세요"}</option>${standards.map((standard) => `<option value="${escapeHtml(standard.code)}" ${standard.code === selectedCode ? "selected" : ""}>[${escapeHtml(standard.code)}] ${escapeHtml(standard.statement)}</option>`).join("")}`;
+}
+
+function achievementEditor(group, index, course) {
+  const selection = curriculumSelection(group, course);
+  return `<article class="achievement-editor-card" data-achievement-group data-group-id="${escapeHtml(group.id || "")}" data-standard-code="${escapeHtml(selection.code)}">
     <div class="achievement-editor-head"><strong>성취기준 ${index + 1}</strong><button type="button" data-remove-achievement>삭제</button></div>
-    <div class="achievement-input-grid"><label>문항 범위<input name="achievementRange" value="${escapeHtml(group.itemRange || "")}" placeholder="예: 1~3번" required></label><label>성취기준<textarea name="achievementStandard" rows="3" required>${escapeHtml(group.standard || "")}</textarea></label></div>
+    <div class="curriculum-picker"><label>교과 영역<select name="achievementDomain">${curriculumDomainOptions(course, selection.domain)}</select></label><label>성취기준 선택<select name="achievementCode" ${selection.domain ? "" : "disabled"}>${curriculumStandardOptions(course, selection.domain, selection.code)}</select></label></div>
+    <div class="achievement-input-grid"><label>문항 범위<input name="achievementRange" value="${escapeHtml(group.itemRange || "")}" placeholder="예: 1~3번" required></label><label>성취기준 내용 <small>선택 후 필요한 경우 교사가 직접 수정할 수 있습니다.</small><textarea name="achievementStandard" rows="3" placeholder="직접 입력하거나 위 목록에서 선택하세요." required>${escapeHtml(group.standard || "")}</textarea></label></div>
     <div class="level-editor-list" data-levels>${(group.levels?.length ? group.levels : defaultAchievementLevels()).map(levelEditor).join("")}</div>
     <button class="mini-add" type="button" data-add-level>＋ 성취수준 추가</button>
   </article>`;
@@ -655,6 +690,24 @@ function rubricEditorGroup(item, index) {
 
 function rubricScoreRow(level) {
   return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><input name="rubricScore" type="number" min="0" step="0.5" value="${Number(level.score || 0)}" required><textarea name="rubricCriterion" rows="2" placeholder="이 배점을 주는 구체적인 조건" required>${escapeHtml(level.criterion || "")}</textarea><button type="button" data-remove-rubric-score>삭제</button></div>`;
+}
+
+function rubricAiDialog(items, course) {
+  return `<dialog class="rubric-ai-dialog" data-rubric-ai-dialog>
+    <div class="rubric-ai-shell">
+      <div class="rubric-ai-heading"><div><p class="section-kicker">GEMINI RUBRIC BUILDER</p><h3>채점기준 AI 생성</h3><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과에 맞춰 평가요소별 배점 기준을 만듭니다.</p></div><button type="button" data-close-rubric-ai aria-label="닫기">×</button></div>
+      <div class="rubric-ai-guide"><strong>급간 수에 따라 배점이 자동 배치됩니다.</strong><span>3개는 2·1·0점, 4개는 3·2·1·0점으로 생성되며 결과는 이후 직접 수정할 수 있습니다.</span></div>
+      <div class="rubric-ai-element-list" data-rubric-ai-elements>${items.map((item, index) => rubricAiElementRow(item, index)).join("")}</div>
+      <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 평가요소 추가</button>
+      <p class="rubric-ai-status" data-rubric-ai-status role="status">설정에 저장된 Gemini 모델과 API 키를 사용합니다.</p>
+      <div class="rubric-ai-actions"><button class="secondary-action" type="button" data-close-rubric-ai>취소</button><button class="primary-action" type="button" data-run-rubric-ai>채점기준 AI 생성</button></div>
+    </div>
+  </dialog>`;
+}
+
+function rubricAiElementRow(item = {}, index = 0) {
+  const count = Math.min(6, Math.max(2, Number(item.scoreLevels?.length || item.bandCount || 3)));
+  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><strong>평가요소 ${index + 1}</strong><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>급간 수<select name="rubricAiBandCount">${[2, 3, 4, 5, 6].map((value) => `<option value="${value}" ${value === count ? "selected" : ""}>${value}개</option>`).join("")}</select></label></div></article>`;
 }
 
 function exampleEditorRow(item) {
@@ -687,8 +740,12 @@ function bindDesignTab(course) {
   if (!form) return;
   refreshMathPreviews(form);
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
-  form.addEventListener("click", (event) => handleDesignEditorClick(event, form));
-  form.addEventListener("input", (event) => { if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target); });
+  form.addEventListener("click", (event) => handleDesignEditorClick(event, form, course));
+  form.addEventListener("change", (event) => handleAchievementCurriculumChange(event, form, course));
+  form.addEventListener("input", (event) => {
+    if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
+    if (event.target.matches('[name="achievementStandard"]')) clearChangedCurriculumSelection(event.target, course);
+  });
   form.addEventListener("focusout", (event) => {
     if (!event.target.matches('[name="exampleText"], [name="exampleVisual"]')) return;
     event.target.value = toTeacherFriendlyMath(event.target.value);
@@ -712,9 +769,27 @@ function bindDesignTab(course) {
   });
 }
 
-function handleDesignEditorClick(event, form) {
+function handleDesignEditorClick(event, form, course) {
+  const openRubricAi = event.target.closest("[data-open-rubric-ai]");
+  if (openRubricAi) { form.querySelector("[data-rubric-ai-dialog]")?.showModal(); return; }
+  const closeRubricAi = event.target.closest("[data-close-rubric-ai]");
+  if (closeRubricAi) { closeRubricAi.closest("[data-rubric-ai-dialog]")?.close(); return; }
+  const addRubricAiElement = event.target.closest("[data-add-rubric-ai-element]");
+  if (addRubricAiElement) {
+    const list = form.querySelector("[data-rubric-ai-elements]");
+    list.insertAdjacentHTML("beforeend", rubricAiElementRow({}, list.querySelectorAll("[data-rubric-ai-element]").length));
+    return;
+  }
+  const removeRubricAiElement = event.target.closest("[data-remove-rubric-ai-element]");
+  if (removeRubricAiElement) {
+    const list = form.querySelector("[data-rubric-ai-elements]");
+    if (list.querySelectorAll("[data-rubric-ai-element]").length > 1) removeRubricAiElement.closest("[data-rubric-ai-element]").remove();
+    return;
+  }
+  const runRubricAi = event.target.closest("[data-run-rubric-ai]");
+  if (runRubricAi) { generateRubricWithAi(form, course); return; }
   const addAchievement = event.target.closest("[data-add-achievement]");
-  if (addAchievement) { form.querySelector("[data-achievement-groups]").insertAdjacentHTML("beforeend", achievementEditor({ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }, form.querySelectorAll("[data-achievement-group]").length)); return; }
+  if (addAchievement) { form.querySelector("[data-achievement-groups]").insertAdjacentHTML("beforeend", achievementEditor({ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }, form.querySelectorAll("[data-achievement-group]").length, course)); return; }
   const removeAchievement = event.target.closest("[data-remove-achievement]");
   if (removeAchievement) { if (form.querySelectorAll("[data-achievement-group]").length > 1) removeAchievement.closest("[data-achievement-group]").remove(); return; }
   const addLevel = event.target.closest("[data-add-level]");
@@ -765,6 +840,105 @@ function handleDesignEditorClick(event, form) {
     denominatorInput.value = "";
     textarea.focus();
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function handleAchievementCurriculumChange(event, form, course) {
+  const group = event.target.closest("[data-achievement-group]");
+  if (!group) return;
+  if (event.target.matches('[name="achievementDomain"]')) {
+    const domain = event.target.value;
+    const codeSelect = group.querySelector('[name="achievementCode"]');
+    codeSelect.innerHTML = curriculumStandardOptions(course, domain, "");
+    codeSelect.disabled = !domain;
+    group.dataset.standardCode = "";
+    return;
+  }
+  if (!event.target.matches('[name="achievementCode"]')) return;
+  const code = event.target.value;
+  if (!code) { group.dataset.standardCode = ""; return; }
+  const standard = globalThis.CurriculumStandards?.find?.(course.grade, course.subject, code);
+  if (!standard) { setDesignStatus(form, "선택한 성취기준 자료를 찾지 못했습니다. 다시 선택해 주세요.", true); return; }
+  group.dataset.standardCode = standard.code;
+  group.querySelector('[name="achievementStandard"]').value = `[${standard.code}] ${standard.statement}`;
+  group.querySelector("[data-levels]").innerHTML = ["상", "중", "하"].map((label) => levelEditor({ id: crypto.randomUUID(), label, description: standard.levels[label] || "" })).join("");
+  setDesignStatus(form, `[${standard.code}] 성취기준과 상·중·하 성취수준을 자동 입력했습니다.`);
+}
+
+function clearChangedCurriculumSelection(textarea, course) {
+  const group = textarea.closest("[data-achievement-group]");
+  const code = group?.dataset.standardCode || "";
+  if (!code) return;
+  const standard = globalThis.CurriculumStandards?.find?.(course.grade, course.subject, code);
+  const canonical = standard ? `[${standard.code}] ${standard.statement}` : "";
+  if (textarea.value.trim() === canonical) return;
+  group.dataset.standardCode = "";
+  const codeSelect = group.querySelector('[name="achievementCode"]');
+  if (codeSelect) codeSelect.value = "";
+}
+
+function rubricAiElements(dialog) {
+  const elements = Array.from(dialog.querySelectorAll("[data-rubric-ai-element]")).map((row, index) => ({
+    questionNumber: row.querySelector('[name="rubricAiQuestion"]').value.trim() || String(index + 1),
+    evaluationElement: row.querySelector('[name="rubricAiElement"]').value.trim(),
+    bandCount: Number(row.querySelector('[name="rubricAiBandCount"]').value),
+  }));
+  if (!elements.length || elements.some((item) => !item.evaluationElement)) throw new Error("모든 평가요소의 이름을 입력해 주세요.");
+  return elements;
+}
+
+function alignGeneratedRubrics(result, requestedElements) {
+  const generated = Array.isArray(result?.rubricCriteria) ? result.rubricCriteria : [];
+  return requestedElements.map((requested, index) => {
+    const item = generated.find((candidate) => String(candidate?.questionNumber || "").trim() === requested.questionNumber
+      && String(candidate?.evaluationElement || "").trim() === requested.evaluationElement) || generated[index];
+    if (!item) throw new Error(`${requested.evaluationElement}의 채점기준을 생성하지 못했습니다.`);
+    const levels = Array.isArray(item.scoreLevels) ? item.scoreLevels : [];
+    const expectedScores = Array.from({ length: requested.bandCount }, (_value, scoreIndex) => requested.bandCount - scoreIndex - 1);
+    const scoreLevels = expectedScores.map((score) => {
+      const level = levels.find((candidate) => Number(candidate?.score) === score);
+      if (!level?.criterion?.trim()) throw new Error(`${requested.evaluationElement}의 ${score}점 기준이 누락되었습니다. 다시 생성해 주세요.`);
+      return { id: crypto.randomUUID(), score, criterion: String(level.criterion).trim() };
+    });
+    return { id: crypto.randomUUID(), questionNumber: requested.questionNumber, evaluationElement: requested.evaluationElement, scoreLevels };
+  });
+}
+
+async function generateRubricWithAi(form, course) {
+  const dialog = form.querySelector("[data-rubric-ai-dialog]");
+  const status = dialog.querySelector("[data-rubric-ai-status]");
+  const button = dialog.querySelector("[data-run-rubric-ai]");
+  try {
+    const elements = rubricAiElements(dialog);
+    const apiKey = await loadGeminiApiKey();
+    if (!apiKey) throw new Error("설정에서 Gemini API 키를 먼저 테스트하여 저장해 주세요.");
+    const model = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
+    button.disabled = true;
+    button.textContent = "AI가 채점기준을 만드는 중…";
+    status.textContent = `${elements.length}개 평가요소의 배점별 수행 조건을 생성하고 있습니다.`;
+    status.classList.remove("is-error");
+    const result = await ChaejeomAI.generateRubricCriteria({
+      apiKey,
+      model,
+      context: {
+        grade: course.grade,
+        subject: course.subject,
+        taskName: form.elements.taskName.value.trim(),
+        achievementStandards: Array.from(form.querySelectorAll('[name="achievementStandard"]')).map((field) => field.value.trim()).filter(Boolean),
+      },
+      elements,
+    });
+    const rubrics = alignGeneratedRubrics(result, elements);
+    form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map(rubricEditorGroup).join("");
+    const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
+    setDesignStatus(form, `${rubrics.length}개 평가요소의 채점기준을 AI로 생성했습니다. 배점과 내용을 검토한 뒤 저장해 주세요.${note}`);
+    dialog.close();
+  } catch (error) {
+    status.textContent = friendlyError(error);
+    status.classList.add("is-error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "채점기준 AI 생성";
   }
 }
 
@@ -871,6 +1045,9 @@ function collectDesignForm(form, existing) {
     id: group.dataset.groupId || crypto.randomUUID(),
     itemRange: group.querySelector('[name="achievementRange"]').value.trim(),
     standard: group.querySelector('[name="achievementStandard"]').value.trim(),
+    standardCode: group.dataset.standardCode || "",
+    domain: group.querySelector('[name="achievementDomain"]')?.value || "",
+    curriculumVersion: group.dataset.standardCode ? "2022 개정 교육과정" : "",
     levels: Array.from(group.querySelectorAll("[data-level]")).map((level) => ({
       id: level.dataset.levelId || crypto.randomUUID(),
       label: level.querySelector('[name="levelLabel"]').value.trim(),

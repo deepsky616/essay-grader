@@ -725,3 +725,38 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
 });
 
+test("generateRubricCriteria requests the exact teacher-selected band scores", async () => {
+  const result = await AI.generateRubricCriteria({
+    apiKey: VALID_KEY,
+    context: {
+      grade: "6",
+      subject: "수학",
+      taskName: "비율 설명하기",
+      achievementStandards: ["[6수01-03] 분수의 나눗셈을 계산할 수 있다."],
+    },
+    elements: [{ questionNumber: "1", evaluationElement: "계산 과정의 타당성", bandCount: 4 }],
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const prompt = body.contents[0].parts[0].text;
+      assert.match(prompt, /"scoreValues":\[3,2,1,0\]/);
+      assert.match(prompt, /6학년|"grade":"6"/);
+      assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        rubricCriteria: [{
+          questionNumber: "1",
+          evaluationElement: "계산 과정의 타당성",
+          scoreLevels: [
+            { score: 3, criterion: "계산 과정과 설명이 모두 타당하다." },
+            { score: 2, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
+            { score: 1, criterion: "계산 또는 설명의 일부만 타당하다." },
+            { score: 0, criterion: "무응답이거나 핵심 계산이 타당하지 않다." },
+          ],
+        }],
+        notes: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.deepEqual(result.requestedElements[0].scoreValues, [3, 2, 1, 0]);
+  assert.equal(result.rubricCriteria[0].scoreLevels.length, 4);
+});
+
