@@ -184,3 +184,13 @@ test("problem scoring panel uses readable text and score button sizes", () => {
   assert.match(styles, /\.teacher-total strong \{[^}]*font-size: 18px;/);
 });
 
+test("AI and achievement feedback editors match the readable grading text scale", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  assert.match(styles, /\.feedback-edit-field \{[^}]*font-size: 12px;/);
+  assert.match(styles, /\.feedback-edit-field textarea \{[^}]*font-size: 12px;[^}]*line-height: 1\.7;/);
+  assert.match(styles, /\.student-achievement-feedback > strong \{[^}]*font-size: 12px;/);
+  assert.match(styles, /\.student-achievement-feedback span \{[^}]*font-size: 11px;/);
+  assert.match(styles, /\.student-achievement-feedback textarea \{[^}]*font-size: 12px;[^}]*line-height: 1\.7;/);
+  assert.match(styles, /\.student-achievement-feedback small \{[^}]*font-size: 10px;/);
+});
+

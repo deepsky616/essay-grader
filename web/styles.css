@@ -822,20 +822,20 @@ a { color: inherit; text-decoration: none; }
 .teacher-total strong { color: var(--blue); font-size: 18px; }
 .score-bulk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 14px 16px 16px; border-top: 1px solid var(--line); }
 .score-bulk-actions button { width: 100%; }
-.feedback-edit-field { display: grid; gap: 7px; padding: 16px; color: var(--muted); font-size: 9px; font-weight: 900; }
-.feedback-edit-field textarea { padding: 10px; border: 1px solid var(--line); border-radius: 9px; resize: vertical; font-size: 10px; line-height: 1.6; }
-.feedback-edit-field small { font-size: 8px; font-weight: 500; line-height: 1.5; }
+.feedback-edit-field { display: grid; gap: 9px; padding: 18px 16px; color: var(--muted); font-size: 12px; font-weight: 900; }
+.feedback-edit-field textarea { padding: 12px; border: 1px solid var(--line); border-radius: 9px; resize: vertical; font-size: 12px; line-height: 1.7; }
+.feedback-edit-field small { font-size: 10px; font-weight: 500; line-height: 1.6; }
 .teacher-review-alert { margin: 0 16px 15px; padding: 12px 14px; border: 1px solid #d79a72; border-radius: 10px; background: #fff3e9; color: #713a1f; }
 .teacher-review-alert strong { font-size: 9px; }
 .teacher-review-alert ul { margin: 7px 0 0; padding-left: 17px; font-size: 8px; line-height: 1.6; }
 .teacher-review-alert p { margin: 7px 0 0; font-size: 8px; line-height: 1.55; }
 .student-achievement-feedback { margin: 0 16px 15px; border: 1px solid var(--line); border-radius: 10px; }
-.student-achievement-feedback > strong { display: block; padding: 11px 12px; background: rgba(185,234,210,.2); font-size: 9px; }
-.student-achievement-feedback label { display: grid; gap: 7px; padding: 11px 12px; border-top: 1px solid var(--line); }
-.student-achievement-feedback span { color: var(--blue); font-size: 8px; font-weight: 900; }
-.student-achievement-feedback textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; color: var(--ink); font: inherit; font-size: 9px; line-height: 1.55; }
+.student-achievement-feedback > strong { display: block; padding: 13px 12px; background: rgba(185,234,210,.2); font-size: 12px; }
+.student-achievement-feedback label { display: grid; gap: 9px; padding: 13px 12px; border-top: 1px solid var(--line); }
+.student-achievement-feedback span { color: var(--blue); font-size: 11px; font-weight: 900; }
+.student-achievement-feedback textarea { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; color: var(--ink); font: inherit; font-size: 12px; line-height: 1.7; }
 .student-achievement-feedback textarea:focus { border-color: var(--blue); outline: 3px solid rgba(44,80,190,.14); }
-.student-achievement-feedback small { color: var(--muted); font-size: 7px; font-weight: 500; line-height: 1.45; }
+.student-achievement-feedback small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.6; }
 .full-button { width: calc(100% - 32px); margin: 0 16px 16px; }
 .detail-ai-actions { display: grid; grid-template-columns: 1fr; gap: 9px; padding: 0 16px 16px; }
 .detail-ai-actions button { width: 100%; }
