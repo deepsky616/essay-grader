@@ -612,7 +612,16 @@ a { color: inherit; text-decoration: none; }
 .student-list-card { margin-top: 20px; }
 .student-list-actions { display: flex; align-items: center; gap: 10px; }
 .student-list-actions .secondary-action { padding: 8px 11px; font-size: 8px; }
+.student-school-filter { display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid var(--line); background: white; }
+.student-school-filter > strong { flex: 0 0 auto; font-size: 9px; }
+.student-school-filter > div { display: flex; overflow-x: auto; gap: 8px; padding: 2px; scrollbar-width: thin; }
+.student-school-filter button { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: white; color: var(--ink); cursor: pointer; font-size: 9px; font-weight: 900; }
+.student-school-filter button em { padding: 3px 6px; border-radius: 999px; background: rgba(24,33,56,.07); color: var(--muted); font-size: 7px; font-style: normal; }
+.student-school-filter button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: white; box-shadow: 3px 3px 0 var(--lime); }
+.student-school-filter button[aria-pressed="true"] em { background: var(--lime); color: var(--ink); }
+.student-school-filter button:focus-visible { outline: 3px solid rgba(115,56,255,.28); outline-offset: 2px; }
 .student-roster-groups { display: grid; gap: 18px; padding: 20px 22px 24px; background: #f7f7fb; }
+.student-roster-group[hidden] { display: none; }
 .student-roster-group { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: white; box-shadow: 0 4px 12px rgba(24,33,56,.05); }
 .student-roster-group-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; border-bottom: 1px solid var(--line); background: #fafaff; }
 .student-roster-group-head > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
@@ -946,6 +955,7 @@ a { color: inherit; text-decoration: none; }
   .course-card { border-right: 0 !important; }
   .course-form .full-field, .course-form .form-bottom-actions { grid-column: auto; }
   .student-roster-groups { gap: 14px; padding: 14px 12px 18px; }
+  .student-school-filter { align-items: stretch; flex-direction: column; gap: 8px; padding-inline: 12px; }
   .student-roster-group-head { align-items: stretch; flex-direction: column; }
   .student-roster-group-head button { align-self: flex-start; }
   .student-management-head, .student-management-row { grid-template-columns: 62px minmax(110px,1fr) 44px; padding-inline: 12px; }

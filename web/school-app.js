@@ -33,6 +33,7 @@ let toastTimer = 0;
 let geminiApiKeyCache = "";
 let editingDesignId = "";
 let selectedTargetClass = "1";
+let selectedStudentSchoolName = null;
 let gradingResultsExpanded = false;
 let previewUrls = [];
 let activeGradingRun = null;
@@ -232,6 +233,12 @@ async function renderStudentManagement() {
     groups.get(key).students.push(student);
     return groups;
   }, new Map()).values()).sort((a, b) => numericSort(a.schoolName, b.schoolName) || numericSort(a.grade, b.grade) || numericSort(a.className, b.className));
+  const studentSchools = Array.from(new Set(studentGroups.map((group) => group.schoolName || ""))).sort((a, b) => {
+    if (!a && b) return 1;
+    if (a && !b) return -1;
+    return numericSort(a, b);
+  });
+  if (!studentSchools.includes(selectedStudentSchoolName)) selectedStudentSchoolName = studentSchools[0] ?? null;
   app.innerHTML = `
     <div class="page-shell school-shell">
       <section class="page-intro student-intro">
@@ -258,8 +265,16 @@ async function renderStudentManagement() {
       <section class="student-list-card">
         <div class="board-toolbar"><div><p class="section-kicker">STUDENT ROSTER</p><h2>학생 목록</h2></div><div class="student-list-actions"><strong>${students.length}명</strong>${students.length ? `<button class="secondary-action danger-action" type="button" data-delete-all-students>학생 전체 삭제</button>` : ""}</div></div>
         ${students.length ? `
+          <div class="student-school-filter" aria-label="학교별 학생 명단 선택">
+            <strong>학교 선택</strong>
+            <div>${studentSchools.map((schoolName, schoolIndex) => {
+              const schoolStudentCount = students.filter((student) => (student.schoolName || "") === schoolName).length;
+              const isSelected = schoolName === selectedStudentSchoolName;
+              return `<button type="button" data-student-school-filter="${schoolIndex}" aria-pressed="${isSelected}"><span>${escapeHtml(schoolName || "학교 미입력")}</span><em>${schoolStudentCount}명</em></button>`;
+            }).join("")}</div>
+          </div>
           <div class="student-roster-groups">${studentGroups.map((group, groupIndex) => `
-            <section class="student-roster-group" aria-labelledby="student-group-${groupIndex}">
+            <section class="student-roster-group" data-student-school-group="${studentSchools.indexOf(group.schoolName || "")}" aria-labelledby="student-group-${groupIndex}"${group.schoolName === selectedStudentSchoolName ? "" : " hidden"}>
               <div class="student-roster-group-head">
                 <div><p>${escapeHtml(group.schoolName || "학교 미입력")}</p><h3 id="student-group-${groupIndex}">${escapeHtml(group.grade)}학년 ${escapeHtml(group.className)}반</h3><span>${group.students.length}명</span></div>
                 <button type="button" data-delete-student-group="${groupIndex}">이 명단 전체 삭제</button>
@@ -289,6 +304,14 @@ async function renderStudentManagement() {
   });
   app.querySelector("[data-student-import]").addEventListener("change", (event) => importStudentFile(event.currentTarget.files?.[0]));
   app.querySelector("[data-download-student-template]").addEventListener("click", downloadStudentTemplate);
+  const schoolFilterButtons = Array.from(app.querySelectorAll("[data-student-school-filter]"));
+  const schoolRosterGroups = Array.from(app.querySelectorAll("[data-student-school-group]"));
+  schoolFilterButtons.forEach((button) => button.addEventListener("click", () => {
+    const schoolIndex = Number(button.dataset.studentSchoolFilter);
+    selectedStudentSchoolName = studentSchools[schoolIndex] ?? null;
+    schoolFilterButtons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+    schoolRosterGroups.forEach((group) => { group.hidden = Number(group.dataset.studentSchoolGroup) !== schoolIndex; });
+  }));
   app.querySelector("[data-delete-all-students]")?.addEventListener("click", async () => {
     if (!window.confirm(`등록된 학생 ${students.length}명을 모두 삭제할까요? 모든 수업의 평가 대상에서도 제외되며 기존 PDF 분할·채점 결과가 초기화됩니다.`)) return;
     await removeStudents(students.map((student) => student.id));

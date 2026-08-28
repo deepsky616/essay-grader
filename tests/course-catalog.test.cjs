@@ -61,6 +61,14 @@ test("student management renders a separate roster for every school, grade, and 
   assert.match(source, /data-delete-student-group="\$\{groupIndex\}"/);
 });
 
+test("student management filters roster cards to the selected school", () => {
+  assert.match(source, /const studentSchools = Array\.from\(new Set\(studentGroups\.map/);
+  assert.match(source, /data-student-school-filter="\$\{schoolIndex\}" aria-pressed="\$\{isSelected\}"/);
+  assert.match(source, /data-student-school-group="\$\{studentSchools\.indexOf\(group\.schoolName \|\| ""\)\}"/);
+  assert.match(source, /group\.schoolName === selectedStudentSchoolName \? "" : " hidden"/);
+  assert.match(source, /group\.hidden = Number\(group\.dataset\.studentSchoolGroup\) !== schoolIndex/);
+});
+
 test("home and navigation use the requested AI essay-assessment title", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);
