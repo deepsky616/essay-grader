@@ -24,6 +24,16 @@
     return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, "");
   }
 
+  function normalizeSectionOptions(options = {}) {
+    return {
+      achievementStandards: options.achievementStandards !== false,
+      rubricCriteria: options.rubricCriteria !== false,
+      scoreRows: options.scoreRows !== false,
+      achievementResults: options.achievementResults !== false,
+      feedback: options.feedback !== false,
+    };
+  }
+
   function buildWorkbookRows({ classTitle, assessmentTitle, headers, records }) {
     const normalizedHeaders = Array.isArray(headers) ? headers.map((value) => String(value ?? "")) : [];
     const width = Math.max(1, normalizedHeaders.length);
@@ -65,17 +75,19 @@
     return `<div class="report-achievement-results"><h3>성취기준별 결과</h3>${items.map((item) => `<article><strong>${escapeHtml(item.itemRange || "성취기준")} · ${escapeHtml(item.achievementLevel || "교사 확인")}</strong><p>${escapeHtml(item.feedback || "")}</p></article>`).join("")}</div>`;
   }
 
-  function buildReportHtml(report) {
+  function buildReportHtml(report, sectionOptions) {
     const student = report?.student || {};
+    const sections = normalizeSectionOptions(sectionOptions);
+    const scoreIsFirstContent = !sections.achievementStandards && !sections.rubricCriteria;
     return `<article class="result-report-sheet" data-report-student="${escapeHtml(student.id || "")}">
       <div class="report-topline"><span>AI 서·논술형 평가지원시스템</span><span>${escapeHtml(report.generatedAt || "")}</span></div>
       <div class="report-student-line"><span>${escapeHtml(student.grade || "-")}학년 ${escapeHtml(student.className || "-")}반 ${escapeHtml(student.number || "-")}번</span><strong>${escapeHtml(student.name || "학생")}</strong></div>
       <header class="report-title-block"><p>${escapeHtml(report.semesterLabel || "")} · ${escapeHtml(report.subject || "")}</p><h1>${escapeHtml(report.assessmentTitle || report.courseTitle || "평가")} <em>채점 결과</em></h1><small>${escapeHtml(report.courseTitle || "")}</small></header>
-      <section class="report-section"><h2>성취기준</h2>${achievementStandardsHtml(report.achievementStandards)}</section>
-      <section class="report-section report-criteria"><h2>채점기준</h2>${rubricHtml(report.rubricCriteria)}</section>
-      <section class="report-section result-report-outcomes"><h2>채점 결과</h2>${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>
-      ${achievementResultsHtml(report.achievementResults)}
-      <section class="report-section report-feedback"><h2>선생님 피드백</h2><div>${multiline(report.feedback || "피드백이 아직 작성되지 않았습니다.")}</div></section>
+      ${sections.achievementStandards ? `<section class="report-section" data-report-section="achievementStandards"><h2>성취기준</h2>${achievementStandardsHtml(report.achievementStandards)}</section>` : ""}
+      ${sections.rubricCriteria ? `<section class="report-section report-criteria" data-report-section="rubricCriteria"><h2>채점기준</h2>${rubricHtml(report.rubricCriteria)}</section>` : ""}
+      ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
+      ${sections.achievementResults ? `<section data-report-section="achievementResults">${achievementResultsHtml(report.achievementResults)}</section>` : ""}
+      ${sections.feedback ? `<section class="report-section report-feedback" data-report-section="feedback"><h2>선생님 피드백</h2><div>${multiline(report.feedback || "피드백이 아직 작성되지 않았습니다.")}</div></section>` : ""}
       <footer><span>${escapeHtml(report.semesterLabel || "")} ${escapeHtml(report.subject || "")} 평가 결과</span><span>${escapeHtml(student.grade || "-")}-${escapeHtml(student.className || "-")}-${escapeHtml(student.number || "-")}</span></footer>
     </article>`;
   }
@@ -112,6 +124,7 @@
       .report-rubric-table td:last-child { width: 10%; text-align: center; white-space: nowrap; }
       .report-rubric-table th small, .report-score-table th small { display: block; margin-bottom: 3px; color: #7338ff; font-size: 8pt; }
       .result-report-outcomes { break-before: page; padding-top: 3mm; }
+      .result-report-outcomes.report-outcomes-first { break-before: auto; }
       .report-score-table th:first-child { width: 32%; text-align: left; }
       .report-score-table td:last-child { width: 16%; text-align: center; white-space: nowrap; }
       .report-total { margin-top: 14px; padding: 14px 18px; border-top: 3px solid #7338ff; background: #f6f2ff; }
@@ -127,10 +140,10 @@
     `;
   }
 
-  function buildPrintDocument(reports, title = "학생 채점 결과") {
+  function buildPrintDocument(reports, title = "학생 채점 결과", sectionOptions) {
     const list = Array.isArray(reports) ? reports : [];
-    return `<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>${printStyles()}</style></head><body>${list.map(buildReportHtml).join("")}</body></html>`;
+    return `<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>${printStyles()}</style></head><body>${list.map((report) => buildReportHtml(report, sectionOptions)).join("")}</body></html>`;
   }
 
-  return { buildWorkbookRows, buildReportHtml, buildPrintDocument, formatScore };
+  return { buildWorkbookRows, buildReportHtml, buildPrintDocument, formatScore, normalizeSectionOptions };
 });

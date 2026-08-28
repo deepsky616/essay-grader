@@ -1175,11 +1175,26 @@ function renderResultDistributionDialog(course, targetStudents, results) {
   return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
     <div class="result-distribution-shell">
       <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div><button type="button" data-close-result-distribution aria-label="닫기">×</button></div>
-      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><span>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</span></div>
+      <div class="result-distribution-toolbar"><label>미리볼 학생<select data-result-report-student>${ordered.map((result) => { const student = studentMap.get(result.studentId); return `<option value="${escapeHtml(result.studentId)}">${escapeHtml(student.grade)}학년 ${escapeHtml(student.className)}반 ${escapeHtml(student.number)}번 ${escapeHtml(student.name)}</option>`; }).join("")}</select></label><div class="result-output-toolbar"><button class="secondary-action" type="button" data-toggle-result-output-settings aria-expanded="false">출력 항목 설정 <span data-result-output-count>5/5</span></button><small>저장된 교사 점수와 피드백 기준 · ${ordered.length}명</small></div></div>
+      <section class="result-output-settings" data-result-output-settings hidden>
+        <div><strong>출력할 항목을 선택하세요.</strong><p>선택 내용은 미리보기, 개별 출력, 전체 출력과 PDF 저장에 동일하게 적용됩니다.</p></div>
+        <div class="result-output-options">
+          <label><input type="checkbox" data-result-output-section="achievementStandards" checked><span>성취기준</span></label>
+          <label><input type="checkbox" data-result-output-section="rubricCriteria" checked><span>채점기준</span></label>
+          <label><input type="checkbox" data-result-output-section="scoreRows" checked><span>채점결과</span></label>
+          <label><input type="checkbox" data-result-output-section="achievementResults" checked><span>성취기준별 결과</span></label>
+          <label><input type="checkbox" data-result-output-section="feedback" checked><span>선생님 피드백</span></label>
+        </div>
+      </section>
       <div class="result-print-preview" data-result-report-preview></div>
       <div class="result-distribution-actions"><button class="secondary-action" type="button" data-close-result-distribution>닫기</button><button class="secondary-action" type="button" data-print-selected-result>선택 학생 출력·PDF 저장</button><button class="primary-action" type="button" data-print-all-results>전체 학생 출력·PDF 저장</button></div>
     </div>
   </dialog>`;
+}
+
+function selectedResultReportSections(dialog) {
+  return Object.fromEntries(Array.from(dialog.querySelectorAll("[data-result-output-section]"))
+    .map((input) => [input.dataset.resultOutputSection, input.checked]));
 }
 
 function openResultDistributionDialog(course, targetStudents) {
@@ -1193,25 +1208,45 @@ function openResultDistributionDialog(course, targetStudents) {
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   const select = dialog.querySelector("[data-result-report-student]");
   const preview = dialog.querySelector("[data-result-report-preview]");
+  const settingsPanel = dialog.querySelector("[data-result-output-settings]");
+  const settingsButton = dialog.querySelector("[data-toggle-result-output-settings]");
+  const outputInputs = Array.from(dialog.querySelectorAll("[data-result-output-section]"));
+  const updateOutputCount = () => {
+    dialog.querySelector("[data-result-output-count]").textContent = `${outputInputs.filter((input) => input.checked).length}/${outputInputs.length}`;
+  };
   const renderPreview = () => {
     const resultIndex = ordered.findIndex((item) => item.studentId === select.value);
     const safeIndex = resultIndex >= 0 ? resultIndex : 0;
     const result = ordered[safeIndex];
-    preview.innerHTML = window.ChaejeomExport.buildReportHtml(buildStudentReportViewModel(course, design, studentMap.get(result.studentId), result, safeIndex, ordered.length));
+    preview.innerHTML = window.ChaejeomExport.buildReportHtml(buildStudentReportViewModel(course, design, studentMap.get(result.studentId), result, safeIndex, ordered.length), selectedResultReportSections(dialog));
     preview.scrollTop = 0;
   };
   if (!dialog.dataset.bound) {
     dialog.dataset.bound = "true";
     dialog.querySelectorAll("[data-close-result-distribution]").forEach((button) => button.addEventListener("click", () => dialog.close()));
     select.addEventListener("change", renderPreview);
-    dialog.querySelector("[data-print-selected-result]").addEventListener("click", () => printStudentResults(course, targetStudents, [select.value]));
-    dialog.querySelector("[data-print-all-results]").addEventListener("click", () => printStudentResults(course, targetStudents, ordered.map((item) => item.studentId)));
+    settingsButton.addEventListener("click", () => {
+      settingsPanel.hidden = !settingsPanel.hidden;
+      settingsButton.setAttribute("aria-expanded", String(!settingsPanel.hidden));
+    });
+    outputInputs.forEach((input) => input.addEventListener("change", () => {
+      if (!outputInputs.some((candidate) => candidate.checked)) {
+        input.checked = true;
+        showToast("결과지에 출력할 항목을 하나 이상 선택해 주세요.");
+        return;
+      }
+      updateOutputCount();
+      renderPreview();
+    }));
+    dialog.querySelector("[data-print-selected-result]").addEventListener("click", () => printStudentResults(course, targetStudents, [select.value], selectedResultReportSections(dialog)));
+    dialog.querySelector("[data-print-all-results]").addEventListener("click", () => printStudentResults(course, targetStudents, ordered.map((item) => item.studentId), selectedResultReportSections(dialog)));
   }
+  updateOutputCount();
   renderPreview();
   if (!dialog.open) dialog.showModal();
 }
 
-function printStudentResults(course, targetStudents, studentIds) {
+function printStudentResults(course, targetStudents, studentIds, sectionOptions) {
   const design = course.designs?.find((item) => item.id === course.submission?.designId);
   const ordered = orderedGradingResults(course, targetStudents);
   const selectedIds = new Set(studentIds);
@@ -1225,7 +1260,7 @@ function printStudentResults(course, targetStudents, studentIds) {
   const frame = document.createElement("iframe");
   frame.className = "result-print-frame";
   frame.title = "학생 채점 결과 인쇄";
-  frame.srcdoc = window.ChaejeomExport.buildPrintDocument(reports, `${design.taskName}_채점결과`);
+  frame.srcdoc = window.ChaejeomExport.buildPrintDocument(reports, `${design.taskName}_채점결과`, sectionOptions);
   frame.addEventListener("load", () => {
     const cleanup = () => window.setTimeout(() => frame.remove(), 400);
     try {

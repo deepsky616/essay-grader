@@ -59,6 +59,35 @@ test("all-student print document places each student on a new printed sheet", ()
   assert.match(document, /김하늘/);
 });
 
+test("result sheet enables all five printable sections by default", () => {
+  const html = Export.buildReportHtml(report);
+  for (const section of ["achievementStandards", "rubricCriteria", "scoreRows", "achievementResults", "feedback"]) {
+    assert.match(html, new RegExp(`data-report-section="${section}"`));
+  }
+});
+
+test("selected output sections control both preview and printable PDF content", () => {
+  const sections = {
+    achievementStandards: false,
+    rubricCriteria: false,
+    scoreRows: true,
+    achievementResults: false,
+    feedback: true,
+  };
+  const html = Export.buildReportHtml(report, sections);
+  assert.doesNotMatch(html, /data-report-section="achievementStandards"/);
+  assert.doesNotMatch(html, /data-report-section="rubricCriteria"/);
+  assert.match(html, /data-report-section="scoreRows"/);
+  assert.match(html, /report-outcomes-first/);
+  assert.doesNotMatch(html, /data-report-section="achievementResults"/);
+  assert.match(html, /data-report-section="feedback"/);
+
+  const document = Export.buildPrintDocument([report], "선택 출력", sections);
+  assert.doesNotMatch(document, /data-report-section="rubricCriteria"/);
+  assert.match(document, /data-report-section="scoreRows"/);
+  assert.match(document, /data-report-section="feedback"/);
+});
+
 test("grading detail source exposes rubric score buttons and the requested review flow", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
   assert.match(source, /data-score-choice/);
@@ -69,3 +98,12 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
+test("result distribution source exposes five default-on output item controls", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "school-app.js"), "utf8");
+  assert.match(source, /data-toggle-result-output-settings[^>]*>출력 항목 설정/);
+  for (const section of ["achievementStandards", "rubricCriteria", "scoreRows", "achievementResults", "feedback"]) {
+    assert.match(source, new RegExp(`data-result-output-section="${section}" checked`));
+  }
+  assert.match(source, /selectedResultReportSections\(dialog\)/);
+  assert.match(source, /buildPrintDocument\(reports, `\$\{design\.taskName\}_채점결과`, sectionOptions\)/);
+});
