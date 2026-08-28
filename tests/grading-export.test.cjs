@@ -200,7 +200,7 @@ test("grading confidence is shown as accessible white badges with distinct color
   assert.match(schoolSource, /\["high", "medium", "low"\]\.includes\(item\.confidence\)/);
   assert.match(styles, /\.confidence-badge \{[^}]*background: #fff;[^}]*font-size: 10px;/);
   assert.match(styles, /\.confidence-high \{ color: #17623f; \}/);
-  assert.match(styles, /\.confidence-medium \{ color: #944a00; \}/);
+  assert.match(styles, /\.confidence-medium \{ color: #765800; \}/);
   assert.match(styles, /\.confidence-low \{ color: #a1262d; \}/);
 });
 
