@@ -194,3 +194,13 @@ test("AI and achievement feedback editors match the readable grading text scale"
   assert.match(styles, /\.student-achievement-feedback small \{[^}]*font-size: 10px;/);
 });
 
+test("grading confidence is shown as accessible white badges with distinct colors", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  assert.match(schoolSource, /confidence-badge confidence-\$\{confidence\}/);
+  assert.match(schoolSource, /\["high", "medium", "low"\]\.includes\(item\.confidence\)/);
+  assert.match(styles, /\.confidence-badge \{[^}]*background: #fff;[^}]*font-size: 10px;/);
+  assert.match(styles, /\.confidence-high \{ color: #17623f; \}/);
+  assert.match(styles, /\.confidence-medium \{ color: #944a00; \}/);
+  assert.match(styles, /\.confidence-low \{ color: #a1262d; \}/);
+});
+
