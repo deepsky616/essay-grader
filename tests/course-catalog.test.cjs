@@ -77,3 +77,9 @@ test("home and navigation use the requested AI essay-assessment title", () => {
   assert.doesNotMatch(html, /AI 서-논술형/);
 });
 
+test("the global footer credits the requested developer", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
+  assert.match(html, /<footer class="site-credit" aria-label="개발자 정보">/);
+  assert.match(html, /<span>개발자<\/span>\s*<strong>청계초등학교 조영석<\/strong>/);
+});
+
