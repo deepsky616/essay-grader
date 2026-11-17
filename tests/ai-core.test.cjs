@@ -71,6 +71,9 @@ test("buildPrompt includes typed rubric and math example metadata", () => {
   assert.match(prompt, /삼각형 ABC/);
   assert.match(prompt, /exampleAnswerResults/);
   assert.match(prompt, /세부 문제 번호를 합치지 말고 각각/);
+  assert.match(prompt, /pointItems/);
+  assert.match(prompt, /충족하지 못하면 반드시 0점/);
+  assert.match(prompt, /pointItems가 1개인 문제는 답이 틀리거나 기준을 충족하지 못하면 awardedScore가 반드시 0점/);
 });
 
 test("buildPrompt carries structured fraction verification into precision grading", () => {
@@ -131,28 +134,55 @@ test("normalizeGradingResult recomputes totals and flags invalid scores", () => 
   assert.ok(result.reviewReasons.length >= 2);
 });
 
-test("normalizeGradingResult keeps every example-answer subquestion score and reconciles its parent total", () => {
+test("normalizeGradingResult adds only earned problem-point items and makes their sum authoritative", () => {
   const result = AI.normalizeGradingResult({
     studentIdentifier: "S001", totalScore: 3, maxScore: 5, overallAchievementLevel: "보통", summary: "확인",
     strengths: [], improvements: [], nextSteps: [], achievementResults: [],
     questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "계산", answerReading: "풀이 작성", criterion: "부분 성취", score: 3, maxScore: 5, evidence: "계산 일부 정확", feedback: "확인", confidence: "high" }],
     exampleAnswerResults: [
-      { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 2, maxScore: 2, scoreStatus: "full", evidence: "첫 계산이 정확함", confidence: "high" },
-      { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 0, maxScore: 3, scoreStatus: "none", evidence: "두 번째 계산 일부 누락", confidence: "high" },
+      { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 2, maxScore: 2, scoreStatus: "full", evidence: "계산식만 정확함", confidence: "high", pointResults: [
+        { pointItemId: "p1", criterion: "계산식이 정확함", awardedScore: 1, maxScore: 1, earned: true, evidence: "계산식 정확", confidence: "high" },
+        { pointItemId: "p2", criterion: "정답이 정확함", awardedScore: 1, maxScore: 1, earned: false, evidence: "정답 오기", confidence: "high" },
+      ] },
+      { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 3, maxScore: 3, scoreStatus: "full", evidence: "설명이 정확함", confidence: "high", pointResults: [
+        { pointItemId: "p3", criterion: "설명이 정확함", awardedScore: 3, maxScore: 3, earned: true, evidence: "설명 정확", confidence: "high" },
+      ] },
     ],
     needsTeacherReview: false, reviewReasons: [],
   }, {
     totalScore: 5,
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 5, criterion: "완전" }, { score: 3, criterion: "부분 성취" }] }],
     exampleAnswers: [
-      { id: "e1", questionNumber: "1-(1)", maxScore: 2 },
-      { id: "e2", questionNumber: "1-(2)", maxScore: 3 },
+      { id: "e1", questionNumber: "1-(1)", maxScore: 2, pointItems: [{ id: "p1", score: 1, criterion: "계산식이 정확함" }, { id: "p2", score: 1, criterion: "정답이 정확함" }] },
+      { id: "e2", questionNumber: "1-(2)", maxScore: 3, pointItems: [{ id: "p3", score: 3, criterion: "설명이 정확함" }] },
     ],
   });
   assert.deepEqual(result.exampleAnswerResults.map((item) => item.questionNumber), ["1-(1)", "1-(2)"]);
-  assert.deepEqual(result.exampleAnswerResults.map((item) => item.awardedScore), [2, 1]);
-  assert.equal(result.exampleAnswerResults.reduce((sum, item) => sum + item.awardedScore, 0), 3);
-  assert.match(result.reviewReasons.join(" "), /세부 문항 점수 합계/);
+  assert.deepEqual(result.exampleAnswerResults.map((item) => item.awardedScore), [1, 3]);
+  assert.deepEqual(result.exampleAnswerResults[0].pointResults.map((item) => item.awardedScore), [1, 0]);
+  assert.equal(result.questionResults[0].score, 4);
+  assert.equal(result.totalScore, 4);
+  assert.match(result.reviewReasons.join(" "), /배점 항목 합계 1점/);
+});
+
+test("normalizeGradingResult gives zero when the only problem-point item is not earned", () => {
+  const result = AI.normalizeGradingResult({
+    studentIdentifier: "S002", totalScore: 2, maxScore: 2, overallAchievementLevel: "노력요함", summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "정답", answerReading: "3/4", criterion: "정확", score: 2, maxScore: 2, evidence: "오답", feedback: "다시 계산", confidence: "high" }],
+    exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", awardedScore: 2, maxScore: 2, scoreStatus: "full", evidence: "오답", confidence: "high", pointResults: [
+      { pointItemId: "p1", criterion: "정답이 정확함", awardedScore: 2, maxScore: 2, earned: false, evidence: "정답 불일치", confidence: "high" },
+    ] }],
+    needsTeacherReview: false, reviewReasons: [],
+  }, {
+    totalScore: 2,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "정답", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", maxScore: 2, pointItems: [{ id: "p1", score: 2, criterion: "정답이 정확함" }] }],
+  });
+  assert.equal(result.exampleAnswerResults[0].pointResults[0].awardedScore, 0);
+  assert.equal(result.exampleAnswerResults[0].awardedScore, 0);
+  assert.equal(result.questionResults[0].score, 0);
+  assert.equal(result.totalScore, 0);
 });
 
 test("selective precision review targets uncertain questions and their achievement range", () => {
@@ -172,6 +202,17 @@ test("selective precision review targets uncertain questions and their achieveme
     achievementResults: [{ itemRange: "1-2번", confidence: "medium" }],
   }, metadata);
   assert.deepEqual(selected, ["r2", "r1"]);
+});
+
+test("selective precision review rechecks a parent question when a point item has low confidence", () => {
+  const selected = AI.selectPrecisionCriterionIds({
+    questionResults: [{ criterionId: "r1", questionNumber: "1", answerReading: "12", evidence: "계산식", score: 2, confidence: "high" }],
+    exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1-(1)", confidence: "low", pointResults: [{ pointItemId: "p1", confidence: "low" }] }],
+    achievementResults: [],
+  }, {
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }],
+  });
+  assert.deepEqual(selected, ["r1"]);
 });
 
 test("fraction verification targets ambiguous readings and skips clear high-confidence fractions", () => {
@@ -553,6 +594,8 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
       assert.equal(body.generationConfig.responseSchema.properties.exampleAnswerResults.type, "array");
       assert.deepEqual(body.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.scoreStatus.enum, ["full", "partial", "none"]);
+      assert.equal(body.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.pointResults.type, "array");
+      assert.ok(body.generationConfig.responseSchema.properties.exampleAnswerResults.items.required.includes("pointResults"));
       assert.equal(body.generationConfig.maxOutputTokens, 8192);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
       assert.equal(body.generationConfig.temperature, 0.1);
@@ -976,4 +1019,5 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
   assert.deepEqual(result.requestedElements[0].scoreValues, [10, 7, 5, 3]);
   assert.equal(result.rubricCriteria[0].scoreLevels.length, 4);
 });
+
 

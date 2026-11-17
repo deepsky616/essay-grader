@@ -117,7 +117,7 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
   assert.equal(questionScoreGroupKey("서술형 A"), "서술형A");
   assert.deepEqual(Array.from(exampleQuestionScoreMap([
-    { questionNumber: "1-(1)", maxScore: 2 },
+    { questionNumber: "1-(1)", maxScore: 2, pointItems: [{ score: 0.5 }, { score: 1.5 }] },
     { questionNumber: "1-(2)", maxScore: 3 },
     { questionNumber: "2", maxScore: 4 },
   ]).entries()), [["1", 5], ["2", 4]]);
@@ -142,7 +142,10 @@ test("example-answer points drive question totals and derived rubric scores", ()
     { questionNumber: "2" },
   ], new Map([["1", 10], ["2", 6]]));
   assert.deepEqual(Array.from(allocations.values()), [5, 5, 6]);
-  assert.match(source, /name="exampleMaxScore" type="number" min="0\.5" step="0\.5"/);
+  assert.match(source, /name="examplePointScore" type="number" min="0\.5" step="0\.5"/);
+  assert.match(source, /data-add-example-point>＋ 배점 추가/);
+  assert.match(source, /배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점/);
+  assert.match(source, /pointItems\.reduce\(\(sum, point\) => sum \+ point\.score, 0\)/);
   assert.match(source, /name="rubricScore" type="hidden"/);
   assert.match(source, /data-question-score-summary/);
   assert.match(source, /문제별 배점 총합/);
@@ -257,4 +260,5 @@ test("the global footer credits the requested developer", () => {
   assert.match(html, /<footer class="site-credit" aria-label="개발자 정보">/);
   assert.match(html, /<span>개발자<\/span>\s*<strong>청계초등학교 조영석<\/strong>/);
 });
+
 

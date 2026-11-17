@@ -833,10 +833,23 @@ a { color: inherit; text-decoration: none; }
 .example-editor-card { padding: 15px; border: 1px solid var(--line); border-radius: 12px; }
 .example-editor-card + .example-editor-card { margin-top: 10px; }
 .example-score-fields { display: flex; flex-wrap: wrap; gap: 12px; }
-.example-score-fields label { display: grid; grid-template-columns: auto 90px auto; gap: 7px; align-items: center; }
-.example-score-fields label:first-child { grid-template-columns: auto 90px; }
+.example-score-fields label { display: grid; grid-template-columns: auto minmax(100px,150px); gap: 7px; align-items: center; }
 .example-score-fields small { color: var(--muted); font-size: 13px; }
 .example-score-fields input { min-height: 38px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+.example-total-score { display: inline-flex; min-height: 38px; align-items: center; gap: 4px; padding: 7px 12px; border-radius: 999px; background: rgba(49,84,214,.1); color: var(--blue); font-size: 13px; font-weight: 900; }
+.example-point-editor { margin: 3px 0 13px; padding: 12px; border: 1px solid rgba(49,84,214,.18); border-radius: 11px; background: rgba(233,239,255,.38); }
+.example-point-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.example-point-editor-head > div { display: grid; gap: 2px; }
+.example-point-editor-head strong { font-size: 14px; }
+.example-point-editor-head small, .example-point-editor > p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.example-point-editor-head button { min-height: 34px; padding: 6px 11px; border: 1px solid var(--blue); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; white-space: nowrap; }
+.example-point-row { display: grid; grid-template-columns: 28px minmax(130px,170px) minmax(220px,1fr) auto; gap: 8px; align-items: end; padding: 8px 0; border-top: 1px solid rgba(49,84,214,.12); }
+.example-point-row > span { display: grid; width: 24px; height: 24px; place-items: center; align-self: center; border-radius: 50%; background: var(--blue); color: white; font-size: 12px; font-weight: 900; }
+.example-point-row label:first-of-type { grid-template-columns: 1fr auto; }
+.example-point-row label:first-of-type > input { grid-column: 1; }
+.example-point-row label:first-of-type > small { grid-column: 2; grid-row: 2; align-self: center; }
+.example-point-row > button { min-height: 38px; border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 13px; font-weight: 900; }
+.example-point-editor > p { margin: 7px 0 0; }
 .example-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
 .example-math-field { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
 .example-math-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1023,6 +1036,7 @@ a { color: inherit; text-decoration: none; }
 .example-point-table thead th:nth-child(2) { width: 19%; }
 .example-point-table thead th:nth-child(3) { width: 19%; }
 .example-point-table tbody th { color: var(--blue); font-size: 16px; white-space: nowrap; }
+.example-point-table tbody th small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: normal; }
 .example-point-table tbody td { color: var(--ink); font-size: 14px; }
 .example-point-table tbody tr:last-child th, .example-point-table tbody tr:last-child td { border-bottom: 0; }
 .teacher-score-list .example-point-table p { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.5; }
@@ -1188,6 +1202,11 @@ a { color: inherit; text-decoration: none; }
   .question-score-summary ul { justify-content: flex-start; }
   .rubric-ai-launch { grid-template-columns: 1fr; gap: 10px; }
   .rubric-ai-launch > button { width: 100%; }
+  .example-point-editor-head { align-items: stretch; flex-direction: column; }
+  .example-point-editor-head button { align-self: flex-start; }
+  .example-point-row { grid-template-columns: 28px minmax(0,1fr) auto; }
+  .example-point-row > label { grid-column: 2; }
+  .example-point-row > button { grid-column: 3; grid-row: 1 / 3; }
   .split-selection-toolbar { align-items: stretch; flex-direction: column; }
   .split-bulk-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .split-bulk-actions button { min-width: 0; }
@@ -1221,4 +1240,5 @@ a { color: inherit; text-decoration: none; }
   .result-print-preview .result-report-sheet { padding: 20px 16px; }
   .result-report-sheet .report-total { align-items: flex-start; flex-direction: column; }
 }
+
 

@@ -29,7 +29,7 @@ const report = {
   }],
   scoreRows: [{ questionNumber: "1", evaluationElement: "할인율 계산", criterion: "과정과 답이 모두 옳다.", score: 2, maxScore: 2 }],
   exampleAnswerResults: [
-    { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 1, maxScore: 1, evidence: "할인 금액을 정확히 계산함", confidence: "high" },
+    { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 1, maxScore: 1, evidence: "할인 금액을 정확히 계산함", confidence: "high", pointResults: [{ pointItemId: "p1", criterion: "할인 금액 계산", awardedScore: 1, maxScore: 1, earned: true, evidence: "할인 금액을 정확히 계산함", confidence: "high" }] },
     { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 0.5, maxScore: 1, evidence: "백분율 계산 과정 일부가 맞음", confidence: "medium" },
   ],
   totalScore: 2,
@@ -82,7 +82,8 @@ test("individual result sheet includes criteria, confirmed scores, feedback, and
   assert.match(html, /한빛초등학교/);
   assert.match(html, /report-student-meta/);
   assert.match(html, /할인율 계산/);
-  assert.match(html, /세부 문항별 배점 획득표/);
+  assert.match(html, /문제·배점 항목별 획득표/);
+  assert.match(html, /할인 금액 계산/);
   assert.match(html, /1-\(1\)/);
   assert.match(html, /1-\(2\)/);
   assert.match(html, /할인 금액을 정확히 계산함/);
@@ -149,7 +150,8 @@ test("grading detail source exposes rubric score buttons and the requested revie
 test("student question evidence shows example-answer point attainment", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore, missing = false\)/);
-  assert.match(schoolSource, /세부 문항별 배점 획득표/);
+  assert.match(schoolSource, /문제·배점 항목별 획득표/);
+  assert.match(schoolSource, /pointResults/);
   assert.match(schoolSource, /3 문제별 예시답안 기준/);
   assert.match(schoolSource, /획득 점수 \/ 배점/);
   assert.match(schoolSource, /채점 근거/);
@@ -291,4 +293,5 @@ test("grading confidence is shown as accessible white badges with distinct color
   assert.match(styles, /\.confidence-medium \{ color: #765800; \}/);
   assert.match(styles, /\.confidence-low \{ color: #a1262d; \}/);
 });
+
 

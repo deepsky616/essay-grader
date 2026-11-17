@@ -72,12 +72,17 @@
 
   function exampleAnswerResultsHtml(rows) {
     if (!rows?.length) return "";
-    return `<div class="report-subquestion-results"><h3>AI 세부 문항별 배점 획득표</h3><table class="report-subquestion-table"><thead><tr><th>세부 문항</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${rows.map((item) => {
+    const pointRows = rows.flatMap((item) => Array.isArray(item.pointResults) && item.pointResults.length ? item.pointResults.map((point, index) => ({
+      ...point,
+      questionNumber: item.questionNumber,
+      pointLabel: item.pointResults.length > 1 ? `${item.questionNumber} · 항목 ${index + 1}` : item.questionNumber,
+    })) : [{ ...item, pointLabel: item.questionNumber }]);
+    return `<div class="report-subquestion-results"><h3>AI 문제·배점 항목별 획득표</h3><table class="report-subquestion-table"><thead><tr><th>문제·배점 항목</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
       const missing = item.awardedScore == null || item.missingResult;
       const awarded = missing ? null : Number(item.awardedScore || 0);
       const maximum = Number(item.maxScore || 0);
       const status = missing ? "세부 채점 없음" : awarded >= maximum - 0.001 ? "전부 획득" : awarded > 0 ? "일부 획득" : "미획득";
-      return `<tr><th>${escapeHtml(item.questionNumber || "-")}</th><td><strong>${awarded == null ? "—" : formatScore(awarded)} / ${formatScore(maximum)}점</strong></td><td>${status}</td><td>${escapeHtml(item.evidence || "채점 근거 없음")}</td></tr>`;
+      return `<tr><th>${escapeHtml(item.pointLabel || "-")}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><strong>${awarded == null ? "—" : formatScore(awarded)} / ${formatScore(maximum)}점</strong></td><td>${status}</td><td>${escapeHtml(item.evidence || "채점 근거 없음")}</td></tr>`;
     }).join("")}</tbody></table></div>`;
   }
 
@@ -143,6 +148,7 @@
       .report-subquestion-results { margin: 0 0 16px; }
       .report-subquestion-results h3 { margin: 0 0 8px; font-size: 10pt; }
       .report-subquestion-table th:first-child { width: 14%; text-align: center; }
+      .report-subquestion-table th:first-child small { display: block; margin-top: 3px; color: #77737f; font-size: 7.5pt; line-height: 1.35; }
       .report-subquestion-table td:nth-child(2) { width: 18%; text-align: center; white-space: nowrap; }
       .report-subquestion-table td:nth-child(3) { width: 16%; text-align: center; font-weight: 700; }
       .report-total { margin-top: 14px; padding: 14px 18px; border-top: 3px solid #7338ff; background: #f6f2ff; }
@@ -165,4 +171,5 @@
 
   return { buildWorkbookRows, buildReportHtml, buildPrintDocument, formatScore, normalizeSectionOptions };
 });
+
 
