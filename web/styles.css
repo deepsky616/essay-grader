@@ -1006,6 +1006,12 @@ a { color: inherit; text-decoration: none; }
 .question-score-group-head > strong { font-size: 18px; }
 .question-score-group-head span { color: var(--muted); font-size: 15px; }
 .question-score-group-head b { margin-left: 5px; color: var(--blue); font-size: 16px; }
+.question-score-group-result { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 10px; text-align: right; }
+.example-point-status { display: inline-flex; align-items: center; min-height: 29px; padding: 5px 9px; border: 1px solid currentColor; border-radius: 999px; background: #fff; font-size: 14px; font-style: normal; font-weight: 950; line-height: 1.1; white-space: nowrap; }
+.example-point-status.is-full { background: #e4f7ed; color: #17623f; }
+.example-point-status.is-partial { background: #fff5d8; color: #765800; }
+.example-point-status.is-none { background: #ffe4de; color: #8b2e20; }
+.example-point-status.is-unlinked { background: #f1f2f5; color: var(--muted); }
 .teacher-score-list article { display: grid; grid-template-columns: minmax(0,1fr) 160px; gap: 15px; padding: 17px 16px; border-bottom: 1px solid var(--line); }
 .question-score-group article:last-child { border-bottom: 0; }
 .teacher-score-list strong { font-size: 16px; }

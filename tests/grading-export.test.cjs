@@ -137,7 +137,21 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
-test("course grading uses adaptive workers and proactively rechecks handwritten fractions", () => {
+test("student question evidence shows example-answer point attainment", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore\)/);
+  assert.match(schoolSource, /3번 예시답안 배점 기준/);
+  assert.match(schoolSource, /배점 전부 획득/);
+  assert.match(schoolSource, /배점 일부 획득/);
+  assert.match(schoolSource, /배점 미획득/);
+  assert.match(schoolSource, /data-example-point-status/);
+  assert.match(schoolSource, /exampleQuestionScoreMap\(design\?\.exampleAnswers\)/);
+  assert.match(styles, /\.example-point-status\.is-full/);
+  assert.match(styles, /\.example-point-status\.is-partial/);
+  assert.match(styles, /\.example-point-status\.is-none/);
+});
+
+test("course grading uses adaptive workers and selectively rechecks handwritten fractions", () => {
   assert.match(schoolSource, /const GRADING_PARALLELISM = 4/);
   assert.match(schoolSource, /const MIN_GRADING_PARALLELISM = 2/);
   assert.match(schoolSource, /Promise\.all\(Array\.from\(\{ length: workerCount \}/);
@@ -147,16 +161,20 @@ test("course grading uses adaptive workers and proactively rechecks handwritten 
   assert.match(schoolSource, /prepareEnhancedAnswerImages\(studentFile/);
   assert.match(schoolSource, /selectFractionCriterionIds/);
   assert.match(schoolSource, /prepareFractionAnswerImages\(studentFile/);
-  assert.match(schoolSource, /verifyStudentAnswerFractions/);
-  assert.match(schoolSource, /분수 문항 숫자 구조·계산 검증 중/);
+  assert.match(schoolSource, /선별 문항 고해상도 정밀 재채점 중/);
   assert.match(schoolSource, /fractionVerificationCompleted/);
   assert.match(schoolSource, /fractionTargetCount/);
   assert.match(schoolSource, /mergePrecisionGradingResult/);
   assert.match(schoolSource, /precisionReview: true/);
+  assert.match(schoolSource, /createPrivacyRedactionSession/);
+  assert.match(schoolSource, /redactedStudentFileCache/);
   assert.match(schoolSource, /isGeminiRateLimitError/);
   const assignmentStart = schoolSource.indexOf("async function gradeStudentAssignment");
   const assignmentEnd = schoolSource.indexOf("async function regradeSingleStudent", assignmentStart);
-  assert.doesNotMatch(schoolSource.slice(assignmentStart, assignmentEnd), /ChaejeomAI\.recognizeAnswer/);
+  const assignmentSource = schoolSource.slice(assignmentStart, assignmentEnd);
+  assert.doesNotMatch(assignmentSource, /ChaejeomAI\.recognizeAnswer/);
+  assert.doesNotMatch(assignmentSource, /verifyStudentAnswerFractions/);
+  assert.equal((assignmentSource.match(/ChaejeomAI\.gradeAnswer/g) || []).length, 2);
 });
 
 test("AI grading exposes a visible live progress dashboard", () => {

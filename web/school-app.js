@@ -2117,7 +2117,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>학생용 평가지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 학생이 작성하기 전의 평가지 PDF를 등록해 주세요."}</p></div></article>
       <article class="is-ready"><span>2</span><div><strong>신원 삭제·고해상도 보정</strong><p>상단 신원 영역의 원본 픽셀을 삭제·평면화한 뒤 흐린 연필선과 작은 수식을 강조합니다.</p></div></article>
-      <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 검증에 걸린 문항만 고해상도로 다시 확인합니다. 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
+      <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 분수 판독이 불일치한 문항만 한 번 더 고해상도로 확인합니다. 확실한 분수 답안도 일부 표본을 재검증하며, 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
       <div class="grading-launch-info"><div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `1인당 ${submission.pagesPerStudent}쪽 · 총 ${submission.assignments.reduce((sum, item) => sum + item.pageNumbers.length, 0)}쪽 배정` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>${submission ? `<div class="grading-selection-count"><span>과제물 관리에서 선택</span><strong>${selectedSubmissionCount}명</strong><small>평가 대상 ${targetStudents.length}명 중</small></div>` : ""}</div>
@@ -2442,6 +2442,13 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   }
   const maxScore = assessmentDesignTotalScore(design);
   if (maxScore <= 0) { showToast("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요."); return; }
+  let privacySession;
+  try {
+    privacySession = await createPrivacyRedactionSession(submission.sourceFile.blob);
+  } catch (error) {
+    showToast(`학생 답안 PDF를 준비하지 못했습니다. ${friendlyError(error)}`);
+    return;
+  }
   const assignmentStudentIds = new Set(assignments.map((item) => item.studentId));
   const preservePrevious = retryFailedOnly || canResume;
   const keptResults = preservePrevious ? previousResults.filter((item) => !retryFailedOnly || !assignmentStudentIds.has(item.studentId)) : [];
@@ -2508,6 +2515,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   const rateLimitRetries = new Map();
   let desiredParallelism = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
   activeGradingRun.parallelism = desiredParallelism;
+  const redactedStudentFileCache = new Map();
   let saveQueue = Promise.resolve();
   const queueCourseSave = () => {
     const snapshot = {
@@ -2558,6 +2566,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           apiKey,
           selectedModel,
           blankFile,
+          privacySession,
+          redactedStudentFileCache,
           signal: controller.signal,
           onStage: (stage) => {
             activeStages.set(workerIndex, { label: currentLabel, stage });
@@ -2567,6 +2577,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
         course.grading.results = course.grading.results.filter((item) => item.studentId !== assignment.studentId);
         course.grading.results.push(nextResult);
         course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
+        redactedStudentFileCache.delete(assignment.studentId);
       } catch (error) {
         if (controller.signal.aborted || error?.name === "AbortError") { stopped = true; break; }
         if (isGeminiRateLimitError(error)) {
@@ -2583,6 +2594,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
             continue;
           }
         }
+        redactedStudentFileCache.delete(assignment.studentId);
         course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
         course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
       }
@@ -2595,8 +2607,13 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     if (controller.signal.aborted) stopped = true;
   };
   const workerCount = desiredParallelism;
-  await Promise.all(Array.from({ length: workerCount }, (_, workerIndex) => processNextAssignment(workerIndex)));
-  await saveQueue;
+  try {
+    await Promise.all(Array.from({ length: workerCount }, (_, workerIndex) => processNextAssignment(workerIndex)));
+    await saveQueue;
+  } finally {
+    redactedStudentFileCache.clear();
+    await privacySession.destroy();
+  }
   window.clearInterval(elapsedTimer);
   course.grading.elapsedMs = baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt);
   delete course.grading.currentStudentId;
@@ -2719,21 +2736,7 @@ function preliminaryReadingsFromResult(result) {
   }));
 }
 
-function mergePreliminaryReadings(baseReadings, verifiedReadings) {
-  const verifiedById = new Map((Array.isArray(verifiedReadings) ? verifiedReadings : [])
-    .map((item) => [item?.criterionId, item])
-    .filter(([criterionId]) => criterionId));
-  const merged = (Array.isArray(baseReadings) ? baseReadings : []).map((item) => (
-    verifiedById.has(item.criterionId)
-      ? { ...item, ...verifiedById.get(item.criterionId), criterionId: item.criterionId }
-      : item
-  ));
-  const existingIds = new Set(merged.map((item) => item.criterionId));
-  for (const item of verifiedById.values()) if (!existingIds.has(item.criterionId)) merged.push(item);
-  return merged;
-}
-
-async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, signal, onStage }) {
+async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null, signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
   if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
@@ -2743,8 +2746,14 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
   const maxScore = assessmentDesignTotalScore(design);
   if (maxScore <= 0) throw new Error("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요.");
-  onStage?.("학생 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중");
-  const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+  let studentFile = redactedStudentFileCache?.get(student.id) || null;
+  if (!studentFile) {
+    onStage?.("공유 원본에서 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중");
+    studentFile = privacySession
+      ? await privacySession.create(assignment.pageNumbers, anonymousIndex, { signal })
+      : await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+    redactedStudentFileCache?.set(student.id, studentFile);
+  } else onStage?.("신원 삭제된 안전한 답안 PDF 재사용 중");
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
   const referenceFiles = [
@@ -2781,7 +2790,6 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   let enhancedFiles = [];
   let fractionFiles = [];
   let retainedEnhancementFiles = [];
-  let fractionVerification = null;
   let fractionVerificationCompleted = false;
   let precisionPassCompleted = false;
   const initialPrecisionCriterionIds = needsPrecisionReview(result, baseMetadata)
@@ -2790,32 +2798,15 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   const fractionCriterionIds = ChaejeomAI.selectFractionCriterionIds(result, baseMetadata);
   if (fractionCriterionIds.length && !signal?.aborted) {
     try {
-      onStage?.(`${fractionCriterionIds.length}개 분수 문항 분자·분모 고해상도 확대 중`);
+      onStage?.(`${fractionCriterionIds.length}개 선별 분수 문항 고해상도 확대 중`);
       const verificationFixedBytes = [resolvedBlankFile, studentFile]
         .reduce((sum, file) => sum + Number(file?.size || 0), 0);
       const fractionImageBudget = Math.max(0, Math.min(9 * 1024 * 1024, ChaejeomAI.MAX_INLINE_BYTES - verificationFixedBytes - (256 * 1024)));
       fractionFiles = await prepareFractionAnswerImages(studentFile, { signal, maxBytes: fractionImageBudget });
       if (!fractionFiles.length) throw new Error("분수 판독용 확대 이미지를 만들지 못했습니다.");
-      onStage?.(`${fractionCriterionIds.length}개 분수 문항 숫자 구조·계산 검증 중`);
-      fractionVerification = await ChaejeomAI.verifyStudentAnswerFractions({
-        apiKey,
-        model: selectedModel,
-        signal,
-        metadata: {
-          ...baseMetadata,
-          fractionCriterionIds,
-          preReadings: preliminaryReadingsFromResult(result),
-        },
-        files: [
-          { role: "blank", file: resolvedBlankFile },
-          { role: "studentAnswer", file: studentFile },
-          ...fractionFiles.map((file) => ({ role: "fractionAnswer", file })),
-        ],
-      });
-      fractionVerificationCompleted = true;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
-      recognitionWarnings.push(`분수 숫자 구조화 검증을 완료하지 못해 확대본 정밀 채점으로 계속했습니다. (${friendlyError(error)})`);
+      recognitionWarnings.push(`분수 확대본을 만들지 못해 원본 PDF 정밀 채점으로 계속했습니다. (${friendlyError(error)})`);
     }
   }
   const precisionCriterionIds = Array.from(new Set([...initialPrecisionCriterionIds, ...fractionCriterionIds]));
@@ -2852,8 +2843,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
       ];
       const targetIdSet = new Set(precisionCriterionIds);
       const preliminaryReadings = preliminaryReadingsFromResult(result);
-      const verifiedReadings = fractionVerification?.readings || [];
-      onStage?.(`${precisionCriterionIds.length}개 문항 분수·필기 정밀 재채점 중`);
+      onStage?.(`${precisionCriterionIds.length}개 선별 문항 고해상도 정밀 재채점 중`);
       const precisionResult = await ChaejeomAI.gradeAnswer({
         apiKey,
         model: selectedModel,
@@ -2862,9 +2852,9 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           ...baseMetadata,
           precisionReview: true,
           precisionCriterionIds,
-          fractionVerification: fractionVerificationCompleted,
+          fractionVerification: fractionFiles.length > 0,
           fractionCriterionIds,
-          preReadings: mergePreliminaryReadings(preliminaryReadings, verifiedReadings).filter((item) => targetIdSet.has(item.criterionId)),
+          preReadings: preliminaryReadings.filter((item) => targetIdSet.has(item.criterionId)),
           recognitionWarnings,
         },
         files: precisionFiles,
@@ -2874,15 +2864,12 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
         recognitionWarnings,
       }, selectedModel);
       precisionPassCompleted = true;
+      fractionVerificationCompleted = fractionCriterionIds.length > 0;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
       result.needsTeacherReview = true;
       result.reviewReasons = [...new Set([...(result.reviewReasons || []), `자동 정밀 재검토를 완료하지 못했습니다. (${friendlyError(error)})`])];
     }
-  }
-  if (fractionVerification?.needsTeacherReview) {
-    result.needsTeacherReview = true;
-    result.reviewReasons = [...new Set([...(result.reviewReasons || []), ...(fractionVerification.reviewReasons || [])])];
   }
   return {
     ...result,
@@ -2898,7 +2885,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     precisionTargetCount: precisionCriterionIds.length,
     fractionVerificationCompleted,
     fractionTargetCount: fractionCriterionIds.length,
-    fractionReviewCount: fractionVerification?.reviewReasons?.length || 0,
+    fractionReviewCount: fractionCriterionIds.length,
     fastIntegratedPass: true,
     teacherConfirmed: false,
     regradedAt: new Date().toISOString(),
@@ -2965,42 +2952,64 @@ async function splitStudentPdf(sourceBlob, pageNumbers, index = 0, { anonymize =
 }
 
 async function createPrivacyRedactedStudentPdf(sourceBlob, pageNumbers, index = 0) {
+  const session = await createPrivacyRedactionSession(sourceBlob);
+  try {
+    return await session.create(pageNumbers, index);
+  } finally {
+    await session.destroy();
+  }
+}
+
+async function createPrivacyRedactionSession(sourceBlob) {
   if (!window.pdfjsLib?.getDocument) throw new Error("개인정보 보호 도구를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.");
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
   const data = new Uint8Array(await sourceBlob.arrayBuffer());
   const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
   const source = await loadingTask.promise;
+  let destroyed = false;
+  return {
+    async create(pageNumbers, index = 0, { signal } = {}) {
+      if (destroyed) throw new Error("답안 PDF 공유 세션이 이미 종료되었습니다.");
+      return createPrivacyRedactedStudentPdfFromDocument(source, pageNumbers, index, { signal });
+    },
+    async destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      await loadingTask.destroy();
+    },
+  };
+}
+
+async function createPrivacyRedactedStudentPdfFromDocument(source, pageNumbers, index = 0, { signal } = {}) {
   const output = await PDFLib.PDFDocument.create();
   const anonymousCode = `S${String(index + 1).padStart(3, "0")}`;
-  try {
-    for (const sourcePageNumber of pageNumbers) {
-      if (sourcePageNumber < 1 || sourcePageNumber > source.numPages) throw new Error(`${sourcePageNumber}쪽을 답안 PDF에서 찾지 못했습니다.`);
-      const page = await source.getPage(sourcePageNumber);
-      const baseViewport = page.getViewport({ scale: 1 });
-      const targetWidth = pageNumbers.length > 5 ? 1500 : 1800;
-      const scale = Math.min(3, Math.max(1.5, targetWidth / Math.max(1, baseViewport.width)));
-      const viewport = page.getViewport({ scale });
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const context = canvas.getContext("2d", { alpha: false });
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
-      redactIdentityHeader(canvas, anonymousCode);
-      const blob = await canvasToBlob(canvas, "image/jpeg", pageNumbers.length > 5 ? 0.86 : 0.9);
-      const image = await output.embedJpg(await blob.arrayBuffer());
-      const outputPage = output.addPage([baseViewport.width, baseViewport.height]);
-      outputPage.drawImage(image, { x: 0, y: 0, width: baseViewport.width, height: baseViewport.height });
-      canvas.width = 1;
-      canvas.height = 1;
-      page.cleanup();
-    }
-    const bytes = await output.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
-    return new File([bytes], `anonymous-${anonymousCode}_redacted-pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
-  } finally {
-    await loadingTask.destroy();
+  for (const sourcePageNumber of pageNumbers) {
+    if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+    if (sourcePageNumber < 1 || sourcePageNumber > source.numPages) throw new Error(`${sourcePageNumber}쪽을 답안 PDF에서 찾지 못했습니다.`);
+    const page = await source.getPage(sourcePageNumber);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const targetWidth = pageNumbers.length > 5 ? 1500 : 1800;
+    const scale = Math.min(3, Math.max(1.5, targetWidth / Math.max(1, baseViewport.width)));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
+    if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+    redactIdentityHeader(canvas, anonymousCode);
+    const blob = await canvasToBlob(canvas, "image/jpeg", pageNumbers.length > 5 ? 0.86 : 0.9);
+    const image = await output.embedJpg(await blob.arrayBuffer());
+    const outputPage = output.addPage([baseViewport.width, baseViewport.height]);
+    outputPage.drawImage(image, { x: 0, y: 0, width: baseViewport.width, height: baseViewport.height });
+    canvas.width = 1;
+    canvas.height = 1;
+    page.cleanup();
   }
+  const bytes = await output.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
+  return new File([bytes], `anonymous-${anonymousCode}_redacted-pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
 }
 
 function redactIdentityHeader(canvas, anonymousCode) {
@@ -3222,8 +3231,18 @@ function nearestScoreChoice(value, choices) {
   return choices.reduce((nearest, candidate) => Math.abs(candidate - numeric) < Math.abs(nearest - numeric) ? candidate : nearest, choices[0]);
 }
 
+function exampleAnswerPointStatus(score, maxScore) {
+  const earned = Math.max(0, Number(score || 0));
+  const maximum = Math.max(0, Number(maxScore || 0));
+  if (!maximum) return { state: "unlinked", label: "예시답안 배점 연결 필요" };
+  if (earned >= maximum - 0.001) return { state: "full", label: "배점 전부 획득" };
+  if (earned > 0) return { state: "partial", label: "배점 일부 획득" };
+  return { state: "none", label: "배점 미획득" };
+}
+
 function renderQuestionScoreGroups(rows, teacherScores, design) {
   const groups = new Map();
+  const exampleScores = exampleQuestionScoreMap(design?.exampleAnswers);
   rows.forEach((item, index) => {
     const questionNumber = String(item.questionNumber || index + 1);
     if (!groups.has(questionNumber)) groups.set(questionNumber, []);
@@ -3232,8 +3251,10 @@ function renderQuestionScoreGroups(rows, teacherScores, design) {
   return Array.from(groups.entries()).map(([questionNumber, entries], groupIndex) => {
     const subtotal = entries.reduce((sum, entry) => sum + Number(teacherScores[entry.index] ?? entry.item.score ?? 0), 0);
     const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
+    const exampleMax = exampleScores.get(questionScoreGroupKey(questionNumber)) || submax;
+    const pointStatus = exampleAnswerPointStatus(subtotal, exampleMax);
     return `<section class="question-score-group">
-      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><span>문항 배점 결과 <b data-question-total="${groupIndex}">${formatScore(subtotal)} / ${formatScore(submax)}점</b></span></div>
+      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>3번 예시답안 배점 기준 <b data-question-total="${groupIndex}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="example-point-status is-${pointStatus.state}" data-example-point-status="${groupIndex}" data-example-max="${exampleMax}">${pointStatus.label}</em></div></div>
       ${entries.map(({ item, index }) => {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
@@ -3276,8 +3297,8 @@ async function openStudentResult(course, targetStudents, studentId) {
     return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
   });
   const fractionVerificationStatus = result.fractionVerificationCompleted
-    ? `분수 숫자 ${result.fractionTargetCount || 0}개 문항 구조화 검증 완료`
-    : result.fractionTargetCount ? `분수 숫자 ${result.fractionTargetCount}개 문항 확대 재채점` : "";
+    ? `선별 분수 ${result.fractionTargetCount || 0}개 문항 고해상도 재검토 완료`
+    : result.fractionTargetCount ? `선별 분수 ${result.fractionTargetCount}개 문항 교사 검토 필요` : "";
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
@@ -3319,8 +3340,15 @@ async function openStudentResult(course, targetStudents, studentId) {
       const groupIndex = label.dataset.questionTotal;
       const groupInputs = scoreInputs.filter((input) => input.dataset.scoreGroup === groupIndex);
       const groupTotal = groupInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
-      const groupMax = groupInputs.reduce((sum, input) => sum + Number(input.max || 0), 0);
+      const pointStatusLabel = panel.querySelector(`[data-example-point-status="${groupIndex}"]`);
+      const groupMax = Number(pointStatusLabel?.dataset.exampleMax || 0)
+        || groupInputs.reduce((sum, input) => sum + Number(input.max || 0), 0);
       label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
+      if (pointStatusLabel) {
+        const pointStatus = exampleAnswerPointStatus(groupTotal, groupMax);
+        pointStatusLabel.className = `example-point-status is-${pointStatus.state}`;
+        pointStatusLabel.textContent = pointStatus.label;
+      }
     });
   };
   scoreButtons.forEach((button) => button.addEventListener("click", () => {

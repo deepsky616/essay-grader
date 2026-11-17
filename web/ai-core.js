@@ -18,6 +18,7 @@
   ];
   const MAX_INLINE_BYTES = 18 * 1024 * 1024;
   const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
+  const inlineFilePartCache = new WeakMap();
 
   const gradingSchema = {
     type: "object",
@@ -961,8 +962,39 @@
         ? `${text(matchingResult.answerReading)} ${text(matchingResult.evidence)} ${text(matchingResult.feedback)}`
         : "";
       const exampleText = matchingExamples.map((item) => `${text(item?.answerText)} ${text(item?.mathNotation)} ${text(item?.visualDescription)}`).join(" ");
-      return globalFractionContext || isFractionRelevantText(`${rubricText} ${resultText} ${exampleText}`);
+      const fractionRelevant = globalFractionContext || isFractionRelevantText(`${rubricText} ${resultText} ${exampleText}`);
+      if (!fractionRelevant) return false;
+      if (fractionResultNeedsVerification(matchingResult, resultText, rubricText, exampleText)) return true;
+      return shouldAuditFractionCriterion(metadata, rubric.id);
     }).map((item) => item.id);
+  }
+
+  function fractionResultNeedsVerification(result, resultText, rubricText, exampleText) {
+    if (!result) return true;
+    const answerReading = text(result.answerReading);
+    const evidence = text(result.evidence);
+    const suspicious = /판독 불가|확인 불가|식별 불가|결과 없음|잘림|흐림|겹친|추정|불확실/;
+    if (result.confidence !== "high" || result.missingResult || result.scoreAdjusted) return true;
+    if (!answerReading || suspicious.test(`${answerReading} ${evidence}`)) return true;
+    const clearNoResponse = /무응답|미응답|답안 없음|작성하지 않|빈칸/.test(`${answerReading} ${evidence}`);
+    if (clearNoResponse) return !evidence;
+    const expectsFractionNotation = isFractionRelevantText(`${rubricText} ${exampleText}`);
+    if (expectsFractionNotation && !isFractionRelevantText(resultText)) return true;
+    return Number(result.score || 0) > 0 && !evidence;
+  }
+
+  function shouldAuditFractionCriterion(metadata, criterionId) {
+    const configuredRate = Number(metadata?.fractionAuditRate ?? 0.1);
+    const auditRate = Math.max(0, Math.min(1, Number.isFinite(configuredRate) ? configuredRate : 0.1));
+    if (!auditRate) return false;
+    const studentId = text(metadata?.student?.id) || "anonymous";
+    const source = `${studentId}|${text(criterionId)}`;
+    let hash = 2166136261;
+    for (let index = 0; index < source.length; index += 1) {
+      hash ^= source.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) / 4294967296 < auditRate;
   }
 
   function isFractionRelevantText(value) {
@@ -1157,7 +1189,7 @@ ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
 13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 14. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
 15. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
-${safeMetadata.fractionVerification ? "16. fractionVerified가 true인 preReadings는 원본색·고대비 확대를 대조해 분자·분모를 구조화하고 계산 검산까지 거친 결과입니다. 해당 mathLines의 wholeNumber, numerator, denominator를 우선 참고하되 원본 학생 답안과 빈 답안지를 다시 대조하세요. 검증 결과가 low이면 정답으로 추측하지 말고 교사 검토를 유지하세요." : ""}
+  ${safeMetadata.fractionCriterionIds.length ? "16. fractionAnswer 역할의 이미지는 검증 대상 분수 문항을 원본색과 고대비로 확대한 자료입니다. 두 버전을 직접 대조하여 분자·분모·대분수 자연수·분수선을 확인하고 계산을 검산한 뒤, 지정된 scoreLevels 중 하나로 최종 채점하세요. 서로 다르게 보이거나 숫자를 확정할 수 없으면 낮은 confidence와 구체적인 교사 검토 사유를 유지하세요." : ""}
 ${safeMetadata.precisionReview ? "17. 이것은 1차 통합 채점에서 검증이 필요했거나 분수 숫자를 재판독한 문항의 정밀 재검토입니다. 지정된 문항을 원본·빈 답안지·필기 강조본과 다시 비교하고, 전체 답안 맥락을 고려해 종합 피드백과 성취기준별 결과도 갱신하세요. 여전히 불명확하면 추측하지 말고 낮은 confidence를 유지하세요." : ""}
 
 평가 정보(JSON):
@@ -1456,8 +1488,12 @@ ${JSON.stringify(roster)}
   async function fileToInlinePart(file) {
     const acceptedTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
     if (!acceptedTypes.has(file.type)) throw new Error(`${file.name}: Gemini 채점에서 지원하지 않는 파일 형식입니다.`);
-    const data = arrayBufferToBase64(await file.arrayBuffer());
-    return { inlineData: { mimeType: file.type, data } };
+    if (!inlineFilePartCache.has(file)) {
+      inlineFilePartCache.set(file, file.arrayBuffer().then((buffer) => ({
+        inlineData: { mimeType: file.type, data: arrayBufferToBase64(buffer) },
+      })));
+    }
+    return inlineFilePartCache.get(file);
   }
 
   async function fetchWithRetry(fetchImpl, url, options, { maxAttempts = 3, baseDelayMs = 1200 } = {}) {

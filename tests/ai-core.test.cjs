@@ -85,7 +85,7 @@ test("buildPrompt carries structured fraction verification into precision gradin
     }],
   });
   assert.match(prompt, /fractionVerified/);
-  assert.match(prompt, /wholeNumber, numerator, denominator/);
+  assert.match(prompt, /분자·분모·대분수 자연수·분수선/);
   assert.match(prompt, /"numerator":"3"/);
   assert.match(prompt, /분수 숫자를 재판독한 문항/);
 });
@@ -148,9 +148,11 @@ test("selective precision review targets uncertain questions and their achieveme
   assert.deepEqual(selected, ["r2", "r1"]);
 });
 
-test("fraction verification proactively targets fraction criteria even when first-pass confidence is high", () => {
+test("fraction verification targets ambiguous readings and skips clear high-confidence fractions", () => {
   const metadata = {
     title: "수학 평가",
+    fractionAuditRate: 0,
+    student: { id: "S001" },
     rubricCriteria: [
       { id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "계산이 정확함" }] },
       { id: "r2", questionNumber: "2", evaluationElement: "도형", scoreLevels: [{ score: 2, criterion: "도형이 정확함" }] },
@@ -169,7 +171,20 @@ test("fraction verification proactively targets fraction criteria even when firs
       { criterionId: "r3", questionNumber: "3", answerReading: "1 1/4", confidence: "high" },
     ],
   }, metadata);
-  assert.deepEqual(selected, ["r1", "r3"]);
+  assert.deepEqual(selected, ["r1"]);
+});
+
+test("fraction verification can audit a stable sample of clear high-confidence fractions", () => {
+  const metadata = {
+    fractionAuditRate: 1,
+    student: { id: "S014" },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 계산", scoreLevels: [{ score: 2, criterion: "분자와 분모가 정확함" }] }],
+    exampleAnswers: [{ questionNumber: "1", mathNotation: "3/5 × 2 = 6/5" }],
+  };
+  const selected = AI.selectFractionCriterionIds({
+    questionResults: [{ criterionId: "r1", questionNumber: "1", answerReading: "3/5 × 2 = 6/5", evidence: "분자와 분모가 또렷함", score: 2, confidence: "high" }],
+  }, metadata);
+  assert.deepEqual(selected, ["r1"]);
 });
 
 test("precision results replace only reviewed criteria and recompute the total locally", () => {
@@ -526,7 +541,7 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
 
 test("precision grading uses a bounded extra thinking budget", async () => {
   const bytes = new TextEncoder().encode("pdf");
-  const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const file = (name, type = "application/pdf") => ({ name, type, size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
   const payload = {
     studentIdentifier: "S001", totalScore: 2, maxScore: 2, overallAchievementLevel: "상", summary: "확인",
     strengths: [], improvements: [], nextSteps: [], achievementResults: [], needsTeacherReview: false, reviewReasons: [],
@@ -535,14 +550,16 @@ test("precision grading uses a bounded extra thinking budget", async () => {
   await AI.gradeAnswer({
     apiKey: VALID_KEY,
     model: "gemini-2.5-flash",
-    metadata: { precisionReview: true, totalScore: 2, requireBlankComparison: true, achievementGroups: [], exampleAnswers: [], rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "정확성", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }] },
-    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }],
+    metadata: { precisionReview: true, precisionCriterionIds: ["r1"], fractionCriterionIds: ["r1"], totalScore: 2, requireBlankComparison: true, achievementGroups: [], exampleAnswers: [], rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 정확성", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }] },
+    files: [{ role: "blank", file: file("blank.pdf") }, { role: "studentAnswer", file: file("student.pdf") }, { role: "fractionAnswer", file: file("fraction.jpg", "image/jpeg") }],
     retryDelayMs: 0,
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.maxOutputTokens, 8192);
       assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
       assert.match(body.contents[0].parts[0].text, /정밀 재검토/);
+      assert.match(body.contents[0].parts[0].text, /fractionAnswer 역할/);
+      assert.match(body.contents[0].parts[0].text, /분자·분모·대분수 자연수·분수선/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
     },
   });
