@@ -780,10 +780,16 @@ a { color: inherit; text-decoration: none; }
 .rubric-editor-group.is-score-unlinked .rubric-group-head span { color: #8b2e20; }
 .rubric-group-fields { display: grid; grid-template-columns: 150px minmax(220px,1fr); gap: 10px; padding: 13px 14px; }
 .rubric-group-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
-.rubric-score-head, .rubric-score-row { display: grid; grid-template-columns: 90px minmax(260px,1fr) 44px; gap: 8px; align-items: center; padding: 8px 14px; }
+.rubric-performance-guide { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); background: rgba(185,234,210,.18); }
+.rubric-performance-guide strong { color: #27634c; font-size: 13px; }
+.rubric-performance-guide span { color: var(--muted); font-size: 12px; }
+.rubric-score-head, .rubric-score-row { display: grid; grid-template-columns: 190px minmax(260px,1fr); gap: 10px; align-items: center; padding: 8px 14px; }
 .rubric-score-head { border-top: 1px solid var(--line); background: rgba(242,217,167,.22); color: var(--muted); font-size: 13px; font-weight: 900; }
 .rubric-score-row { border-top: 1px solid var(--line); background: white; }
-.rubric-derived-score { display: grid; min-height: 38px; place-items: center; padding: 7px 8px; border: 1px solid rgba(49,84,214,.22); border-radius: 8px; background: rgba(233,239,255,.72); color: var(--blue); font-size: 14px; white-space: nowrap; }
+.rubric-derived-score { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 8px; align-items: center; min-height: 58px; padding: 8px 10px; border: 1px solid rgba(49,84,214,.22); border-radius: 8px; background: rgba(233,239,255,.72); }
+.rubric-derived-score strong { color: var(--ink); font-size: 14px; }
+.rubric-derived-score span { grid-column: 1; color: var(--muted); font-size: 12px; }
+.rubric-derived-score em { grid-column: 2; grid-row: 1 / 3; color: var(--blue); font-size: 15px; font-style: normal; font-weight: 950; white-space: nowrap; }
 .rubric-editor-group > .mini-add { margin: 10px 14px 13px; }
 .rubric-ai-dialog { width: min(820px,calc(100% - 32px)); max-height: min(820px,calc(100vh - 32px)); padding: 0; border: 2px solid var(--ink); border-radius: 20px; background: var(--surface); color: var(--ink); box-shadow: 8px 8px 0 var(--ink); }
 .rubric-ai-dialog::backdrop { background: rgba(24,33,56,.56); backdrop-filter: blur(3px); }
@@ -805,6 +811,7 @@ a { color: inherit; text-decoration: none; }
 .rubric-ai-element-fields { display: grid; grid-template-columns: 110px minmax(230px,1fr) 120px; gap: 9px; padding: 12px; }
 .rubric-ai-element-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
 .rubric-ai-element-fields input, .rubric-ai-element-fields select { width: 100%; min-height: 38px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: 14px; }
+.rubric-ai-fixed-levels { display: flex; min-height: 38px; align-items: center; padding: 8px 9px; border: 1px solid rgba(49,84,214,.22); border-radius: 8px; background: rgba(233,239,255,.72); color: var(--blue); font-size: 13px; font-weight: 900; }
 .rubric-ai-status { margin: 13px 0 0; padding: 10px 12px; border-radius: 9px; background: rgba(233,239,255,.65); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .rubric-ai-status.is-error { background: #ffe8e2; color: #812d1e; }
 .rubric-ai-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 15px; }
@@ -1129,6 +1136,8 @@ a { color: inherit; text-decoration: none; }
   .student-list-actions { justify-content: space-between; }
   .achievement-input-grid, .curriculum-picker, .example-detail-grid, .document-auto-row, .blank-answer-section .document-auto-row, .rubric-ai-element-fields { grid-template-columns: 1fr; }
   .rubric-group-fields { grid-template-columns: 1fr; }
+  .rubric-performance-guide { align-items: flex-start; flex-direction: column; }
+  .rubric-score-head, .rubric-score-row { grid-template-columns: 1fr; }
   .document-auto-row span { align-self: auto; }
   .document-analysis-progress ol { grid-template-columns: 1fr 1fr; }
   .document-analysis-progress-head { grid-template-columns: 30px minmax(0,1fr) auto; }

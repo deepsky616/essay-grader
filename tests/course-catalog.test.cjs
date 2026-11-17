@@ -16,10 +16,12 @@ function loadSubjectCatalog() {
 }
 
 function loadQuestionScoreHelpers() {
+  const bandsStart = source.indexOf("const RUBRIC_PERFORMANCE_BANDS");
+  const bandsEnd = source.indexOf("\n\nconst app", bandsStart);
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
-  assert.ok(start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements };`)();
+  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -109,7 +111,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -120,7 +122,15 @@ test("example-answer points drive question totals and derived rubric scores", ()
     { questionNumber: "2", maxScore: 4 },
   ]).entries()), [["1", 5], ["2", 4]]);
   assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
+  assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3, 0]);
+  assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5, 0]);
+  assert.deepEqual(rubricPerformanceLevels([
+    { id: "high", score: 10, criterion: "완전한 수행" },
+    { id: "middle", score: 5, criterion: "부분 수행" },
+    { id: "zero", score: 0, criterion: "무응답" },
+  ]).map((level) => level.score), [10, 7, 5, 3, 0]);
   assert.deepEqual(derivedBandScores(5, [10, 7, 0]), [5, 3.5, 0]);
+  assert.deepEqual(derivedBandScores(10, [10, 7, 5, 3, 0]), [10, 7, 5, 3, 0]);
   const allocations = rubricAllocationsFromElements([
     { questionNumber: "1" },
     { questionNumber: "1" },
@@ -131,6 +141,8 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /name="rubricScore" type="hidden"/);
   assert.match(source, /data-question-score-summary/);
   assert.match(source, /문제별 배점 총합/);
+  assert.match(source, /매우잘함 80% 이상/);
+  assert.match(source, /4개 성취구간 \+ 0점/);
   assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
   assert.match(styles, /\.question-score-summary \{/);

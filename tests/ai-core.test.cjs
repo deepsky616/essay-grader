@@ -890,12 +890,25 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
       taskName: "비율 설명하기",
       achievementStandards: ["[6수01-03] 분수의 나눗셈을 계산할 수 있다."],
     },
-    elements: [{ questionNumber: "1", evaluationElement: "계산 과정의 타당성", bandCount: 4, maxScore: 10, scoreValues: [10, 6.5, 3.5, 0] }],
+    elements: [{
+      questionNumber: "1",
+      evaluationElement: "계산 과정의 타당성",
+      bandCount: 4,
+      maxScore: 10,
+      scoreValues: [10, 6.5, 3.5, 0],
+      performanceBands: [
+        { label: "매우잘함", range: "80% 이상", score: 10 },
+        { label: "잘함", range: "60% 이상 80% 미만", score: 6.5 },
+        { label: "노력요함", range: "20% 이상 40% 미만", score: 3.5 },
+        { label: "미응답·근거 없음", range: "20% 미만", score: 0 },
+      ],
+    }],
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       const prompt = body.contents[0].parts[0].text;
       assert.match(prompt, /"scoreValues":\[10,6\.5,3\.5,0\]/);
       assert.match(prompt, /"maxScore":10/);
+      assert.match(prompt, /"label":"매우잘함","range":"80% 이상","score":10/);
       assert.match(prompt, /6학년|"grade":"6"/);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({

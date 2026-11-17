@@ -27,6 +27,13 @@ const ACHIEVEMENT_LEVEL_EXAMPLES = {
   "중": "예: 기준을 이해하고 기본 조건에 맞게 수행할 수 있다.",
   "하": "예: 기준의 일부를 알고 수행을 시도한다.",
 };
+const RUBRIC_PERFORMANCE_BANDS = Object.freeze([
+  Object.freeze({ label: "매우잘함", range: "80% 이상", representativeRatio: 1, defaultCriterion: "평가요소를 충분히 충족하고 풀이·설명·근거가 정확하고 완전한 경우" }),
+  Object.freeze({ label: "잘함", range: "60% 이상 80% 미만", representativeRatio: 0.7, defaultCriterion: "평가요소를 대체로 충족했으나 풀이·설명·근거의 일부 보완이 필요한 경우" }),
+  Object.freeze({ label: "보통", range: "40% 이상 60% 미만", representativeRatio: 0.5, defaultCriterion: "평가요소를 부분적으로 충족하고 핵심 풀이·설명·근거가 일부 확인되는 경우" }),
+  Object.freeze({ label: "노력요함", range: "20% 이상 40% 미만", representativeRatio: 0.3, defaultCriterion: "평가요소와 관련된 기초적인 시도 또는 제한적인 근거만 확인되는 경우" }),
+  Object.freeze({ label: "미응답·근거 없음", range: "20% 미만", representativeRatio: 0, defaultCriterion: "무응답이거나 평가요소와 관련된 풀이·설명·근거를 확인하기 어려운 경우" }),
+]);
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
@@ -604,7 +611,7 @@ function createEmptyDesign() {
     id: "",
     taskName: "",
     achievementGroups: [{ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }],
-    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 10, criterion: "" }, { id: crypto.randomUUID(), score: 5, criterion: "" }, { id: crypto.randomUUID(), score: 0, criterion: "" }] }],
+    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: defaultRubricScoreLevels() }],
     exampleAnswers: [{ id: crypto.randomUUID(), questionNumber: "1", maxScore: 10, answerText: "", mathNotation: "", visualDescription: "" }],
   };
 }
@@ -659,7 +666,7 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>3번 예시답안에서 입력한 문제별 배점을 기준으로 평가요소와 채점수준의 점수가 자동 계산됩니다. 1-(1), 1-(2) 같은 하위 문항은 문제 1에 합산됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>매우잘함 80% 이상 · 잘함 60~80% · 보통 40~60% · 노력요함 20~40% 기준으로 대표 배점이 자동 계산됩니다. 1-(1), 1-(2) 같은 하위 문항은 문제 1에 합산됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
@@ -750,21 +757,22 @@ function rubricEditorGroup(item, index) {
   return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
     <div class="rubric-group-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>평가요소 삭제</button></div>
     <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
-    <div class="rubric-score-head"><span>자동 배점</span><span>해당 배점의 채점기준</span><span></span></div>
+    <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span>각 구간의 대표점수로 채점하며, 미응답·근거 없음은 0점으로 처리합니다.</span></div>
+    <div class="rubric-score-head"><span>성취수준 · 비율 · 대표점수</span><span>해당 수준의 채점기준</span></div>
     <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map(rubricScoreRow).join("")}</div>
-    <button class="mini-add" type="button" data-add-rubric-score>＋ 채점수준 추가</button>
   </article>`;
 }
 
-function rubricScoreRow(level) {
-  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><strong class="rubric-derived-score" data-rubric-score-value>${formatScore(Number(level.score || 0))}점</strong><input name="rubricScore" type="hidden" value="${Number(level.score || 0)}"><textarea name="rubricCriterion" rows="2" placeholder="이 배점을 주는 구체적인 조건" required>${escapeHtml(level.criterion || "")}</textarea><button type="button" data-remove-rubric-score>삭제</button></div>`;
+function rubricScoreRow(level, index) {
+  const band = RUBRIC_PERFORMANCE_BANDS[index] || RUBRIC_PERFORMANCE_BANDS.at(-1);
+  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><div class="rubric-derived-score"><strong>${escapeHtml(band.label)}</strong><span>${escapeHtml(band.range)}</span><em data-rubric-score-value>${formatScore(Number(level.score || 0))}점</em></div><input name="rubricScore" type="hidden" value="${Number(level.score || 0)}"><textarea name="rubricCriterion" rows="2" placeholder="${escapeHtml(band.defaultCriterion)}" required>${escapeHtml(level.criterion || band.defaultCriterion)}</textarea></div>`;
 }
 
 function rubricAiDialog(items, course) {
   return `<dialog class="rubric-ai-dialog" data-rubric-ai-dialog>
     <div class="rubric-ai-shell">
       <div class="rubric-ai-heading"><div><p class="section-kicker">GEMINI RUBRIC BUILDER</p><h3>채점기준 AI 생성</h3><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과에 맞춰 평가요소별 배점 기준을 만듭니다.</p></div><button type="button" data-close-rubric-ai aria-label="닫기">×</button></div>
-      <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점에 맞춰 자동 배치됩니다.</strong><span>같은 문제에 평가요소가 여러 개이면 문제 배점을 나누고, 선택한 채점수준 수에 따라 만점부터 0점까지 자동 계산합니다.</span></div>
+      <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점과 네 성취구간에 맞춰 자동 배치됩니다.</strong><span>매우잘함·잘함·보통·노력요함의 기준과 무응답 0점 기준을 함께 생성합니다.</span></div>
       <div class="rubric-ai-element-list" data-rubric-ai-elements>${items.map((item, index) => rubricAiElementRow(item, index)).join("")}</div>
       <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 평가요소 추가</button>
       <p class="rubric-ai-status" data-rubric-ai-status role="status">설정에 저장된 Gemini 모델과 API 키를 사용합니다.</p>
@@ -774,8 +782,7 @@ function rubricAiDialog(items, course) {
 }
 
 function rubricAiElementRow(item = {}, index = 0) {
-  const count = Math.min(6, Math.max(2, Number(item.scoreLevels?.length || item.bandCount || 3)));
-  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>채점수준 수<select name="rubricAiBandCount">${[2, 3, 4, 5, 6].map((value) => `<option value="${value}" ${value === count ? "selected" : ""}>${value}개</option>`).join("")}</select></label></div></article>`;
+  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${RUBRIC_PERFORMANCE_BANDS.length}"><span class="rubric-ai-fixed-levels">4개 성취구간 + 0점</span></label></div></article>`;
 }
 
 function exampleEditorRow(item) {
@@ -793,6 +800,52 @@ function exampleEditorRow(item) {
 function positiveDesignScore(value) {
   const score = Number(value);
   return Number.isFinite(score) && score > 0 ? Math.round(score * 100) / 100 : 0;
+}
+
+function performanceBandScores(targetMaxScore) {
+  const maxScore = Math.max(0, Number(targetMaxScore || 0));
+  return RUBRIC_PERFORMANCE_BANDS.map((band, index) => {
+    if (index === 0) return maxScore;
+    if (band.representativeRatio === 0) return 0;
+    return Math.round(maxScore * band.representativeRatio * 100) / 100;
+  });
+}
+
+function defaultRubricScoreLevels() {
+  return RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({
+    id: crypto.randomUUID(),
+    score: performanceBandScores(1)[index],
+    criterion: band.defaultCriterion,
+  }));
+}
+
+function rubricPerformanceLevels(levels) {
+  const source = (Array.isArray(levels) ? levels : [])
+    .map((level) => ({ ...level, score: Math.max(0, Number(level?.score || 0)), criterion: String(level?.criterion || "").trim() }))
+    .sort((a, b) => b.score - a.score);
+  const sourceMax = Math.max(0, ...source.map((level) => level.score));
+  const targetMax = sourceMax || 1;
+  const result = RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({
+    id: crypto.randomUUID(),
+    score: performanceBandScores(targetMax)[index],
+    criterion: band.defaultCriterion,
+  }));
+  for (const level of source) {
+    const ratio = sourceMax > 0 ? level.score / sourceMax : 0;
+    const targetIndex = RUBRIC_PERFORMANCE_BANDS.reduce((bestIndex, band, index) => {
+      const bestDistance = Math.abs(ratio - RUBRIC_PERFORMANCE_BANDS[bestIndex].representativeRatio);
+      const distance = Math.abs(ratio - band.representativeRatio);
+      return distance < bestDistance ? index : bestIndex;
+    }, 0);
+    if (level.id) result[targetIndex].id = level.id;
+    if (level.criterion) {
+      const fallback = RUBRIC_PERFORMANCE_BANDS[targetIndex].defaultCriterion;
+      result[targetIndex].criterion = result[targetIndex].criterion === fallback
+        ? level.criterion
+        : [result[targetIndex].criterion, level.criterion].filter((value, index, values) => values.indexOf(value) === index).join(" / ");
+    }
+  }
+  return result;
 }
 
 function questionScoreGroupKey(value) {
@@ -853,6 +906,7 @@ function allocateQuestionScore(totalScore, count) {
 function derivedBandScores(targetMaxScore, currentScores) {
   const maxScore = Math.max(0, Number(targetMaxScore || 0));
   const source = (Array.isArray(currentScores) ? currentScores : []).map(Number).filter(Number.isFinite);
+  if (source.length === RUBRIC_PERFORMANCE_BANDS.length) return performanceBandScores(maxScore);
   const count = Math.max(1, source.length);
   const currentMax = Math.max(0, ...source);
   const uniqueScores = new Set(source.map((score) => String(score)));
@@ -1034,16 +1088,12 @@ function handleDesignEditorClick(event, form, course) {
   const addRubric = event.target.closest("[data-add-rubric]");
   if (addRubric) {
     const list = form.querySelector("[data-rubric-groups]");
-    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 1, criterion: "" }, { id: crypto.randomUUID(), score: 0.5, criterion: "" }, { id: crypto.randomUUID(), score: 0, criterion: "" }] }, list.querySelectorAll("[data-rubric-group]").length));
+    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: defaultRubricScoreLevels() }, list.querySelectorAll("[data-rubric-group]").length));
     syncQuestionScoreUI(form);
     return;
   }
   const removeRubric = event.target.closest("[data-remove-rubric]");
   if (removeRubric) { if (form.querySelectorAll("[data-rubric-group]").length > 1) removeRubric.closest("[data-rubric-group]").remove(); syncQuestionScoreUI(form); return; }
-  const addRubricScore = event.target.closest("[data-add-rubric-score]");
-  if (addRubricScore) { addRubricScore.closest("[data-rubric-group]").querySelector("[data-rubric-scores]").insertAdjacentHTML("beforeend", rubricScoreRow({ id: crypto.randomUUID(), score: 0, criterion: "" })); syncQuestionScoreUI(form); return; }
-  const removeRubricScore = event.target.closest("[data-remove-rubric-score]");
-  if (removeRubricScore) { const list = removeRubricScore.closest("[data-rubric-scores]"); if (list.querySelectorAll("[data-rubric-score]").length > 1) removeRubricScore.closest("[data-rubric-score]").remove(); syncQuestionScoreUI(form); return; }
   const addExample = event.target.closest("[data-add-example]");
   if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
@@ -1124,10 +1174,16 @@ function rubricAiElements(dialog, form) {
   const allocations = rubricAllocationsFromElements(elements, questionScores);
   const prepared = elements.map((item, index) => {
     const maxScore = allocations.get(index) || 0;
+    const scoreValues = performanceBandScores(maxScore);
     return {
       ...item,
       maxScore,
-      scoreValues: derivedBandScores(maxScore, Array.from({ length: item.bandCount }, () => 0)),
+      scoreValues,
+      performanceBands: RUBRIC_PERFORMANCE_BANDS.map((band, bandIndex) => ({
+        label: band.label,
+        range: band.range,
+        score: scoreValues[bandIndex],
+      })),
     };
   });
   const missing = prepared.filter((item) => !questionScores.has(questionScoreGroupKey(item.questionNumber))).map((item) => questionScoreGroupKey(item.questionNumber));
@@ -1668,7 +1724,7 @@ function normalizeRubricCriteria(items) {
   }
   return Array.from(grouped.values()).map((group) => ({
     ...group,
-    scoreLevels: group.scoreLevels.sort((a, b) => b.score - a.score),
+    scoreLevels: rubricPerformanceLevels(group.scoreLevels),
   }));
 }
 
