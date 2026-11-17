@@ -28,6 +28,10 @@ const report = {
     scoreLevels: [{ score: 2, criterion: "과정과 답이 모두 옳다." }, { score: 1, criterion: "일부 과정이 옳다." }, { score: 0, criterion: "풀이가 없다." }],
   }],
   scoreRows: [{ questionNumber: "1", evaluationElement: "할인율 계산", criterion: "과정과 답이 모두 옳다.", score: 2, maxScore: 2 }],
+  exampleAnswerResults: [
+    { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 1, maxScore: 1, evidence: "할인 금액을 정확히 계산함", confidence: "high" },
+    { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 0.5, maxScore: 1, evidence: "백분율 계산 과정 일부가 맞음", confidence: "medium" },
+  ],
   totalScore: 2,
   maxScore: 2,
   achievementResults: [{ itemRange: "1-2번", achievementLevel: "상", feedback: "비율을 정확히 계산했습니다." }],
@@ -78,6 +82,11 @@ test("individual result sheet includes criteria, confirmed scores, feedback, and
   assert.match(html, /한빛초등학교/);
   assert.match(html, /report-student-meta/);
   assert.match(html, /할인율 계산/);
+  assert.match(html, /세부 문항별 배점 획득표/);
+  assert.match(html, /1-\(1\)/);
+  assert.match(html, /1-\(2\)/);
+  assert.match(html, /할인 금액을 정확히 계산함/);
+  assert.match(html, /일부 획득/);
   assert.match(html, /2 \/ 2/);
   assert.match(html, /교사 검토 완료/);
   assert.match(html, /계산 과정을 차근차근 잘 설명했습니다/);
@@ -139,16 +148,19 @@ test("grading detail source exposes rubric score buttons and the requested revie
 
 test("student question evidence shows example-answer point attainment", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
-  assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore\)/);
-  assert.match(schoolSource, /3번 예시답안 배점 기준/);
+  assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore, missing = false\)/);
+  assert.match(schoolSource, /세부 문항별 배점 획득표/);
+  assert.match(schoolSource, /3 문제별 예시답안 기준/);
+  assert.match(schoolSource, /획득 점수 \/ 배점/);
+  assert.match(schoolSource, /채점 근거/);
   assert.match(schoolSource, /배점 전부 획득/);
   assert.match(schoolSource, /배점 일부 획득/);
   assert.match(schoolSource, /배점 미획득/);
-  assert.match(schoolSource, /data-example-point-status/);
-  assert.match(schoolSource, /exampleQuestionScoreMap\(design\?\.exampleAnswers\)/);
+  assert.match(schoolSource, /resultExampleAnswerRows\(result, design\)/);
   assert.match(styles, /\.example-point-status\.is-full/);
   assert.match(styles, /\.example-point-status\.is-partial/);
   assert.match(styles, /\.example-point-status\.is-none/);
+  assert.match(styles, /\.example-point-table/);
 });
 
 test("course grading uses adaptive workers and selectively rechecks handwritten fractions", () => {

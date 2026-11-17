@@ -70,6 +70,17 @@
     return `<table class="report-score-table"><thead><tr><th>문항·평가요소</th><th>적용된 채점기준</th><th>점수</th></tr></thead><tbody>${rows.map((item) => `<tr><th><small>문제 ${escapeHtml(item.questionNumber || "-")}번</small>${escapeHtml(item.evaluationElement || "평가요소")}</th><td>${escapeHtml(item.criterion || item.feedback || "교사 확인 필요")}</td><td><strong>${formatScore(item.score)} / ${formatScore(item.maxScore)}</strong></td></tr>`).join("")}</tbody></table>`;
   }
 
+  function exampleAnswerResultsHtml(rows) {
+    if (!rows?.length) return "";
+    return `<div class="report-subquestion-results"><h3>AI 세부 문항별 배점 획득표</h3><table class="report-subquestion-table"><thead><tr><th>세부 문항</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${rows.map((item) => {
+      const missing = item.awardedScore == null || item.missingResult;
+      const awarded = missing ? null : Number(item.awardedScore || 0);
+      const maximum = Number(item.maxScore || 0);
+      const status = missing ? "세부 채점 없음" : awarded >= maximum - 0.001 ? "전부 획득" : awarded > 0 ? "일부 획득" : "미획득";
+      return `<tr><th>${escapeHtml(item.questionNumber || "-")}</th><td><strong>${awarded == null ? "—" : formatScore(awarded)} / ${formatScore(maximum)}점</strong></td><td>${status}</td><td>${escapeHtml(item.evidence || "채점 근거 없음")}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  }
+
   function achievementResultsHtml(items) {
     if (!items?.length) return "";
     return `<div class="report-achievement-results"><h3>성취기준별 결과</h3>${items.map((item) => `<article><strong>${escapeHtml(item.itemRange || "성취기준")} · ${escapeHtml(item.achievementLevel || "교사 확인")}</strong><p>${escapeHtml(item.feedback || "")}</p></article>`).join("")}</div>`;
@@ -85,7 +96,7 @@
       <header class="report-title-block"><p>${escapeHtml(report.semesterLabel || "")} · ${escapeHtml(report.subject || "")}</p><h1>${escapeHtml(report.assessmentTitle || report.courseTitle || "평가")} <em>채점 결과</em></h1><small>${escapeHtml(report.courseTitle || "")}</small></header>
       ${sections.achievementStandards ? `<section class="report-section" data-report-section="achievementStandards"><h2>성취기준</h2>${achievementStandardsHtml(report.achievementStandards)}</section>` : ""}
       ${sections.rubricCriteria ? `<section class="report-section report-criteria" data-report-section="rubricCriteria"><h2>채점기준</h2>${rubricHtml(report.rubricCriteria)}</section>` : ""}
-      ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
+      ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${exampleAnswerResultsHtml(report.exampleAnswerResults)}${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
       ${sections.achievementResults ? `<section data-report-section="achievementResults">${achievementResultsHtml(report.achievementResults)}</section>` : ""}
       ${sections.feedback ? `<section class="report-section report-feedback" data-report-section="feedback"><h2>선생님 피드백</h2><div>${multiline(report.feedback || "피드백이 아직 작성되지 않았습니다.")}</div></section>` : ""}
       <footer><span>${student.schoolName ? `${escapeHtml(student.schoolName)} · ` : ""}${escapeHtml(report.semesterLabel || "")} ${escapeHtml(report.subject || "")} 평가 결과</span><span>${escapeHtml(student.grade || "-")}-${escapeHtml(student.className || "-")}-${escapeHtml(student.number || "-")}</span></footer>
@@ -129,6 +140,11 @@
       .result-report-outcomes.report-outcomes-first { break-before: auto; }
       .report-score-table th:first-child { width: 32%; text-align: left; }
       .report-score-table td:last-child { width: 16%; text-align: center; white-space: nowrap; }
+      .report-subquestion-results { margin: 0 0 16px; }
+      .report-subquestion-results h3 { margin: 0 0 8px; font-size: 10pt; }
+      .report-subquestion-table th:first-child { width: 14%; text-align: center; }
+      .report-subquestion-table td:nth-child(2) { width: 18%; text-align: center; white-space: nowrap; }
+      .report-subquestion-table td:nth-child(3) { width: 16%; text-align: center; font-weight: 700; }
       .report-total { margin-top: 14px; padding: 14px 18px; border-top: 3px solid #7338ff; background: #f6f2ff; }
       .report-total strong { color: #5d2cd0; font-size: 17pt; }
       .report-total em { color: #696570; font-size: 8pt; font-style: normal; }

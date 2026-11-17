@@ -66,6 +66,23 @@
           required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "criterion", "score", "maxScore", "evidence", "feedback", "confidence"],
         },
       },
+      exampleAnswerResults: {
+        type: "array",
+        description: "3 문제별 예시답안에 등록된 세부 문항별 배점 획득 결과",
+        items: {
+          type: "object",
+          properties: {
+            exampleAnswerId: { type: "string", description: "평가 정보 exampleAnswers의 ID" },
+            questionNumber: { type: "string", description: "1-(1), 1-(2) 같은 세부 문제 번호" },
+            awardedScore: { type: "number", description: "이 세부 문항에서 획득한 점수" },
+            maxScore: { type: "number", description: "3 문제별 예시답안에 입력된 이 세부 문항의 배점" },
+            scoreStatus: { type: "string", enum: ["full", "partial", "none"] },
+            evidence: { type: "string", description: "학생 답안에서 확인한 이 세부 문항의 채점 근거" },
+            confidence: { type: "string", enum: ["high", "medium", "low"] },
+          },
+          required: ["exampleAnswerId", "questionNumber", "awardedScore", "maxScore", "scoreStatus", "evidence", "confidence"],
+        },
+      },
       needsTeacherReview: { type: "boolean" },
       reviewReasons: { type: "array", items: { type: "string" } },
     },
@@ -80,6 +97,7 @@
       "nextSteps",
       "achievementResults",
       "questionResults",
+      "exampleAnswerResults",
       "needsTeacherReview",
       "reviewReasons",
     ],
@@ -655,7 +673,7 @@
         maxScore: Number(metadata?.totalScore || 0),
         overallAchievementLevel: "검토 필요",
         summary: "첫 번째 응답이 불완전하여 문항별 채점을 자동으로 다시 요청했습니다.",
-        strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [], needsTeacherReview: true,
+        strengths: [], improvements: [], nextSteps: [], achievementResults: [], questionResults: [], exampleAnswerResults: [], needsTeacherReview: true,
         reviewReasons: [error.message],
       };
     }
@@ -686,6 +704,7 @@
         ...parsed,
         totalScore: repaired.totalScore,
         questionResults: repaired.questionResults,
+        exampleAnswerResults: repaired.exampleAnswerResults,
         achievementResults: repaired.achievementResults,
         needsTeacherReview: Boolean(parsed.needsTeacherReview || repaired.needsTeacherReview),
         reviewReasons: [...textList(parsed.reviewReasons), ...textList(repaired.reviewReasons)],
@@ -910,6 +929,25 @@
     return selected.length ? selected : rubricCriteria;
   }
 
+  function questionGroupKey(value) {
+    const source = text(value)
+      .replace(/[‐‑‒–—−]/g, "-")
+      .replace(/\s+/g, "")
+      .replace(/^(?:문제|문항)/, "");
+    return source.match(/^(\d+)/)?.[1] || source;
+  }
+
+  function exampleAnswersForResponse(metadata = {}) {
+    const examples = (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item, index) => ({
+      id: text(item?.id) || `example-${index + 1}`,
+      questionNumber: text(item?.questionNumber) || String(index + 1),
+      maxScore: Math.max(0, numeric(item?.maxScore)),
+    }));
+    if (!metadata.precisionReview) return examples;
+    const targetGroups = new Set(rubricCriteriaForResponse(metadata).map((item) => questionGroupKey(item.questionNumber)).filter(Boolean));
+    return targetGroups.size ? examples.filter((item) => targetGroups.has(questionGroupKey(item.questionNumber))) : examples;
+  }
+
   function selectPrecisionCriterionIds(result, metadata = {}) {
     const rubricCriteria = normalizeRubricForPrompt(metadata.rubricCriteria);
     const selected = new Set();
@@ -1015,6 +1053,14 @@
         ? precisionRows.get(rubric.id)
         : baseRows.get(rubric.id)
     )).filter(Boolean);
+    const baseExampleRows = new Map((Array.isArray(baseResult?.exampleAnswerResults) ? baseResult.exampleAnswerResults : [])
+      .map((item) => [text(item?.exampleAnswerId), item]));
+    const precisionExampleRows = new Map((Array.isArray(precisionResult?.exampleAnswerResults) ? precisionResult.exampleAnswerResults : [])
+      .map((item) => [text(item?.exampleAnswerId), item]));
+    const exampleAnswerResults = (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item, index) => {
+      const id = text(item?.id) || `example-${index + 1}`;
+      return precisionExampleRows.get(id) || baseExampleRows.get(id);
+    }).filter(Boolean);
 
     const targetRubrics = rubricCriteria.filter((rubric) => targetIds.has(rubric.id));
     const unresolvedBaseReasons = textList(baseResult?.reviewReasons).filter((reason) => {
@@ -1035,6 +1081,7 @@
         ? precisionResult.achievementResults
         : baseResult?.achievementResults,
       questionResults,
+      exampleAnswerResults,
       needsTeacherReview: false,
       reviewReasons: [...unresolvedBaseReasons, ...textList(precisionResult?.reviewReasons)],
     };
@@ -1118,8 +1165,8 @@ ${JSON.stringify(targets)}
       totalScore: Number(metadata.totalScore || 0),
       achievementGroups: Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [],
       rubricCriteria: normalizeRubricForPrompt(metadata.rubricCriteria),
-      exampleAnswers: (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item) => ({
-        id: item?.id || "",
+      exampleAnswers: (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item, index) => ({
+        id: item?.id || `example-${index + 1}`,
         questionNumber: item?.questionNumber || "",
         maxScore: Number(item?.maxScore || 0),
         answerText: item?.answerText || "",
@@ -1183,14 +1230,15 @@ ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
     ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
     : "8. questionResults에는 rubricCriteria의 모든 평가요소를 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사합니다. 같은 문제 번호에 평가요소가 여러 개여도 합치거나 생략하지 마세요."}
 9. 각 평가요소의 점수는 scoreLevels에 정의된 배점 중 하나를 정확히 선택해야 하며 임의의 중간 점수를 만들지 마세요. totalScore는 이번 questionResults에 포함된 점수의 합계여야 합니다.
-10. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
-11. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
-12. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 답안 본문에 사람이름으로 보이는 글자가 있더라도 신원으로 추정하거나 응답에 옮겨 적지 마세요.
-13. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
-14. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
-15. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
-  ${safeMetadata.fractionCriterionIds.length ? "16. fractionAnswer 역할의 이미지는 검증 대상 분수 문항을 원본색과 고대비로 확대한 자료입니다. 두 버전을 직접 대조하여 분자·분모·대분수 자연수·분수선을 확인하고 계산을 검산한 뒤, 지정된 scoreLevels 중 하나로 최종 채점하세요. 서로 다르게 보이거나 숫자를 확정할 수 없으면 낮은 confidence와 구체적인 교사 검토 사유를 유지하세요." : ""}
-${safeMetadata.precisionReview ? "17. 이것은 1차 통합 채점에서 검증이 필요했거나 분수 숫자를 재판독한 문항의 정밀 재검토입니다. 지정된 문항을 원본·빈 답안지·필기 강조본과 다시 비교하고, 전체 답안 맥락을 고려해 종합 피드백과 성취기준별 결과도 갱신하세요. 여전히 불명확하면 추측하지 말고 낮은 confidence를 유지하세요." : ""}
+10. exampleAnswerResults에는 3 문제별 예시답안의 세부 문제 번호를 합치지 말고 각각 정확히 한 번씩 포함합니다. exampleAnswerId와 questionNumber를 그대로 복사하고, awardedScore는 0.5점 단위로 0점부터 해당 maxScore까지 부여하며 학생 답안에서 확인한 근거를 evidence에 구체적으로 작성하세요. 같은 상위 문제(예: 1-(1), 1-(2)는 문제 1)의 awardedScore 합계는 questionResults에서 같은 상위 문제에 부여한 점수 합계와 정확히 같아야 합니다.${safeMetadata.precisionReview ? " 선별 정밀 재검토에서는 precisionCriterionIds와 같은 상위 문제에 속한 exampleAnswers만 반환하세요." : " 모든 exampleAnswers를 입력 순서대로 반환하세요."}
+11. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
+12. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
+13. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 답안 본문에 사람이름으로 보이는 글자가 있더라도 신원으로 추정하거나 응답에 옮겨 적지 마세요.
+14. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
+15. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
+16. ‘필기 강조본’은 흐린 연필선을 보기 쉽게 만든 AI 전송용 사본입니다. 보정 과정에서 생긴 얼룩을 학생 필기로 단정하지 마세요.
+${safeMetadata.fractionCriterionIds.length ? "17. fractionAnswer 역할의 이미지는 검증 대상 분수 문항을 원본색과 고대비로 확대한 자료입니다. 두 버전을 직접 대조하여 분자·분모·대분수 자연수·분수선을 확인하고 계산을 검산한 뒤, 지정된 scoreLevels 중 하나로 최종 채점하세요. 서로 다르게 보이거나 숫자를 확정할 수 없으면 낮은 confidence와 구체적인 교사 검토 사유를 유지하세요." : ""}
+${safeMetadata.precisionReview ? "18. 이것은 1차 통합 채점에서 검증이 필요했거나 분수 숫자를 재판독한 문항의 정밀 재검토입니다. 지정된 문항을 원본·빈 답안지·필기 강조본과 다시 비교하고, 전체 답안 맥락을 고려해 종합 피드백과 성취기준별 결과도 갱신하세요. 여전히 불명확하면 추측하지 말고 낮은 confidence를 유지하세요." : ""}
 
 평가 정보(JSON):
 ${JSON.stringify(safeMetadata)}
@@ -1214,16 +1262,18 @@ ${JSON.stringify(safeMetadata)}
         totalScore: fullSchema.properties.totalScore,
         achievementResults: fullSchema.properties.achievementResults,
         questionResults: fullSchema.properties.questionResults,
+        exampleAnswerResults: fullSchema.properties.exampleAnswerResults,
         needsTeacherReview: fullSchema.properties.needsTeacherReview,
         reviewReasons: fullSchema.properties.reviewReasons,
       },
-      required: ["totalScore", "achievementResults", "questionResults", "needsTeacherReview", "reviewReasons"],
+      required: ["totalScore", "achievementResults", "questionResults", "exampleAnswerResults", "needsTeacherReview", "reviewReasons"],
     };
     return schema;
   }
 
   function buildScoreRepairPrompt(metadata = {}) {
     const rubricCriteria = rubricCriteriaForResponse(metadata);
+    const exampleAnswers = exampleAnswersForResponse(metadata);
     const achievementGroups = (Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : []).map((group, index) => ({
       id: text(group?.id) || `achievement-${index + 1}`,
       itemRange: text(group?.itemRange),
@@ -1241,11 +1291,16 @@ ${JSON.stringify(safeMetadata)}
 2. criterionId, questionNumber, evaluationElement는 아래 값을 정확히 복사합니다.
 3. score는 해당 scoreLevels에 정의된 점수 중 하나만 선택합니다.
 4. 무응답 또는 판독 불가도 항목을 생략하지 말고 0점 또는 정의된 최저점과 낮은 confidence로 기록합니다.
-5. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다.
-6. totalScore는 questionResults의 score 합계입니다.
+5. exampleAnswerResults는 아래 exampleAnswers의 각 세부 문항을 같은 개수와 순서로 작성하고 exampleAnswerId와 questionNumber를 그대로 복사합니다.
+6. 세부 문항 awardedScore는 0.5점 단위이며, 같은 상위 문제의 합계는 questionResults의 같은 상위 문제 점수 합계와 일치해야 합니다.
+7. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다.
+8. totalScore는 questionResults의 score 합계입니다.
 
 rubricCriteria(JSON):
 ${JSON.stringify(rubricCriteria)}
+
+exampleAnswers(JSON):
+${JSON.stringify(exampleAnswers)}
 
 achievementGroups(JSON):
 ${JSON.stringify(achievementGroups)}
@@ -1261,6 +1316,12 @@ ${JSON.stringify(achievementGroups)}
       if (questionResults.length !== rubricCriteria.length) return false;
       if (!rubricCriteria.every((rubric) => questionResults.some((item) => text(item?.criterionId) === rubric.id))) return false;
     } else if (!questionResults.length) return false;
+    const expectedExamples = exampleAnswersForResponse(metadata);
+    const exampleAnswerResults = Array.isArray(payload.exampleAnswerResults) ? payload.exampleAnswerResults : [];
+    if (expectedExamples.length) {
+      if (exampleAnswerResults.length !== expectedExamples.length) return false;
+      if (!expectedExamples.every((example) => exampleAnswerResults.some((item) => text(item?.exampleAnswerId) === example.id))) return false;
+    }
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
     const achievementResults = Array.isArray(payload.achievementResults) ? payload.achievementResults : [];
     if (achievementGroups.length) {
@@ -1355,6 +1416,7 @@ ${JSON.stringify(roster)}
         scoreAdjusted,
       };
     });
+    const exampleAnswerResults = normalizeExampleAnswerResults(raw.exampleAnswerResults, metadata, questionResults, reviewReasons);
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
     const rawAchievementResults = Array.isArray(raw.achievementResults) ? raw.achievementResults : [];
     const achievementResults = achievementGroups.map((group, index) => {
@@ -1409,14 +1471,93 @@ ${JSON.stringify(roster)}
       nextSteps: textList(raw.nextSteps),
       achievementResults,
       questionResults,
+      exampleAnswerResults,
       needsTeacherReview: Boolean(raw.needsTeacherReview)
         || reviewReasons.length > 0
         || questionResults.some((item) => item.confidence !== "high" || /판독 불가/.test(item.answerReading))
+        || exampleAnswerResults.some((item) => item.confidence !== "high" || item.missingResult)
         || achievementResults.some((item) => item.confidence !== "high"),
       reviewReasons: Array.from(new Set(reviewReasons)),
       model: validateModelId(model),
       gradedAt: new Date().toISOString(),
     };
+  }
+
+  function normalizeExampleAnswerResults(rawResults, metadata, questionResults, reviewReasons) {
+    const expected = exampleAnswersForResponse(metadata);
+    const rawItems = Array.isArray(rawResults) ? rawResults : [];
+    const usedIndexes = new Set();
+    const rows = expected.map((example) => {
+      let rawIndex = rawItems.findIndex((item, index) => !usedIndexes.has(index) && text(item?.exampleAnswerId) === example.id);
+      if (rawIndex < 0) rawIndex = rawItems.findIndex((item, index) => !usedIndexes.has(index) && text(item?.questionNumber) === example.questionNumber);
+      if (rawIndex >= 0) usedIndexes.add(rawIndex);
+      const item = rawIndex >= 0 ? rawItems[rawIndex] : null;
+      const rawScore = clamp(item?.awardedScore ?? item?.score, 0, example.maxScore);
+      const awardedScore = Math.round(rawScore * 2) / 2;
+      const scoreAdjusted = Math.abs(awardedScore - numeric(item?.awardedScore ?? item?.score)) > 0.001;
+      if (!item) reviewReasons.push(`${example.questionNumber} 세부 문항의 배점 획득 결과가 없어 교사 확인이 필요합니다.`);
+      else if (scoreAdjusted) reviewReasons.push(`${example.questionNumber} 세부 문항 점수를 0.5점 단위인 ${roundScore(awardedScore)}점으로 보정했습니다.`);
+      return {
+        exampleAnswerId: example.id,
+        questionNumber: example.questionNumber,
+        awardedScore,
+        maxScore: example.maxScore,
+        scoreStatus: awardedScore >= example.maxScore - 0.001 ? "full" : awardedScore > 0 ? "partial" : "none",
+        evidence: text(item?.evidence) || (item ? "세부 문항의 채점 근거가 반환되지 않았습니다." : "AI 세부 문항 채점 결과가 없습니다."),
+        confidence: item && ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low",
+        missingResult: !item,
+        scoreAdjusted,
+      };
+    });
+    if (rawItems.length > usedIndexes.size) reviewReasons.push("Gemini가 3 문제별 예시답안과 연결되지 않는 추가 세부 문항 결과를 반환하여 제외했습니다.");
+
+    const targetScores = new Map();
+    for (const item of questionResults) {
+      const key = questionGroupKey(item?.questionNumber);
+      if (key) targetScores.set(key, roundScore((targetScores.get(key) || 0) + numeric(item?.score)));
+    }
+    const grouped = new Map();
+    rows.forEach((item) => {
+      const key = questionGroupKey(item.questionNumber);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    });
+    for (const [key, groupRows] of grouped) {
+      if (!targetScores.has(key)) continue;
+      const maxUnits = groupRows.map((item) => Math.max(0, Math.round(item.maxScore * 2)));
+      const rawUnits = groupRows.map((item, index) => Math.min(maxUnits[index], Math.max(0, Math.round(item.awardedScore * 2))));
+      const targetUnits = Math.min(maxUnits.reduce((sum, value) => sum + value, 0), Math.max(0, Math.round(targetScores.get(key) * 2)));
+      if (rawUnits.reduce((sum, value) => sum + value, 0) === targetUnits) continue;
+      const adjustedUnits = distributeSubscoreUnits(rawUnits, maxUnits, targetUnits);
+      groupRows.forEach((item, index) => {
+        item.awardedScore = adjustedUnits[index] / 2;
+        item.scoreStatus = item.awardedScore >= item.maxScore - 0.001 ? "full" : item.awardedScore > 0 ? "partial" : "none";
+        item.scoreAdjusted = true;
+      });
+      reviewReasons.push(`문제 ${key}의 세부 문항 점수 합계를 문제별 채점 점수 ${roundScore(targetScores.get(key))}점에 맞춰 자동 조정했습니다.`);
+    }
+    return rows;
+  }
+
+  function distributeSubscoreUnits(rawUnits, maxUnits, targetUnits) {
+    const rawTotal = rawUnits.reduce((sum, value) => sum + value, 0);
+    const weights = rawTotal > 0 ? rawUnits : maxUnits;
+    const weightTotal = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
+    const desired = weights.map((weight, index) => Math.min(maxUnits[index], (targetUnits * weight) / weightTotal));
+    const assigned = desired.map((value, index) => Math.min(maxUnits[index], Math.floor(value)));
+    let remaining = targetUnits - assigned.reduce((sum, value) => sum + value, 0);
+    while (remaining > 0) {
+      const candidates = assigned.map((value, index) => ({
+        index,
+        capacity: maxUnits[index] - value,
+        priority: desired[index] - value,
+        fillRatio: maxUnits[index] ? value / maxUnits[index] : 1,
+      })).filter((item) => item.capacity > 0).sort((left, right) => right.priority - left.priority || left.fillRatio - right.fillRatio || left.index - right.index);
+      if (!candidates.length) break;
+      assigned[candidates[0].index] += 1;
+      remaining -= 1;
+    }
+    return assigned;
   }
 
   function normalizePageAssignments(raw, roster, pageCount, model = MODEL) {

@@ -69,6 +69,8 @@ test("buildPrompt includes typed rubric and math example metadata", () => {
   assert.match(prompt, /계산 과정 일부가 타당함/);
   assert.match(prompt, /\\\\frac\{1\}\{2\}ab/);
   assert.match(prompt, /삼각형 ABC/);
+  assert.match(prompt, /exampleAnswerResults/);
+  assert.match(prompt, /세부 문제 번호를 합치지 말고 각각/);
 });
 
 test("buildPrompt carries structured fraction verification into precision grading", () => {
@@ -127,6 +129,30 @@ test("normalizeGradingResult recomputes totals and flags invalid scores", () => 
   assert.equal(result.totalScore, 3);
   assert.equal(result.needsTeacherReview, true);
   assert.ok(result.reviewReasons.length >= 2);
+});
+
+test("normalizeGradingResult keeps every example-answer subquestion score and reconciles its parent total", () => {
+  const result = AI.normalizeGradingResult({
+    studentIdentifier: "S001", totalScore: 3, maxScore: 5, overallAchievementLevel: "보통", summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [],
+    questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "계산", answerReading: "풀이 작성", criterion: "부분 성취", score: 3, maxScore: 5, evidence: "계산 일부 정확", feedback: "확인", confidence: "high" }],
+    exampleAnswerResults: [
+      { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 2, maxScore: 2, scoreStatus: "full", evidence: "첫 계산이 정확함", confidence: "high" },
+      { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 0, maxScore: 3, scoreStatus: "none", evidence: "두 번째 계산 일부 누락", confidence: "high" },
+    ],
+    needsTeacherReview: false, reviewReasons: [],
+  }, {
+    totalScore: 5,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 5, criterion: "완전" }, { score: 3, criterion: "부분 성취" }] }],
+    exampleAnswers: [
+      { id: "e1", questionNumber: "1-(1)", maxScore: 2 },
+      { id: "e2", questionNumber: "1-(2)", maxScore: 3 },
+    ],
+  });
+  assert.deepEqual(result.exampleAnswerResults.map((item) => item.questionNumber), ["1-(1)", "1-(2)"]);
+  assert.deepEqual(result.exampleAnswerResults.map((item) => item.awardedScore), [2, 1]);
+  assert.equal(result.exampleAnswerResults.reduce((sum, item) => sum + item.awardedScore, 0), 3);
+  assert.match(result.reviewReasons.join(" "), /세부 문항 점수 합계/);
 });
 
 test("selective precision review targets uncertain questions and their achievement range", () => {
@@ -525,6 +551,8 @@ test("gradeAnswer sends structured schema and normalizes the response", async ()
       assert.equal("minimum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("maximum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
       assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
+      assert.equal(body.generationConfig.responseSchema.properties.exampleAnswerResults.type, "array");
+      assert.deepEqual(body.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.scoreStatus.enum, ["full", "partial", "none"]);
       assert.equal(body.generationConfig.maxOutputTokens, 8192);
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
       assert.equal(body.generationConfig.temperature, 0.1);
