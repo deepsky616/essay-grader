@@ -122,20 +122,20 @@ test("example-answer points drive question totals and derived rubric scores", ()
     { questionNumber: "2", maxScore: 4 },
   ]).entries()), [["1", 5], ["2", 4]]);
   assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
-  assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3, 0]);
-  assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5, 0]);
+  assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3]);
+  assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5]);
   const customThresholds = { excellent: 85, good: 65, average: 45, effort: 25 };
   assert.equal(performanceThresholdsAreValid(customThresholds), true);
   assert.equal(performanceThresholdsAreValid({ excellent: 80, good: 80, average: 40, effort: 20 }), false);
-  assert.deepEqual(performanceBandScores(10, customThresholds), [10, 7.5, 5.5, 3.5, 0]);
-  assert.deepEqual(performanceBandDefinitions(customThresholds).map((band) => band.range), ["85% 이상", "65% 이상 85% 미만", "45% 이상 65% 미만", "25% 이상 45% 미만", "미응답 또는 근거 없음"]);
+  assert.deepEqual(performanceBandScores(10, customThresholds), [10, 7.5, 5.5, 3.5]);
+  assert.deepEqual(performanceBandDefinitions(customThresholds).map((band) => band.range), ["85% 이상", "65% 이상 85% 미만", "45% 이상 65% 미만", "25% 이상 45% 미만"]);
   assert.deepEqual(rubricPerformanceLevels([
     { id: "high", score: 10, criterion: "완전한 수행" },
     { id: "middle", score: 5, criterion: "부분 수행" },
     { id: "zero", score: 0, criterion: "무응답" },
-  ]).map((level) => level.score), [10, 7, 5, 3, 0]);
+  ]).map((level) => level.score), [10, 7, 5, 3]);
   assert.deepEqual(derivedBandScores(5, [10, 7, 0]), [5, 3.5, 0]);
-  assert.deepEqual(derivedBandScores(10, [10, 7, 5, 3, 0]), [10, 7, 5, 3, 0]);
+  assert.deepEqual(derivedBandScores(10, [10, 7, 5, 3]), [10, 7, 5, 3]);
   const allocations = rubricAllocationsFromElements([
     { questionNumber: "1" },
     { questionNumber: "1" },
@@ -150,7 +150,9 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /name: "performanceGoodMin"/);
   assert.match(source, /name: "performanceAverageMin"/);
   assert.match(source, /name: "performanceEffortMin"/);
-  assert.match(source, /4개 성취수준 · 노력요함 0점 포함/);
+  assert.match(source, /4개 성취수준/);
+  assert.doesNotMatch(source, /key: "effortZero"/);
+  assert.match(source, /미응답 또는 근거 없음도 별도 배점 없이 노력요함 기준에 포함/);
   assert.match(source, /performanceThresholds,/);
   assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);

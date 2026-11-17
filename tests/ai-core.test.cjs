@@ -895,21 +895,22 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
       evaluationElement: "계산 과정의 타당성",
       bandCount: 4,
       maxScore: 10,
-      scoreValues: [10, 6.5, 3.5, 0],
+      scoreValues: [10, 7, 5, 3],
       performanceBands: [
         { label: "매우잘함", range: "80% 이상", score: 10 },
-        { label: "잘함", range: "60% 이상 80% 미만", score: 6.5 },
-        { label: "노력요함", range: "20% 이상 40% 미만", score: 3.5 },
-        { label: "노력요함", range: "미응답 또는 근거 없음", score: 0 },
+        { label: "잘함", range: "60% 이상 80% 미만", score: 7 },
+        { label: "보통", range: "40% 이상 60% 미만", score: 5 },
+        { label: "노력요함", range: "20% 이상 40% 미만", score: 3 },
       ],
     }],
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       const prompt = body.contents[0].parts[0].text;
-      assert.match(prompt, /"scoreValues":\[10,6\.5,3\.5,0\]/);
+      assert.match(prompt, /"scoreValues":\[10,7,5,3\]/);
       assert.match(prompt, /"maxScore":10/);
       assert.match(prompt, /"label":"매우잘함","range":"80% 이상","score":10/);
-      assert.match(prompt, /미응답 또는 근거 없음의 0점 기준은 노력요함에 포함/);
+      assert.match(prompt, /미응답 또는 근거 없음도 노력요함 기준 문장 안에 포함/);
+      assert.match(prompt, /별도의 0점 수준은 만들지 마세요/);
       assert.match(prompt, /6학년|"grade":"6"/);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
@@ -918,16 +919,16 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
           evaluationElement: "계산 과정의 타당성",
           scoreLevels: [
             { score: 10, criterion: "계산 과정과 설명이 모두 타당하다." },
-            { score: 6.5, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
-            { score: 3.5, criterion: "계산 또는 설명의 일부만 타당하다." },
-            { score: 0, criterion: "무응답이거나 핵심 계산이 타당하지 않다." },
+            { score: 7, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
+            { score: 5, criterion: "계산 또는 설명의 일부만 타당하다." },
+            { score: 3, criterion: "기초적인 시도, 미응답 또는 근거 없음에 해당한다." },
           ],
         }],
         notes: [],
       }) }] } }] }), { status: 200 });
     },
   });
-  assert.deepEqual(result.requestedElements[0].scoreValues, [10, 6.5, 3.5, 0]);
+  assert.deepEqual(result.requestedElements[0].scoreValues, [10, 7, 5, 3]);
   assert.equal(result.rubricCriteria[0].scoreLevels.length, 4);
 });
 
