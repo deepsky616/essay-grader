@@ -32,6 +32,11 @@ test("the interface uses readable body and control text without enlarging page t
   assert.match(interfaceStyles, /\.school-hero h1\s*\{[^}]*font-size:\s*clamp\(52px, 7vw, 82px\);/);
 });
 
+test("the rubric AI action stays horizontal without one-character wrapping", () => {
+  assert.match(source, /data-open-rubric-ai>채점기준 AI 생성<\/button>/);
+  assert.match(styles, /\.editor-title-actions button \{[^}]*min-width: max-content;[^}]*white-space: nowrap;[^}]*word-break: keep-all;[^}]*writing-mode: horizontal-tb;/);
+});
+
 test("grades 3 and 4 offer the requested nine subjects without practical arts", () => {
   const catalog = loadSubjectCatalog();
   const expected = ["국어", "사회", "도덕", "수학", "과학", "체육", "음악", "미술", "영어"];
