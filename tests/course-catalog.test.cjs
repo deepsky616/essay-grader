@@ -19,7 +19,7 @@ function loadQuestionScoreHelpers() {
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   assert.ok(start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(start, end)}; return { allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements };`)();
+  return new Function(`${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -109,7 +109,16 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  assert.equal(questionScoreGroupKey("1-(1)"), "1");
+  assert.equal(questionScoreGroupKey("1-(2)"), "1");
+  assert.equal(questionScoreGroupKey("문항 2-①"), "2");
+  assert.equal(questionScoreGroupKey("서술형 A"), "서술형A");
+  assert.deepEqual(Array.from(exampleQuestionScoreMap([
+    { questionNumber: "1-(1)", maxScore: 2 },
+    { questionNumber: "1-(2)", maxScore: 3 },
+    { questionNumber: "2", maxScore: 4 },
+  ]).entries()), [["1", 5], ["2", 4]]);
   assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
   assert.deepEqual(derivedBandScores(5, [10, 7, 0]), [5, 3.5, 0]);
   const allocations = rubricAllocationsFromElements([
