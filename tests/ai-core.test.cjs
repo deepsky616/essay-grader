@@ -851,6 +851,8 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
       assert.equal(schema.properties.achievementGroups.type, "array");
       assert.equal(schema.properties.rubricCriteria.type, "array");
       assert.equal(schema.properties.exampleAnswers.type, "array");
+      assert.equal(schema.properties.exampleAnswers.items.properties.maxScore.type, "number");
+      assert.ok(schema.properties.exampleAnswers.items.required.includes("maxScore"));
       assert.match(body.contents[0].parts[0].text, /배점 추정/);
       assert.match(body.contents[0].parts[0].text, /학생용 평가지의 빈 응답칸/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
@@ -863,7 +865,7 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
           levels: [{ label: "매우 잘함", description: "계산 원리를 잘 이해하고 정확히 해결한다." }],
         }],
         rubricCriteria: [{ questionNumber: "1", evaluationElement: "분수의 곱셈 계산", scoreLevels: [{ score: 3, criterion: "모두 정확하다." }, { score: 0, criterion: "해결하지 못했다." }] }],
-        exampleAnswers: [{ questionNumber: "1", answerText: "분자에 자연수를 곱한다.", mathNotation: "9/16 × 12 = 27/4", visualDescription: "" }],
+        exampleAnswers: [{ questionNumber: "1", maxScore: 3, answerText: "분자에 자연수를 곱한다.", mathNotation: "9/16 × 12 = 27/4", visualDescription: "" }],
         notes: ["배점 추정"],
       }) }] } }] }), { status: 200 });
     },
@@ -873,6 +875,7 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
   assert.deepEqual(progressStages, ["analysis-start", "primary-complete", "fraction-verification", "fraction-complete"]);
   assert.equal(result.achievementGroups[0].standardCode, "6수01-09");
   assert.equal(requestCount, 2);
+  assert.equal(result.exampleAnswers[0].maxScore, 3);
   assert.equal(result.exampleAnswers[0].mathNotation, "1-(1) 9/16 × 12 = 27/4 = 6 3/4");
   assert.equal(result.exampleAnswers[0].mathLines[0].fractions[1].wholeNumber, "6");
   assert.match(result.notes.join(" "), /고해상도 이미지로 2차 검증/);
@@ -887,11 +890,12 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
       taskName: "비율 설명하기",
       achievementStandards: ["[6수01-03] 분수의 나눗셈을 계산할 수 있다."],
     },
-    elements: [{ questionNumber: "1", evaluationElement: "계산 과정의 타당성", bandCount: 4 }],
+    elements: [{ questionNumber: "1", evaluationElement: "계산 과정의 타당성", bandCount: 4, maxScore: 10, scoreValues: [10, 6.5, 3.5, 0] }],
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       const prompt = body.contents[0].parts[0].text;
-      assert.match(prompt, /"scoreValues":\[3,2,1,0\]/);
+      assert.match(prompt, /"scoreValues":\[10,6\.5,3\.5,0\]/);
+      assert.match(prompt, /"maxScore":10/);
       assert.match(prompt, /6학년|"grade":"6"/);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
@@ -899,9 +903,9 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
           questionNumber: "1",
           evaluationElement: "계산 과정의 타당성",
           scoreLevels: [
-            { score: 3, criterion: "계산 과정과 설명이 모두 타당하다." },
-            { score: 2, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
-            { score: 1, criterion: "계산 또는 설명의 일부만 타당하다." },
+            { score: 10, criterion: "계산 과정과 설명이 모두 타당하다." },
+            { score: 6.5, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
+            { score: 3.5, criterion: "계산 또는 설명의 일부만 타당하다." },
             { score: 0, criterion: "무응답이거나 핵심 계산이 타당하지 않다." },
           ],
         }],
@@ -909,7 +913,7 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
       }) }] } }] }), { status: 200 });
     },
   });
-  assert.deepEqual(result.requestedElements[0].scoreValues, [3, 2, 1, 0]);
+  assert.deepEqual(result.requestedElements[0].scoreValues, [10, 6.5, 3.5, 0]);
   assert.equal(result.rubricCriteria[0].scoreLevels.length, 4);
 });
 

@@ -596,7 +596,7 @@ function renderDesignTab(course) {
 function designCard(design, index) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
   const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
-  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
+  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(assessmentDesignTotalScore(design))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
 
 function createEmptyDesign() {
@@ -604,8 +604,8 @@ function createEmptyDesign() {
     id: "",
     taskName: "",
     achievementGroups: [{ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }],
-    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 10, criterion: "" }] }],
-    exampleAnswers: [{ id: crypto.randomUUID(), questionNumber: "1", answerText: "", mathNotation: "", visualDescription: "" }],
+    rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 10, criterion: "" }, { id: crypto.randomUUID(), score: 5, criterion: "" }, { id: crypto.randomUUID(), score: 0, criterion: "" }] }],
+    exampleAnswers: [{ id: crypto.randomUUID(), questionNumber: "1", maxScore: 10, answerText: "", mathNotation: "", visualDescription: "" }],
   };
 }
 
@@ -630,6 +630,11 @@ function defaultAchievementLevels() {
 
 function designEditor(design, course) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const rubricQuestionScores = rubricQuestionMaxScoreMap(rubricCriteria);
+  const exampleAnswers = (design.exampleAnswers || []).map((item) => ({
+    ...item,
+    maxScore: positiveDesignScore(item.maxScore) || rubricQuestionScores.get(String(item.questionNumber || "").trim()) || "",
+  }));
   const curriculumDomains = curriculumForCourse(course);
   const rubricAiSeeds = rubricCriteria.length ? rubricCriteria : [{ questionNumber: "1", evaluationElement: "", scoreLevels: [] }];
   return `
@@ -654,9 +659,10 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>직접 추가하거나 평가요소와 급간 수를 입력해 AI로 배점별 기준을 만들 수 있습니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>3번 예시답안에서 입력한 문제별 배점을 기준으로 평가요소와 채점수준의 점수가 자동 계산됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
         <div class="rubric-ai-launch">
-          <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 급간 수를 확인한 뒤 배점별 채점기준을 한 번에 생성합니다.</span></div>
+          <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
           <button type="button" data-open-rubric-ai>채점기준 AI 생성</button>
         </div>
         <div class="document-auto-row">
@@ -670,14 +676,14 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>직접 입력하거나 PDF·사진 원본을 첨부하세요. 복잡한 수식 명령어는 숨기고 교사가 읽기 쉬운 형태로 표시합니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
+        <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>각 문제의 배점은 여기에서 한 번만 입력합니다. 전체 평가 총점과 2번 채점기준의 배점이 자동으로 맞춰집니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
         <div class="document-auto-row">
           <label>예시답안 PDF·사진<input name="exampleDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
           <button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>
           <span>${design.exampleFile ? `저장됨: ${escapeHtml(design.exampleFile.name)}` : "수식·도형이 있는 원본도 그대로 보관합니다."}</span>
         </div>
         ${documentAnalysisProgressMarkup("example")}
-        <div data-example-rows>${(design.exampleAnswers || []).map(exampleEditorRow).join("")}</div>
+        <div data-example-rows>${exampleAnswers.map(exampleEditorRow).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
         <div class="editor-section-title"><div><span>4</span><strong>학생용 평가지 등록</strong><p>학생이 작성하기 전의 평가지 원본을 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다. 교사용 기준안·예시답안 페이지는 제외하세요.</p></div></div>
@@ -742,23 +748,23 @@ function levelEditor(level) {
 
 function rubricEditorGroup(item, index) {
   return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
-    <div class="rubric-group-head"><strong>평가요소 ${index + 1}</strong><button type="button" data-remove-rubric>평가요소 삭제</button></div>
+    <div class="rubric-group-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>평가요소 삭제</button></div>
     <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
-    <div class="rubric-score-head"><span>배점</span><span>해당 배점의 채점기준</span><span></span></div>
+    <div class="rubric-score-head"><span>자동 배점</span><span>해당 배점의 채점기준</span><span></span></div>
     <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map(rubricScoreRow).join("")}</div>
-    <button class="mini-add" type="button" data-add-rubric-score>＋ 배점 기준 추가</button>
+    <button class="mini-add" type="button" data-add-rubric-score>＋ 채점수준 추가</button>
   </article>`;
 }
 
 function rubricScoreRow(level) {
-  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><input name="rubricScore" type="number" min="0" step="0.5" value="${Number(level.score || 0)}" required><textarea name="rubricCriterion" rows="2" placeholder="이 배점을 주는 구체적인 조건" required>${escapeHtml(level.criterion || "")}</textarea><button type="button" data-remove-rubric-score>삭제</button></div>`;
+  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><strong class="rubric-derived-score" data-rubric-score-value>${formatScore(Number(level.score || 0))}점</strong><input name="rubricScore" type="hidden" value="${Number(level.score || 0)}"><textarea name="rubricCriterion" rows="2" placeholder="이 배점을 주는 구체적인 조건" required>${escapeHtml(level.criterion || "")}</textarea><button type="button" data-remove-rubric-score>삭제</button></div>`;
 }
 
 function rubricAiDialog(items, course) {
   return `<dialog class="rubric-ai-dialog" data-rubric-ai-dialog>
     <div class="rubric-ai-shell">
       <div class="rubric-ai-heading"><div><p class="section-kicker">GEMINI RUBRIC BUILDER</p><h3>채점기준 AI 생성</h3><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과에 맞춰 평가요소별 배점 기준을 만듭니다.</p></div><button type="button" data-close-rubric-ai aria-label="닫기">×</button></div>
-      <div class="rubric-ai-guide"><strong>급간 수에 따라 배점이 자동 배치됩니다.</strong><span>3개는 2·1·0점, 4개는 3·2·1·0점으로 생성되며 결과는 이후 직접 수정할 수 있습니다.</span></div>
+      <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점에 맞춰 자동 배치됩니다.</strong><span>같은 문제에 평가요소가 여러 개이면 문제 배점을 나누고, 선택한 채점수준 수에 따라 만점부터 0점까지 자동 계산합니다.</span></div>
       <div class="rubric-ai-element-list" data-rubric-ai-elements>${items.map((item, index) => rubricAiElementRow(item, index)).join("")}</div>
       <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 평가요소 추가</button>
       <p class="rubric-ai-status" data-rubric-ai-status role="status">설정에 저장된 Gemini 모델과 API 키를 사용합니다.</p>
@@ -769,7 +775,7 @@ function rubricAiDialog(items, course) {
 
 function rubricAiElementRow(item = {}, index = 0) {
   const count = Math.min(6, Math.max(2, Number(item.scoreLevels?.length || item.bandCount || 3)));
-  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><strong>평가요소 ${index + 1}</strong><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>급간 수<select name="rubricAiBandCount">${[2, 3, 4, 5, 6].map((value) => `<option value="${value}" ${value === count ? "selected" : ""}>${value}개</option>`).join("")}</select></label></div></article>`;
+  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>채점수준 수<select name="rubricAiBandCount">${[2, 3, 4, 5, 6].map((value) => `<option value="${value}" ${value === count ? "selected" : ""}>${value}개</option>`).join("")}</select></label></div></article>`;
 }
 
 function exampleEditorRow(item) {
@@ -777,11 +783,144 @@ function exampleEditorRow(item) {
   const friendlyAnswerText = toTeacherFriendlyMath(item.answerText || "");
   const friendlyVisualDescription = toTeacherFriendlyMath(item.visualDescription || "");
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
-    <div class="example-editor-head"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required></label><button type="button" data-remove-example>삭제</button></div>
+    <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="1" required></label><label>문제 배점<input name="exampleMaxScore" type="number" min="0.5" step="0.5" value="${positiveDesignScore(item.maxScore) || ""}" placeholder="예: 10" required><small>점</small></label></div><button type="button" data-remove-example>삭제</button></div>
     <label>답안에 대한 설명 <small>복잡한 수식 명령어는 자동으로 쉬운 표현으로 바뀝니다.</small><textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(friendlyAnswerText)}</textarea></label>
     <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>쉬운 수식 입력</strong><span>예: 180 ÷ 720 × 100 = 25%</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
     <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
   </article>`;
+}
+
+function positiveDesignScore(value) {
+  const score = Number(value);
+  return Number.isFinite(score) && score > 0 ? Math.round(score * 100) / 100 : 0;
+}
+
+function rubricQuestionMaxScoreMap(items) {
+  const totals = new Map();
+  for (const item of normalizeRubricCriteria(items || [])) {
+    const questionNumber = String(item.questionNumber || "").trim();
+    if (!questionNumber) continue;
+    totals.set(questionNumber, (totals.get(questionNumber) || 0) + rubricGroupMaxScore(item));
+  }
+  return totals;
+}
+
+function exampleQuestionScoreMap(items) {
+  const scores = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const questionNumber = String(item?.questionNumber || "").trim();
+    const maxScore = positiveDesignScore(item?.maxScore);
+    if (questionNumber && maxScore) scores.set(questionNumber, maxScore);
+  }
+  return scores;
+}
+
+function assessmentDesignTotalScore(design) {
+  const exampleScores = exampleQuestionScoreMap(design?.exampleAnswers);
+  if (exampleScores.size) return Array.from(exampleScores.values()).reduce((sum, score) => sum + score, 0);
+  return rubricTotalScore(design?.rubricCriteria || []);
+}
+
+function questionScoreMapFromForm(form) {
+  const scores = new Map();
+  form.querySelectorAll("[data-example-row]").forEach((row) => {
+    const questionNumber = row.querySelector('[name="exampleQuestion"]')?.value.trim() || "";
+    const maxScore = positiveDesignScore(row.querySelector('[name="exampleMaxScore"]')?.value);
+    if (questionNumber && maxScore) scores.set(questionNumber, maxScore);
+  });
+  return scores;
+}
+
+function allocateQuestionScore(totalScore, count) {
+  const totalUnits = Math.max(0, Math.round(positiveDesignScore(totalScore) * 2));
+  const itemCount = Math.max(1, Number(count || 1));
+  const baseUnits = Math.floor(totalUnits / itemCount);
+  const remainder = totalUnits % itemCount;
+  return Array.from({ length: itemCount }, (_value, index) => (baseUnits + (index < remainder ? 1 : 0)) / 2);
+}
+
+function derivedBandScores(targetMaxScore, currentScores) {
+  const maxScore = Math.max(0, Number(targetMaxScore || 0));
+  const source = (Array.isArray(currentScores) ? currentScores : []).map(Number).filter(Number.isFinite);
+  const count = Math.max(1, source.length);
+  const currentMax = Math.max(0, ...source);
+  const uniqueScores = new Set(source.map((score) => String(score)));
+  const canScale = currentMax > 0 && uniqueScores.size === source.length && Math.min(...source) === 0;
+  const values = canScale
+    ? source.map((score) => (score / currentMax) * maxScore)
+    : Array.from({ length: count }, (_value, index) => count === 1 ? maxScore : maxScore * ((count - index - 1) / (count - 1)));
+  return values.map((score, index) => {
+    if (index === 0) return maxScore;
+    if (index === values.length - 1 && values.length > 1) return 0;
+    return Math.round(score * 100) / 100;
+  });
+}
+
+function rubricAllocationsFromElements(elements, questionScores) {
+  const grouped = new Map();
+  elements.forEach((item, index) => {
+    const questionNumber = String(item.questionNumber || "").trim();
+    if (!grouped.has(questionNumber)) grouped.set(questionNumber, []);
+    grouped.get(questionNumber).push({ ...item, index });
+  });
+  const allocations = new Map();
+  for (const [questionNumber, rows] of grouped) {
+    const questionScore = questionScores.get(questionNumber) || 0;
+    const rowScores = allocateQuestionScore(questionScore, rows.length);
+    rows.forEach((row, index) => allocations.set(row.index, rowScores[index]));
+  }
+  return allocations;
+}
+
+function syncQuestionScoreUI(form) {
+  const questionScores = questionScoreMapFromForm(form);
+  const rubricGroups = Array.from(form.querySelectorAll("[data-rubric-group]"));
+  const elements = rubricGroups.map((group) => ({
+    questionNumber: group.querySelector('[name="rubricQuestion"]')?.value.trim() || "",
+  }));
+  const allocations = rubricAllocationsFromElements(elements, questionScores);
+  rubricGroups.forEach((group, index) => {
+    const questionNumber = elements[index].questionNumber;
+    const questionScore = questionScores.get(questionNumber) || 0;
+    const targetMax = allocations.get(index) || 0;
+    const rows = Array.from(group.querySelectorAll("[data-rubric-score]"));
+    const currentScores = rows.map((row) => Number(row.querySelector('[name="rubricScore"]')?.value || 0));
+    const scores = derivedBandScores(targetMax, currentScores);
+    rows.forEach((row, scoreIndex) => {
+      const score = scores[scoreIndex] ?? 0;
+      row.querySelector('[name="rubricScore"]').value = String(score);
+      row.querySelector("[data-rubric-score-value]").textContent = `${formatScore(score)}점`;
+    });
+    const summary = group.querySelector("[data-rubric-point-summary]");
+    if (summary) summary.textContent = questionScore
+      ? `문제 ${questionNumber} 배점 ${formatScore(questionScore)}점 중 이 평가요소 ${formatScore(targetMax)}점`
+      : "3번 예시답안에서 같은 문제 번호의 배점을 입력해 주세요.";
+    group.classList.toggle("is-score-unlinked", !questionScore || targetMax <= 0);
+  });
+
+  const summary = form.querySelector("[data-question-score-summary]");
+  if (summary) {
+    const entries = Array.from(questionScores.entries());
+    const total = entries.reduce((sum, [, score]) => sum + score, 0);
+    summary.classList.toggle("is-warning", !entries.length);
+    summary.innerHTML = entries.length
+      ? `<div><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b></div><ul>${entries.map(([question, score]) => `<li>문제 ${escapeHtml(question)} <strong>${formatScore(score)}점</strong></li>`).join("")}</ul>`
+      : `<div><strong>문제별 배점을 먼저 입력해 주세요.</strong><span>3번 예시답안의 문제 번호와 배점을 입력하면 이곳에 총점이 표시됩니다.</span></div>`;
+  }
+  syncRubricAiScoreSummaries(form);
+}
+
+function syncRubricAiScoreSummaries(form) {
+  const dialog = form.querySelector("[data-rubric-ai-dialog]");
+  if (!dialog) return;
+  const rows = Array.from(dialog.querySelectorAll("[data-rubric-ai-element]"));
+  const elements = rows.map((row) => ({ questionNumber: row.querySelector('[name="rubricAiQuestion"]')?.value.trim() || "" }));
+  const allocations = rubricAllocationsFromElements(elements, questionScoreMapFromForm(form));
+  rows.forEach((row, index) => {
+    const score = allocations.get(index) || 0;
+    const label = row.querySelector("[data-rubric-ai-score-summary]");
+    if (label) label.textContent = score > 0 ? `이 평가요소 만점 ${formatScore(score)}점` : "예시답안 배점 연결 필요";
+  });
 }
 
 function bindDesignTab(course) {
@@ -801,12 +940,14 @@ function bindDesignTab(course) {
   const form = app.querySelector("#design-form");
   if (!form) return;
   refreshMathPreviews(form);
+  syncQuestionScoreUI(form);
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
   form.addEventListener("click", (event) => handleDesignEditorClick(event, form, course));
   form.addEventListener("change", (event) => handleAchievementCurriculumChange(event, form, course));
   form.addEventListener("input", (event) => {
     if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
     if (event.target.matches('[name="achievementStandard"]')) clearChangedCurriculumSelection(event.target, course);
+    if (event.target.matches('[name="exampleQuestion"], [name="exampleMaxScore"], [name="rubricQuestion"], [name="rubricAiQuestion"], [name="rubricAiBandCount"]')) syncQuestionScoreUI(form);
   });
   form.addEventListener("focusout", (event) => {
     if (!event.target.matches('[name="exampleText"], [name="exampleVisual"]')) return;
@@ -833,19 +974,32 @@ function bindDesignTab(course) {
 
 function handleDesignEditorClick(event, form, course) {
   const openRubricAi = event.target.closest("[data-open-rubric-ai]");
-  if (openRubricAi) { form.querySelector("[data-rubric-ai-dialog]")?.showModal(); return; }
+  if (openRubricAi) {
+    const dialog = form.querySelector("[data-rubric-ai-dialog]");
+    const currentGroups = Array.from(form.querySelectorAll("[data-rubric-group]")).map((group, index) => ({
+      questionNumber: group.querySelector('[name="rubricQuestion"]')?.value.trim() || String(index + 1),
+      evaluationElement: group.querySelector('[name="rubricElement"]')?.value.trim() || "",
+      bandCount: group.querySelectorAll("[data-rubric-score]").length || 3,
+    }));
+    dialog.querySelector("[data-rubric-ai-elements]").innerHTML = currentGroups.map(rubricAiElementRow).join("");
+    syncRubricAiScoreSummaries(form);
+    dialog.showModal();
+    return;
+  }
   const closeRubricAi = event.target.closest("[data-close-rubric-ai]");
   if (closeRubricAi) { closeRubricAi.closest("[data-rubric-ai-dialog]")?.close(); return; }
   const addRubricAiElement = event.target.closest("[data-add-rubric-ai-element]");
   if (addRubricAiElement) {
     const list = form.querySelector("[data-rubric-ai-elements]");
     list.insertAdjacentHTML("beforeend", rubricAiElementRow({}, list.querySelectorAll("[data-rubric-ai-element]").length));
+    syncRubricAiScoreSummaries(form);
     return;
   }
   const removeRubricAiElement = event.target.closest("[data-remove-rubric-ai-element]");
   if (removeRubricAiElement) {
     const list = form.querySelector("[data-rubric-ai-elements]");
     if (list.querySelectorAll("[data-rubric-ai-element]").length > 1) removeRubricAiElement.closest("[data-rubric-ai-element]").remove();
+    syncRubricAiScoreSummaries(form);
     return;
   }
   const runRubricAi = event.target.closest("[data-run-rubric-ai]");
@@ -861,19 +1015,20 @@ function handleDesignEditorClick(event, form, course) {
   const addRubric = event.target.closest("[data-add-rubric]");
   if (addRubric) {
     const list = form.querySelector("[data-rubric-groups]");
-    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 0, criterion: "" }] }, list.querySelectorAll("[data-rubric-group]").length));
+    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: [{ id: crypto.randomUUID(), score: 1, criterion: "" }, { id: crypto.randomUUID(), score: 0.5, criterion: "" }, { id: crypto.randomUUID(), score: 0, criterion: "" }] }, list.querySelectorAll("[data-rubric-group]").length));
+    syncQuestionScoreUI(form);
     return;
   }
   const removeRubric = event.target.closest("[data-remove-rubric]");
-  if (removeRubric) { if (form.querySelectorAll("[data-rubric-group]").length > 1) removeRubric.closest("[data-rubric-group]").remove(); return; }
+  if (removeRubric) { if (form.querySelectorAll("[data-rubric-group]").length > 1) removeRubric.closest("[data-rubric-group]").remove(); syncQuestionScoreUI(form); return; }
   const addRubricScore = event.target.closest("[data-add-rubric-score]");
-  if (addRubricScore) { addRubricScore.closest("[data-rubric-group]").querySelector("[data-rubric-scores]").insertAdjacentHTML("beforeend", rubricScoreRow({ id: crypto.randomUUID(), score: 0, criterion: "" })); return; }
+  if (addRubricScore) { addRubricScore.closest("[data-rubric-group]").querySelector("[data-rubric-scores]").insertAdjacentHTML("beforeend", rubricScoreRow({ id: crypto.randomUUID(), score: 0, criterion: "" })); syncQuestionScoreUI(form); return; }
   const removeRubricScore = event.target.closest("[data-remove-rubric-score]");
-  if (removeRubricScore) { const list = removeRubricScore.closest("[data-rubric-scores]"); if (list.querySelectorAll("[data-rubric-score]").length > 1) removeRubricScore.closest("[data-rubric-score]").remove(); return; }
+  if (removeRubricScore) { const list = removeRubricScore.closest("[data-rubric-scores]"); if (list.querySelectorAll("[data-rubric-score]").length > 1) removeRubricScore.closest("[data-rubric-score]").remove(); syncQuestionScoreUI(form); return; }
   const addExample = event.target.closest("[data-add-example]");
-  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); return; }
+  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
-  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); return; }
+  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); return; }
   const insertMath = event.target.closest("[data-insert-math]");
   if (insertMath) {
     const textarea = insertMath.closest("[data-example-row]").querySelector('[name="exampleMath"]');
@@ -939,14 +1094,27 @@ function clearChangedCurriculumSelection(textarea, course) {
   if (codeSelect) codeSelect.value = "";
 }
 
-function rubricAiElements(dialog) {
+function rubricAiElements(dialog, form) {
   const elements = Array.from(dialog.querySelectorAll("[data-rubric-ai-element]")).map((row, index) => ({
     questionNumber: row.querySelector('[name="rubricAiQuestion"]').value.trim() || String(index + 1),
     evaluationElement: row.querySelector('[name="rubricAiElement"]').value.trim(),
     bandCount: Number(row.querySelector('[name="rubricAiBandCount"]').value),
   }));
   if (!elements.length || elements.some((item) => !item.evaluationElement)) throw new Error("모든 평가요소의 이름을 입력해 주세요.");
-  return elements;
+  const questionScores = questionScoreMapFromForm(form);
+  const allocations = rubricAllocationsFromElements(elements, questionScores);
+  const prepared = elements.map((item, index) => {
+    const maxScore = allocations.get(index) || 0;
+    return {
+      ...item,
+      maxScore,
+      scoreValues: derivedBandScores(maxScore, Array.from({ length: item.bandCount }, () => 0)),
+    };
+  });
+  const missing = prepared.filter((item) => !questionScores.has(item.questionNumber)).map((item) => item.questionNumber);
+  if (missing.length) throw new Error(`3번 예시답안에서 문제 ${Array.from(new Set(missing)).join(", ")}의 배점을 먼저 입력해 주세요.`);
+  if (prepared.some((item) => item.maxScore <= 0)) throw new Error("문제 배점보다 평가요소 수가 많습니다. 문제 배점을 높이거나 평가요소 수를 줄여 주세요.");
+  return prepared;
 }
 
 function alignGeneratedRubrics(result, requestedElements) {
@@ -956,9 +1124,9 @@ function alignGeneratedRubrics(result, requestedElements) {
       && String(candidate?.evaluationElement || "").trim() === requested.evaluationElement) || generated[index];
     if (!item) throw new Error(`${requested.evaluationElement}의 채점기준을 생성하지 못했습니다.`);
     const levels = Array.isArray(item.scoreLevels) ? item.scoreLevels : [];
-    const expectedScores = Array.from({ length: requested.bandCount }, (_value, scoreIndex) => requested.bandCount - scoreIndex - 1);
+    const expectedScores = requested.scoreValues;
     const scoreLevels = expectedScores.map((score) => {
-      const level = levels.find((candidate) => Number(candidate?.score) === score);
+      const level = levels.find((candidate) => Math.abs(Number(candidate?.score) - score) < 0.001);
       if (!level?.criterion?.trim()) throw new Error(`${requested.evaluationElement}의 ${score}점 기준이 누락되었습니다. 다시 생성해 주세요.`);
       return { id: crypto.randomUUID(), score, criterion: String(level.criterion).trim() };
     });
@@ -971,13 +1139,13 @@ async function generateRubricWithAi(form, course) {
   const status = dialog.querySelector("[data-rubric-ai-status]");
   const button = dialog.querySelector("[data-run-rubric-ai]");
   try {
-    const elements = rubricAiElements(dialog);
+    const elements = rubricAiElements(dialog, form);
     const apiKey = await loadGeminiApiKey();
     if (!apiKey) throw new Error("설정에서 Gemini API 키를 먼저 테스트하여 저장해 주세요.");
     const model = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
     button.disabled = true;
     button.textContent = "AI가 채점기준을 만드는 중…";
-    status.textContent = `${elements.length}개 평가요소의 배점별 수행 조건을 생성하고 있습니다.`;
+    status.textContent = `${elements.length}개 평가요소를 문제별 배점 총합에 맞춰 생성하고 있습니다.`;
     status.classList.remove("is-error");
     const result = await ChaejeomAI.generateRubricCriteria({
       apiKey,
@@ -992,8 +1160,9 @@ async function generateRubricWithAi(form, course) {
     });
     const rubrics = alignGeneratedRubrics(result, elements);
     form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map(rubricEditorGroup).join("");
+    syncQuestionScoreUI(form);
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
-    setDesignStatus(form, `${rubrics.length}개 평가요소의 채점기준을 AI로 생성했습니다. 배점과 내용을 검토한 뒤 저장해 주세요.${note}`);
+    setDesignStatus(form, `${rubrics.length}개 평가요소의 채점기준을 문제별 배점 총합에 맞춰 AI로 생성했습니다. 내용을 검토한 뒤 저장해 주세요.${note}`);
     dialog.close();
   } catch (error) {
     status.textContent = friendlyError(error);
@@ -1200,17 +1369,35 @@ async function extractDesignDocument(form, kind, course) {
         levels: (group.levels || []).map((level) => ({ ...level, id: crypto.randomUUID() })),
       }, index, course)).join("");
       form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
-      form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID() })).join("");
+      const rubricScores = rubricQuestionMaxScoreMap(rubrics);
+      form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({
+        ...item,
+        id: crypto.randomUUID(),
+        maxScore: positiveDesignScore(item.maxScore) || rubricScores.get(String(item.questionNumber || "").trim()) || "",
+      })).join("");
       form._designSourceFile = file;
       refreshMathPreviews(form);
+      syncQuestionScoreUI(form);
     } else if (kind === "rubric") {
       const items = normalizeRubricCriteria(result.rubricCriteria || []);
       if (!items.length) throw new Error("문서에서 채점기준 행을 찾지 못했습니다.");
       form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
+      syncQuestionScoreUI(form);
     } else {
       const items = result.exampleAnswers || [];
       if (!items.length) throw new Error("문서에서 예시답안을 찾지 못했습니다.");
-      form.querySelector("[data-example-rows]").innerHTML = items.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID() })).join("");
+      const currentScores = questionScoreMapFromForm(form);
+      const rubricScores = rubricQuestionMaxScoreMap(Array.from(form.querySelectorAll("[data-rubric-group]")).map((group) => ({
+        questionNumber: group.querySelector('[name="rubricQuestion"]')?.value.trim() || "",
+        evaluationElement: group.querySelector('[name="rubricElement"]')?.value.trim() || "",
+        scoreLevels: Array.from(group.querySelectorAll("[data-rubric-score]")).map((level) => ({ score: Number(level.querySelector('[name="rubricScore"]')?.value || 0), criterion: level.querySelector('[name="rubricCriterion"]')?.value.trim() || "" })),
+      })));
+      form.querySelector("[data-example-rows]").innerHTML = items.map((item) => {
+        const questionNumber = String(item.questionNumber || "").trim();
+        return exampleEditorRow({ ...item, id: crypto.randomUUID(), maxScore: positiveDesignScore(item.maxScore) || currentScores.get(questionNumber) || rubricScores.get(questionNumber) || "" });
+      }).join("");
+      refreshMathPreviews(form);
+      syncQuestionScoreUI(form);
     }
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
     const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
@@ -1390,6 +1577,7 @@ function collectDesignForm(form, existing) {
     return {
       id,
       questionNumber: row.querySelector('[name="exampleQuestion"]').value.trim(),
+      maxScore: positiveDesignScore(row.querySelector('[name="exampleMaxScore"]').value),
       answerText: toTeacherFriendlyMath(row.querySelector('[name="exampleText"]').value),
       mathNotation: toTeacherFriendlyMath(row.querySelector('[name="exampleMath"]').value),
       visualDescription: toTeacherFriendlyMath(row.querySelector('[name="exampleVisual"]').value),
@@ -1401,6 +1589,16 @@ function collectDesignForm(form, existing) {
   if (rubricCriteria.some((item) => !item.questionNumber || !item.evaluationElement || !item.scoreLevels.length || item.scoreLevels.some((level) => !level.criterion || level.score < 0))) throw new Error("각 평가요소의 문제 번호와 배점별 채점기준을 모두 입력해 주세요.");
   if (rubricCriteria.some((item) => new Set(item.scoreLevels.map((level) => String(level.score))).size !== item.scoreLevels.length)) throw new Error("같은 평가요소 안에서는 서로 다른 배점을 입력해 주세요.");
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");
+  if (exampleAnswers.some((item) => !item.maxScore || Math.abs(item.maxScore * 2 - Math.round(item.maxScore * 2)) > 0.001)) throw new Error("각 예시답안의 문제 배점을 0.5점 단위로 입력해 주세요.");
+  if (new Set(exampleAnswers.map((item) => item.questionNumber)).size !== exampleAnswers.length) throw new Error("예시답안의 문제 번호는 중복되지 않게 한 번씩만 입력해 주세요.");
+  const exampleScores = exampleQuestionScoreMap(exampleAnswers);
+  const rubricQuestionScores = rubricQuestionMaxScoreMap(rubricCriteria);
+  const missingRubricQuestions = Array.from(exampleScores.keys()).filter((questionNumber) => !rubricQuestionScores.has(questionNumber));
+  const unscoredRubricQuestions = Array.from(rubricQuestionScores.keys()).filter((questionNumber) => !exampleScores.has(questionNumber));
+  if (missingRubricQuestions.length) throw new Error(`문제 ${missingRubricQuestions.join(", ")}의 채점기준을 2번에서 입력해 주세요.`);
+  if (unscoredRubricQuestions.length) throw new Error(`문제 ${unscoredRubricQuestions.join(", ")}의 배점을 3번 예시답안에서 입력해 주세요.`);
+  const mismatchedQuestions = Array.from(exampleScores.entries()).filter(([questionNumber, score]) => Math.abs((rubricQuestionScores.get(questionNumber) || 0) - score) > 0.001);
+  if (mismatchedQuestions.length) throw new Error(`문제 ${mismatchedQuestions.map(([question]) => question).join(", ")}의 채점기준 만점 합계가 예시답안 배점과 다릅니다. 문제 번호와 평가요소를 확인해 주세요.`);
   const rubricFile = form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
   const exampleFile = form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
   const sourceFile = form._designSourceFile || existing?.sourceFile || null;
@@ -2054,8 +2252,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     navigate("/settings");
     return;
   }
-  const maxScore = rubricTotalScore(design.rubricCriteria || []);
-  if (maxScore <= 0) { showToast("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요."); return; }
+  const maxScore = assessmentDesignTotalScore(design);
+  if (maxScore <= 0) { showToast("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요."); return; }
   const assignmentStudentIds = new Set(assignments.map((item) => item.studentId));
   const preservePrevious = retryFailedOnly || canResume;
   const keptResults = preservePrevious ? previousResults.filter((item) => !retryFailedOnly || !assignmentStudentIds.has(item.studentId)) : [];
@@ -2355,8 +2553,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   const resolvedBlankFile = blankFile || asFile(design.blankFile);
   const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
-  const maxScore = rubricTotalScore(design.rubricCriteria || []);
-  if (maxScore <= 0) throw new Error("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요.");
+  const maxScore = assessmentDesignTotalScore(design);
+  if (maxScore <= 0) throw new Error("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요.");
   onStage?.("학생 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중");
   const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
@@ -2813,8 +3011,8 @@ function resultQuestionRows(result, design) {
 
 function resultScoreSummary(result, design) {
   const rows = resultQuestionRows(result, design);
-  const rubricMax = rubricTotalScore(design?.rubricCriteria || []);
-  const maxScore = rubricMax || Number(result?.maxScore || 0) || rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  const designMax = assessmentDesignTotalScore(design);
+  const maxScore = designMax || Number(result?.maxScore || 0) || rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
   const rowTotal = rows.reduce((sum, item) => sum + Number(item.score || 0), 0);
   const total = result?.teacherTotal ?? result?.totalScore ?? rowTotal;
   return { total: Number(total || 0), maxScore, rows };

@@ -695,6 +695,15 @@ a { color: inherit; text-decoration: none; }
 .editor-section-title p { margin: 0; color: var(--muted); font-size: 13px; }
 .editor-section-title > button, .mini-add, .document-auto-row button { padding: 8px 11px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; }
 .rubric-section-title > button { flex: 0 0 auto; min-width: max-content; white-space: nowrap; word-break: keep-all; }
+.question-score-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 13px; padding: 13px 15px; border: 1px solid rgba(49,84,214,.24); border-radius: 11px; background: rgba(233,239,255,.5); }
+.question-score-summary > div { display: flex; align-items: baseline; gap: 9px; min-width: max-content; }
+.question-score-summary > div > strong { font-size: 14px; }
+.question-score-summary > div > b { color: var(--blue); font-size: 20px; }
+.question-score-summary > div > span { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.question-score-summary ul { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.question-score-summary li { padding: 6px 9px; border-radius: 999px; background: white; color: var(--muted); font-size: 13px; }
+.question-score-summary li strong { color: var(--ink); }
+.question-score-summary.is-warning { border-color: rgba(139,46,32,.25); background: rgba(255,232,226,.55); }
 .rubric-ai-launch { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: center; margin-bottom: 13px; padding: 13px 15px; border: 1px solid rgba(49,84,214,.24); border-radius: 11px; background: rgba(233,239,255,.48); }
 .rubric-ai-launch > div { display: grid; gap: 4px; min-width: 0; }
 .rubric-ai-launch strong { color: var(--ink); font-size: 15px; }
@@ -763,12 +772,17 @@ a { color: inherit; text-decoration: none; }
 .rubric-group-list { display: grid; gap: 12px; }
 .rubric-editor-group { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(233,239,255,.14); }
 .rubric-group-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; border-bottom: 1px solid var(--line); background: rgba(24,33,56,.06); }
+.rubric-group-head > div { display: grid; gap: 2px; }
 .rubric-group-head strong { font-size: 14px; }
+.rubric-group-head span { color: var(--blue); font-size: 12px; font-weight: 800; }
+.rubric-editor-group.is-score-unlinked { border-color: rgba(139,46,32,.38); }
+.rubric-editor-group.is-score-unlinked .rubric-group-head span { color: #8b2e20; }
 .rubric-group-fields { display: grid; grid-template-columns: 150px minmax(220px,1fr); gap: 10px; padding: 13px 14px; }
 .rubric-group-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
 .rubric-score-head, .rubric-score-row { display: grid; grid-template-columns: 90px minmax(260px,1fr) 44px; gap: 8px; align-items: center; padding: 8px 14px; }
 .rubric-score-head { border-top: 1px solid var(--line); background: rgba(242,217,167,.22); color: var(--muted); font-size: 13px; font-weight: 900; }
 .rubric-score-row { border-top: 1px solid var(--line); background: white; }
+.rubric-derived-score { display: grid; min-height: 38px; place-items: center; padding: 7px 8px; border: 1px solid rgba(49,84,214,.22); border-radius: 8px; background: rgba(233,239,255,.72); color: var(--blue); font-size: 14px; white-space: nowrap; }
 .rubric-editor-group > .mini-add { margin: 10px 14px 13px; }
 .rubric-ai-dialog { width: min(820px,calc(100% - 32px)); max-height: min(820px,calc(100vh - 32px)); padding: 0; border: 2px solid var(--ink); border-radius: 20px; background: var(--surface); color: var(--ink); box-shadow: 8px 8px 0 var(--ink); }
 .rubric-ai-dialog::backdrop { background: rgba(24,33,56,.56); backdrop-filter: blur(3px); }
@@ -783,7 +797,9 @@ a { color: inherit; text-decoration: none; }
 .rubric-ai-element-list { display: grid; gap: 10px; max-height: 360px; overflow: auto; padding-right: 3px; }
 .rubric-ai-element { overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: white; }
 .rubric-ai-element-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: rgba(24,33,56,.05); }
+.rubric-ai-element-head > div { display: grid; gap: 2px; }
 .rubric-ai-element-head strong { font-size: 14px; }
+.rubric-ai-element-head span { color: var(--blue); font-size: 12px; font-weight: 800; }
 .rubric-ai-element-head button { border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 13px; font-weight: 900; }
 .rubric-ai-element-fields { display: grid; grid-template-columns: 110px minmax(230px,1fr) 120px; gap: 9px; padding: 12px; }
 .rubric-ai-element-fields label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
@@ -793,7 +809,11 @@ a { color: inherit; text-decoration: none; }
 .rubric-ai-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 15px; }
 .example-editor-card { padding: 15px; border: 1px solid var(--line); border-radius: 12px; }
 .example-editor-card + .example-editor-card { margin-top: 10px; }
-.example-editor-head label { grid-template-columns: auto 90px; align-items: center; }
+.example-score-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.example-score-fields label { display: grid; grid-template-columns: auto 90px auto; gap: 7px; align-items: center; }
+.example-score-fields label:first-child { grid-template-columns: auto 90px; }
+.example-score-fields small { color: var(--muted); font-size: 13px; }
+.example-score-fields input { min-height: 38px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
 .example-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
 .example-math-field { display: grid; gap: 5px; color: var(--muted); font-size: 13px; font-weight: 900; }
 .example-math-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1115,6 +1135,8 @@ a { color: inherit; text-decoration: none; }
   .design-card button { grid-column: 2; justify-self: start; }
   .editor-section-title { align-items: stretch; flex-direction: column; }
   .rubric-section-title > button { align-self: flex-start; }
+  .question-score-summary { align-items: stretch; flex-direction: column; }
+  .question-score-summary ul { justify-content: flex-start; }
   .rubric-ai-launch { grid-template-columns: 1fr; gap: 10px; }
   .rubric-ai-launch > button { width: 100%; }
   .split-selection-toolbar { align-items: stretch; flex-direction: column; }

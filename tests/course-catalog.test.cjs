@@ -15,6 +15,13 @@ function loadSubjectCatalog() {
   return new Function(`${source.slice(start, end)}; return COURSE_SUBJECTS_BY_GRADE;`)();
 }
 
+function loadQuestionScoreHelpers() {
+  const start = source.indexOf("function positiveDesignScore");
+  const end = source.indexOf("function bindDesignTab", start);
+  assert.ok(start >= 0 && end > start, "question score helpers must exist");
+  return new Function(`${source.slice(start, end)}; return { allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements };`)();
+}
+
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
   const catalog = loadSubjectCatalog();
   const expected = ["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"];
@@ -99,6 +106,26 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /고대비확대/);
   assert.match(source, /<strong>학생용 평가지 등록<\/strong>/);
   assert.match(source, /교사용 기준안·예시답안 페이지는 제외/);
+});
+
+test("example-answer points drive question totals and derived rubric scores", () => {
+  const { allocateQuestionScore, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
+  assert.deepEqual(derivedBandScores(5, [10, 7, 0]), [5, 3.5, 0]);
+  const allocations = rubricAllocationsFromElements([
+    { questionNumber: "1" },
+    { questionNumber: "1" },
+    { questionNumber: "2" },
+  ], new Map([["1", 10], ["2", 6]]));
+  assert.deepEqual(Array.from(allocations.values()), [5, 5, 6]);
+  assert.match(source, /name="exampleMaxScore" type="number" min="0\.5" step="0\.5"/);
+  assert.match(source, /name="rubricScore" type="hidden"/);
+  assert.match(source, /data-question-score-summary/);
+  assert.match(source, /문제별 배점 총합/);
+  assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
+  assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
+  assert.match(styles, /\.question-score-summary \{/);
+  assert.match(styles, /\.rubric-derived-score \{/);
 });
 
 test("assessment document AI input shows a visible five-stage progress card", () => {
