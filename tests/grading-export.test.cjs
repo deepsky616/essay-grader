@@ -34,6 +34,7 @@ const report = {
   ],
   totalScore: 2,
   maxScore: 2,
+  performanceLevel: "매우잘함",
   achievementResults: [{ itemRange: "1-2번", achievementLevel: "상", feedback: "비율을 정확히 계산했습니다." }],
   feedback: "계산 과정을 차근차근 잘 설명했습니다.",
   reviewStatus: "교사 검토 완료",
@@ -89,6 +90,8 @@ test("individual result sheet includes criteria, confirmed scores, feedback, and
   assert.match(html, /할인 금액을 정확히 계산함/);
   assert.match(html, /일부 획득/);
   assert.match(html, /2 \/ 2/);
+  assert.match(html, /report-total-score/);
+  assert.match(html, /매우잘함/);
   assert.match(html, /교사 검토 완료/);
   assert.match(html, /계산 과정을 차근차근 잘 설명했습니다/);
   assert.match(html, /&lt;학생&gt;/);
@@ -263,6 +266,20 @@ test("teacher confirmation dismisses the review-required guidance and persists A
   assert.match(schoolSource, /panel\.querySelector\("\[data-teacher-review-alert\]"\)\?\.remove\(\)/);
   assert.match(schoolSource, /data-restore-ai-scores[^]*await saveCurrent\(\)/);
   assert.match(schoolSource, /result\.teacherConfirmed = true;[^]*dismissTeacherReviewAlert\(\)/);
+});
+
+test("teacher total shows and updates the threshold-based achievement level", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  assert.match(schoolSource, /function achievementBandForScore\(score, maxScore, thresholds/);
+  assert.match(schoolSource, /data-teacher-level/);
+  assert.match(schoolSource, /data-result-level/);
+  assert.match(schoolSource, /achievementBandForScore\(total, summary\.maxScore, design\.performanceThresholds\)/);
+  assert.match(schoolSource, /result\.teacherPerformanceLevel = achievementBandForScore/);
+  assert.match(schoolSource, /performanceLevel: performanceLevel\.label/);
+  assert.match(styles, /\.performance-level-badge\.is-excellent/);
+  assert.match(styles, /\.performance-level-badge\.is-good/);
+  assert.match(styles, /\.performance-level-badge\.is-average/);
+  assert.match(styles, /\.performance-level-badge\.is-effort/);
 });
 
 test("problem scoring panel uses readable text and score button sizes", () => {

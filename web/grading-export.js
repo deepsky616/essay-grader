@@ -101,7 +101,7 @@
       <header class="report-title-block"><p>${escapeHtml(report.semesterLabel || "")} · ${escapeHtml(report.subject || "")}</p><h1>${escapeHtml(report.assessmentTitle || report.courseTitle || "평가")} <em>채점 결과</em></h1><small>${escapeHtml(report.courseTitle || "")}</small></header>
       ${sections.achievementStandards ? `<section class="report-section" data-report-section="achievementStandards"><h2>성취기준</h2>${achievementStandardsHtml(report.achievementStandards)}</section>` : ""}
       ${sections.rubricCriteria ? `<section class="report-section report-criteria" data-report-section="rubricCriteria"><h2>채점기준</h2>${rubricHtml(report.rubricCriteria)}</section>` : ""}
-      ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${exampleAnswerResultsHtml(report.exampleAnswerResults)}${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
+      ${sections.scoreRows ? `<section class="report-section result-report-outcomes ${scoreIsFirstContent ? "report-outcomes-first" : ""}" data-report-section="scoreRows"><h2>채점 결과</h2>${exampleAnswerResultsHtml(report.exampleAnswerResults)}${resultRowsHtml(report.scoreRows)}<div class="report-total"><span>교사 확정 총점</span><div class="report-total-score"><strong>${formatScore(report.totalScore)} / ${formatScore(report.maxScore)}점</strong><b>${escapeHtml(report.performanceLevel || "산정 전")}</b></div><em>${escapeHtml(report.reviewStatus || "AI 채점 결과")}</em></div></section>` : ""}
       ${sections.achievementResults ? `<section data-report-section="achievementResults">${achievementResultsHtml(report.achievementResults)}</section>` : ""}
       ${sections.feedback ? `<section class="report-section report-feedback" data-report-section="feedback"><h2>선생님 피드백</h2><div>${multiline(report.feedback || "피드백이 아직 작성되지 않았습니다.")}</div></section>` : ""}
       <footer><span>${student.schoolName ? `${escapeHtml(student.schoolName)} · ` : ""}${escapeHtml(report.semesterLabel || "")} ${escapeHtml(report.subject || "")} 평가 결과</span><span>${escapeHtml(student.grade || "-")}-${escapeHtml(student.className || "-")}-${escapeHtml(student.number || "-")}</span></footer>
@@ -153,6 +153,8 @@
       .report-subquestion-table td:nth-child(3) { width: 16%; text-align: center; font-weight: 700; }
       .report-total { margin-top: 14px; padding: 14px 18px; border-top: 3px solid #7338ff; background: #f6f2ff; }
       .report-total strong { color: #5d2cd0; font-size: 17pt; }
+      .report-total-score { display: flex; align-items: center; gap: 9px; }
+      .report-total-score b { padding: 5px 9px; border-radius: 999px; background: #3154d6; color: #fff; font-size: 9pt; white-space: nowrap; }
       .report-total em { color: #696570; font-size: 8pt; font-style: normal; }
       .report-achievement-results { margin: 18px 0; }
       .report-achievement-results article { margin-top: 7px; padding: 10px 13px; border-left: 4px solid #7338ff; background: #faf9ff; break-inside: avoid; }

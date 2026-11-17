@@ -893,6 +893,22 @@ function performanceBandDefinitions(thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRE
   return RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({ ...band, range: ranges[index], representativeRatio: representativeRatios[index] }));
 }
 
+function achievementBandForScore(score, maxScore, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  const maximum = Math.max(0, Number(maxScore || 0));
+  if (!maximum) return { key: "pending", label: "산정 전", percentage: 0, range: "총점 배점 확인 필요" };
+  const percentage = Math.max(0, Math.min(100, (Number(score || 0) / maximum) * 100));
+  const normalized = normalizePerformanceThresholds(thresholds);
+  const index = percentage >= normalized.excellent ? 0
+    : percentage >= normalized.good ? 1
+      : percentage >= normalized.average ? 2
+        : 3;
+  const band = performanceBandDefinitions(normalized)[index];
+  const range = index === 3 && percentage < normalized.effort
+    ? `${formatThresholdPercent(normalized.average)}% 미만 · 미응답·근거 없음 포함`
+    : band.range;
+  return { key: band.key, label: band.label, percentage: Math.round(percentage * 10) / 10, range };
+}
+
 function performanceBandScores(targetMaxScore, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maxScore = Math.max(0, Number(targetMaxScore || 0));
   return performanceBandDefinitions(thresholds).map((band, index) => {
@@ -2219,12 +2235,13 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
 
 function gradingResultRow(result, student, design) {
   const summary = resultScoreSummary(result, design);
+  const achievementBand = achievementBandForScore(summary.total, summary.maxScore, design?.performanceThresholds);
   const resultStatus = result.teacherConfirmed
     ? { label: "검토 완료", className: "confirmed-label" }
     : result.needsTeacherReview
       ? { label: "검토 필요", className: "review-label" }
       : { label: "AI 채점 완료", className: "success-label" };
-  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${resultStatus.className}" data-result-status>${resultStatus.label}</em><span data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}</span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
+  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${resultStatus.className}" data-result-status>${resultStatus.label}</em><span class="grading-score-summary"><b data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}점</b><em class="performance-level-badge is-${achievementBand.key}" data-result-level title="${escapeHtml(`${achievementBand.percentage}% · ${achievementBand.range}`)}">${achievementBand.label}</em></span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
 }
 
 function gradingErrorRow(error, student) {
@@ -2253,6 +2270,8 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
     score: teacherScoreForRow(result, row, rowIndex),
     maxScore: row.maxScore,
   }));
+  const totalScore = Number(result.teacherTotal ?? scoreRows.reduce((sum, item) => sum + item.score, 0));
+  const performanceLevel = achievementBandForScore(totalScore, summary.maxScore, design.performanceThresholds);
   return {
     semesterLabel: course.semesterLabel,
     subject: course.subject,
@@ -2270,8 +2289,9 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
     rubricCriteria: normalizeRubricCriteria(design.rubricCriteria || [], normalizePerformanceThresholds(design.performanceThresholds)),
     scoreRows,
     exampleAnswerResults: resultExampleAnswerRows(result, design),
-    totalScore: Number(result.teacherTotal ?? scoreRows.reduce((sum, item) => sum + item.score, 0)),
+    totalScore,
     maxScore: summary.maxScore,
+    performanceLevel: performanceLevel.label,
     achievementResults: result.achievementResults || [],
     feedback: result.teacherFeedback || result.summary || "",
     reviewStatus: result.teacherConfirmed ? "교사 검토 완료" : "교사 검토 전",
@@ -3421,6 +3441,8 @@ async function openStudentResult(course, targetStudents, studentId) {
       : Number(item.score || 0);
     return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
   });
+  const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
+  const initialAchievementBand = achievementBandForScore(initialTeacherTotal, summary.maxScore, design.performanceThresholds);
   const fractionVerificationStatus = result.fractionVerificationCompleted
     ? `선별 분수 ${result.fractionTargetCount || 0}개 문항 고해상도 재검토 완료`
     : result.fractionTargetCount ? `선별 분수 ${result.fractionTargetCount}개 문항 교사 검토 필요` : "";
@@ -3432,7 +3454,7 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
-          <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
+          <div class="teacher-total"><span>교사 확정 총점</span><div class="teacher-total-result"><strong data-teacher-total>${formatScore(initialTeacherTotal)} / ${formatScore(summary.maxScore)}점</strong><em class="performance-level-badge is-${initialAchievementBand.key}" data-teacher-level title="${escapeHtml(`${initialAchievementBand.percentage}% · ${initialAchievementBand.range}`)}">${initialAchievementBand.label}</em></div></div>
           <div class="teacher-score-list">
             ${renderQuestionScoreGroups(questionRows, teacherScores, design, result)}
           </div>
@@ -3461,6 +3483,11 @@ async function openStudentResult(course, targetStudents, studentId) {
   const updateTotal = () => {
     const total = scoreInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
     panel.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(summary.maxScore)}점`;
+    const achievementBand = achievementBandForScore(total, summary.maxScore, design.performanceThresholds);
+    const teacherLevel = panel.querySelector("[data-teacher-level]");
+    teacherLevel.textContent = achievementBand.label;
+    teacherLevel.className = `performance-level-badge is-${achievementBand.key}`;
+    teacherLevel.title = `${achievementBand.percentage}% · ${achievementBand.range}`;
     panel.querySelectorAll("[data-question-total]").forEach((label) => {
       const groupIndex = label.dataset.questionTotal;
       const groupInputs = scoreInputs.filter((input) => input.dataset.scoreGroup === groupIndex);
@@ -3491,6 +3518,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.questionResults = questionRows.map(({ sourceIndex, missingResult, ...item }) => item);
     result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
     result.teacherTotal = Math.round(result.teacherScores.reduce((sum, value) => sum + value, 0) * 100) / 100;
+    result.teacherPerformanceLevel = achievementBandForScore(result.teacherTotal, summary.maxScore, design.performanceThresholds).label;
     result.totalScore = Math.round(questionRows.reduce((sum, item) => sum + Number(item.score || 0), 0) * 100) / 100;
     result.maxScore = summary.maxScore;
     result.teacherFeedback = panel.querySelector("[data-teacher-feedback]").value.trim();
@@ -3503,7 +3531,14 @@ async function openStudentResult(course, targetStudents, studentId) {
     await putCourse(course);
     dismissTeacherReviewAlert();
     const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
-    if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}`;
+    if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}점`;
+    const resultLevel = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-level]`);
+    if (resultLevel) {
+      const achievementBand = achievementBandForScore(result.teacherTotal, result.maxScore, design.performanceThresholds);
+      resultLevel.textContent = achievementBand.label;
+      resultLevel.className = `performance-level-badge is-${achievementBand.key}`;
+      resultLevel.title = `${achievementBand.percentage}% · ${achievementBand.range}`;
+    }
     const resultStatus = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-status]`);
     if (resultStatus) {
       resultStatus.textContent = "검토 완료";

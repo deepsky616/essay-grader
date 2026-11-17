@@ -980,10 +980,18 @@ a { color: inherit; text-decoration: none; }
 .grading-prerequisite button { padding: 7px 10px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; }
 .grading-result-actions { display: flex; gap: 8px; }
 .grading-result-table { overflow-x: auto; }
-.grading-result-head, .grading-result-row { display: grid; grid-template-columns: 60px 60px 60px minmax(100px,1fr) 80px 100px 120px; gap: 9px; align-items: center; min-width: 760px; padding: 12px 22px; }
+.grading-result-head, .grading-result-row { display: grid; grid-template-columns: 60px 60px 60px minmax(100px,1fr) 80px 170px 120px; gap: 9px; align-items: center; min-width: 830px; padding: 12px 22px; }
 .grading-result-head { background: rgba(24,33,56,.06); color: var(--muted); font-size: 13px; font-weight: 900; }
 .grading-result-row { border-top: 1px solid var(--line); font-size: 14px; }
 .grading-result-row em { justify-self: start; padding: 5px 8px; border-radius: 999px; font-size: 13px; font-style: normal; font-weight: 900; }
+.grading-score-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 7px; }
+.grading-score-summary b { font-size: 13px; white-space: nowrap; }
+.performance-level-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 5px 10px !important; border: 1px solid currentColor; border-radius: 999px; font-size: 13px !important; font-style: normal; font-weight: 950; line-height: 1; white-space: nowrap; }
+.performance-level-badge.is-excellent { background: #e7ebff; color: #2949b8; }
+.performance-level-badge.is-good { background: #e4f7ed; color: #17623f; }
+.performance-level-badge.is-average { background: #fff3cd; color: #725400; }
+.performance-level-badge.is-effort { background: #ffe4de; color: #8b2e20; }
+.performance-level-badge.is-pending { background: #f1f2f5; color: var(--muted); }
 .success-label { background: var(--mint); color: #27634c; }
 .confirmed-label { background: #dfe7ff; color: #284f9f; }
 .review-label { background: var(--sand); color: #765017; }
@@ -1062,8 +1070,9 @@ a { color: inherit; text-decoration: none; }
 .score-choice-buttons button { flex: 1 0 40px; min-width: 40px; padding: 10px 8px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); cursor: pointer; font-size: 16px; font-weight: 900; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 .score-choice-buttons button:hover { border-color: var(--blue); color: var(--blue); transform: translateY(-1px); }
 .score-choice-buttons button.is-selected { border-color: var(--ink); background: var(--blue); color: white; box-shadow: 2px 2px 0 var(--ink); }
-.teacher-total { position: sticky; z-index: 2; top: 0; display: flex; justify-content: space-between; padding: 17px; border-bottom: 2px solid var(--ink); background: var(--sand); font-size: 16px; }
+.teacher-total { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px; border-bottom: 2px solid var(--ink); background: var(--sand); font-size: 16px; }
 .teacher-total strong { color: var(--blue); font-size: 18px; }
+.teacher-total-result { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
 .score-bulk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 14px 16px 16px; border-top: 1px solid var(--line); }
 .score-bulk-actions button { width: 100%; }
 .feedback-edit-field { display: grid; gap: 9px; padding: 18px 16px; color: var(--muted); font-size: 16px; font-weight: 900; }
@@ -1143,6 +1152,8 @@ a { color: inherit; text-decoration: none; }
 .result-report-sheet .report-score-table td:last-child { width: 16%; text-align: center; white-space: nowrap; }
 .result-report-sheet .report-total { margin-top: 13px; padding: 13px 16px; border-top: 3px solid #7338ff; background: #f6f2ff; }
 .result-report-sheet .report-total strong { color: #5d2cd0; font-size: 19px; }
+.result-report-sheet .report-total-score { display: flex; align-items: center; gap: 8px; }
+.result-report-sheet .report-total-score b { padding: 5px 8px; border-radius: 999px; background: #3154d6; color: white; font-size: 10px; white-space: nowrap; }
 .result-report-sheet .report-total em { color: #696570; font-size: 9px; font-style: normal; }
 .result-report-sheet .report-achievement-results { margin: 17px 0; }
 .result-report-sheet .report-achievement-results article { margin-top: 7px; padding: 10px 12px; border-left: 4px solid #7338ff; background: #faf9ff; }

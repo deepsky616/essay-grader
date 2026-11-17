@@ -21,7 +21,7 @@ function loadQuestionScoreHelpers() {
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -111,7 +111,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceThresholdsAreValid, performanceBandDefinitions, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -129,6 +129,12 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.equal(performanceThresholdsAreValid({ excellent: 80, good: 80, average: 40, effort: 20 }), false);
   assert.deepEqual(performanceBandScores(10, customThresholds), [10, 7.5, 5.5, 3.5]);
   assert.deepEqual(performanceBandDefinitions(customThresholds).map((band) => band.range), ["85% 이상", "65% 이상 85% 미만", "45% 이상 65% 미만", "25% 이상 45% 미만"]);
+  assert.equal(achievementBandForScore(8, 10).label, "매우잘함");
+  assert.equal(achievementBandForScore(7.9, 10).label, "잘함");
+  assert.equal(achievementBandForScore(4, 10).label, "보통");
+  assert.equal(achievementBandForScore(0, 10).label, "노력요함");
+  assert.equal(achievementBandForScore(8.4, 10, customThresholds).label, "잘함");
+  assert.equal(achievementBandForScore(0, 0).label, "산정 전");
   assert.deepEqual(rubricPerformanceLevels([
     { id: "high", score: 10, criterion: "완전한 수행" },
     { id: "middle", score: 5, criterion: "부분 수행" },
