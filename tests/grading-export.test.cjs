@@ -137,7 +137,7 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
-test("course grading uses adaptive four-worker grading and selectively rechecks uncertain criteria", () => {
+test("course grading uses adaptive workers and proactively rechecks handwritten fractions", () => {
   assert.match(schoolSource, /const GRADING_PARALLELISM = 4/);
   assert.match(schoolSource, /const MIN_GRADING_PARALLELISM = 2/);
   assert.match(schoolSource, /Promise\.all\(Array\.from\(\{ length: workerCount \}/);
@@ -145,6 +145,12 @@ test("course grading uses adaptive four-worker grading and selectively rechecks 
   assert.match(schoolSource, /selectPrecisionCriterionIds/);
   assert.match(schoolSource, /원본 우선 1차 판독·채점 중/);
   assert.match(schoolSource, /prepareEnhancedAnswerImages\(studentFile/);
+  assert.match(schoolSource, /selectFractionCriterionIds/);
+  assert.match(schoolSource, /prepareFractionAnswerImages\(studentFile/);
+  assert.match(schoolSource, /verifyStudentAnswerFractions/);
+  assert.match(schoolSource, /분수 문항 숫자 구조·계산 검증 중/);
+  assert.match(schoolSource, /fractionVerificationCompleted/);
+  assert.match(schoolSource, /fractionTargetCount/);
   assert.match(schoolSource, /mergePrecisionGradingResult/);
   assert.match(schoolSource, /precisionReview: true/);
   assert.match(schoolSource, /isGeminiRateLimitError/);

@@ -71,6 +71,25 @@ test("buildPrompt includes typed rubric and math example metadata", () => {
   assert.match(prompt, /삼각형 ABC/);
 });
 
+test("buildPrompt carries structured fraction verification into precision grading", () => {
+  const prompt = AI.buildPrompt({
+    totalScore: 2,
+    precisionReview: true,
+    fractionVerification: true,
+    precisionCriterionIds: ["r1"],
+    fractionCriterionIds: ["r1"],
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 계산", scoreLevels: [{ score: 2, criterion: "정확" }] }],
+    preReadings: [{
+      criterionId: "r1", questionNumber: "1", evaluationElement: "분수 계산", answerReading: "3/5", fractionVerified: true, confidence: "high", reviewReason: "",
+      mathLines: [{ lineLabel: "1", transcription: "3/5", fractions: [{ wholeNumber: "", numerator: "3", denominator: "5" }], calculationStatus: "valid", confidence: "high" }],
+    }],
+  });
+  assert.match(prompt, /fractionVerified/);
+  assert.match(prompt, /wholeNumber, numerator, denominator/);
+  assert.match(prompt, /"numerator":"3"/);
+  assert.match(prompt, /분수 숫자를 재판독한 문항/);
+});
+
 test("normalizeGradingResult selects one of the teacher-defined score levels", () => {
   const result = AI.normalizeGradingResult({
     totalScore: 4,
@@ -127,6 +146,30 @@ test("selective precision review targets uncertain questions and their achieveme
     achievementResults: [{ itemRange: "1-2번", confidence: "medium" }],
   }, metadata);
   assert.deepEqual(selected, ["r2", "r1"]);
+});
+
+test("fraction verification proactively targets fraction criteria even when first-pass confidence is high", () => {
+  const metadata = {
+    title: "수학 평가",
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "계산이 정확함" }] },
+      { id: "r2", questionNumber: "2", evaluationElement: "도형", scoreLevels: [{ score: 2, criterion: "도형이 정확함" }] },
+      { id: "r3", questionNumber: "3", evaluationElement: "대분수 계산", scoreLevels: [{ score: 2, criterion: "분자와 분모가 정확함" }] },
+    ],
+    exampleAnswers: [
+      { questionNumber: "1", answerText: "계산한다", mathNotation: "3/5 × 2 = 6/5" },
+      { questionNumber: "2", answerText: "도형을 그린다", mathNotation: "" },
+      { questionNumber: "3", answerText: "대분수로 나타낸다", mathNotation: "1 1/4" },
+    ],
+  };
+  const selected = AI.selectFractionCriterionIds({
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1", answerReading: "35 × 2 = 65", confidence: "high" },
+      { criterionId: "r2", questionNumber: "2", answerReading: "도형 완성", confidence: "high" },
+      { criterionId: "r3", questionNumber: "3", answerReading: "1 1/4", confidence: "high" },
+    ],
+  }, metadata);
+  assert.deepEqual(selected, ["r1", "r3"]);
 });
 
 test("precision results replace only reviewed criteria and recompute the total locally", () => {
@@ -375,6 +418,52 @@ test("recognizeAnswer performs a fast handwriting and drawing transcription pass
   assert.equal(result.readings[0].answerReading, "3/5라고 씀");
   assert.equal(result.needsTeacherReview, true);
   assert.match(result.reviewReasons.join(" "), /연필선이 흐림/);
+});
+
+test("verifyStudentAnswerFractions separates numerator and denominator before precision grading", async () => {
+  const bytes = new TextEncoder().encode("scan");
+  const file = (name, type = "application/pdf") => ({ name, type, size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
+  const result = await AI.verifyStudentAnswerFractions({
+    apiKey: VALID_KEY,
+    model: "gemini-2.5-flash",
+    metadata: {
+      requireBlankComparison: true,
+      fractionCriterionIds: ["r1"],
+      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 계산", scoreLevels: [{ score: 2, criterion: "정확" }] }],
+      exampleAnswers: [{ questionNumber: "1", answerText: "계산", mathNotation: "3/5 × 2 = 6/5" }],
+      preReadings: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "분수 계산", answerReading: "35 × 2 = 65", confidence: "high" }],
+    },
+    files: [
+      { role: "blank", file: file("blank.pdf") },
+      { role: "studentAnswer", file: file("anonymous-S001.pdf") },
+      { role: "fractionAnswer", file: file("student-fraction-page-01-band-1-original-color.jpg", "image/jpeg") },
+      { role: "fractionAnswer", file: file("student-fraction-page-01-band-1-high-contrast.jpg", "image/jpeg") },
+    ],
+    retryDelayMs: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+      assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 4);
+      assert.match(body.contents[0].parts[0].text, /분수선 위 숫자는 numerator/);
+      assert.match(body.contents[0].parts[0].text, /계산을 다시 계산/);
+      assert.match(body.contents[0].parts[0].text, /그대로 믿지 말고/);
+      const readingSchema = body.generationConfig.responseSchema.properties.readings.items;
+      assert.deepEqual(readingSchema.properties.mathLines.items.properties.fractions.items.required, ["wholeNumber", "numerator", "denominator"]);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        readings: [{
+          criterionId: "r1", questionNumber: "1", evaluationElement: "분수 계산", answerReading: "3/5 × 2 = 6/5", visualDescription: "가로 분수선이 선명함",
+          mathLines: [{ lineLabel: "1", transcription: "3/5 × 2 = 6/5", fractions: [{ wholeNumber: "", numerator: "3", denominator: "5" }, { wholeNumber: "", numerator: "6", denominator: "5" }], calculationStatus: "valid", confidence: "high" }],
+          confidence: "high", reviewReason: "",
+        }],
+        pageNotes: [],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+  assert.equal(result.readings[0].answerReading, "3/5 × 2 = 6/5");
+  assert.equal(result.readings[0].mathLines[0].fractions[0].numerator, "3");
+  assert.equal(result.readings[0].mathLines[0].fractions[0].denominator, "5");
+  assert.equal(result.readings[0].fractionVerified, true);
+  assert.equal(result.needsTeacherReview, false);
 });
 
 test("gradeAnswer sends structured schema and normalizes the response", async () => {
@@ -731,11 +820,13 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
   const enlargedBytes = new TextEncoder().encode("enlarged fraction image");
   const visionFiles = [{ name: "evaluation-page-01-표-수식-상세.jpg", type: "image/jpeg", size: enlargedBytes.byteLength, arrayBuffer: async () => enlargedBytes.buffer }];
   let requestCount = 0;
+  const progressStages = [];
   const result = await AI.extractEvaluationDocument({
     apiKey: VALID_KEY,
     file,
     kind: "design",
     visionFiles,
+    onProgress: ({ stage }) => progressStages.push(stage),
     fetchImpl: async (_url, options) => {
       requestCount += 1;
       const body = JSON.parse(options.body);
@@ -779,6 +870,7 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
   });
 
   assert.equal(result.taskName, "분수의 곱셈을 활용하여 문제해결하기");
+  assert.deepEqual(progressStages, ["analysis-start", "primary-complete", "fraction-verification", "fraction-complete"]);
   assert.equal(result.achievementGroups[0].standardCode, "6수01-09");
   assert.equal(requestCount, 2);
   assert.equal(result.exampleAnswers[0].mathNotation, "1-(1) 9/16 × 12 = 27/4 = 6 3/4");

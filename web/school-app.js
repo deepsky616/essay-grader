@@ -609,6 +609,17 @@ function createEmptyDesign() {
   };
 }
 
+function documentAnalysisProgressMarkup(kind) {
+  const steps = kind === "rubric"
+    ? ["파일 확인", "표 구조 준비", "AI 채점기준 분석", "응답 항목 검증", "화면에 입력"]
+    : ["파일 확인", "고해상도 확대", "AI 문서 구조 분석", "분수·수식 2차 검증", "화면에 입력"];
+  return `<div class="document-analysis-progress" data-document-progress="${kind}" role="status" aria-live="polite" aria-busy="false" hidden>
+    <div class="document-analysis-progress-head"><span class="document-progress-spinner" aria-hidden="true"></span><div><strong data-document-progress-title>AI 문서 분석 준비</strong><p data-document-progress-message>선택한 파일을 확인하고 있습니다.</p></div><b data-document-progress-percent>0%</b></div>
+    <div class="document-analysis-progress-track" role="progressbar" aria-label="AI 문서 자동 입력 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i data-document-progress-bar></i></div>
+    <ol>${steps.map((step, index) => `<li data-document-progress-step="${index}"><span>${index + 1}</span><em>${step}</em></li>`).join("")}</ol>
+  </div>`;
+}
+
 function defaultAchievementLevels() {
   return [
     { id: crypto.randomUUID(), label: "상", description: "" },
@@ -633,6 +644,7 @@ function designEditor(design, course) {
           <button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>
           <span>${design.sourceFile ? `저장됨: ${escapeHtml(design.sourceFile.name)}` : "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요."}</span>
         </div>
+        ${documentAnalysisProgressMarkup("design")}
       </section>
 
       <section class="design-editor-section">
@@ -652,6 +664,7 @@ function designEditor(design, course) {
           <button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>
           <span>${design.rubricFile ? `저장됨: ${escapeHtml(design.rubricFile.name)}` : "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다."}</span>
         </div>
+        ${documentAnalysisProgressMarkup("rubric")}
         <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map(rubricEditorGroup).join("")}</div>
         ${rubricAiDialog(rubricAiSeeds, course)}
       </section>
@@ -663,6 +676,7 @@ function designEditor(design, course) {
           <button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>
           <span>${design.exampleFile ? `저장됨: ${escapeHtml(design.exampleFile.name)}` : "수식·도형이 있는 원본도 그대로 보관합니다."}</span>
         </div>
+        ${documentAnalysisProgressMarkup("example")}
         <div data-example-rows>${(design.exampleAnswers || []).map(exampleEditorRow).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
@@ -1055,6 +1069,32 @@ function renderMathPreview(textarea) {
   catch { preview.textContent = expression; }
 }
 
+function updateDocumentAnalysisProgress(form, kind, { phase = 0, percent, title, message, status = "running" } = {}) {
+  const card = form.querySelector(`[data-document-progress="${kind}"]`);
+  if (!card) return;
+  const phasePercents = [8, 30, 58, 80, 94];
+  const currentPhase = Math.max(0, Math.min(4, Number(phase) || 0));
+  const progress = status === "complete" ? 100 : Math.max(0, Math.min(100, Number(percent ?? phasePercents[currentPhase])));
+  card.hidden = false;
+  card.dataset.phase = String(currentPhase);
+  card.classList.toggle("is-complete", status === "complete");
+  card.classList.toggle("is-error", status === "error");
+  card.setAttribute("aria-busy", String(status === "running"));
+  card.querySelector("[data-document-progress-title]").textContent = title || (status === "complete" ? "AI 자동 입력 완료" : "AI가 문서를 읽고 있습니다");
+  card.querySelector("[data-document-progress-message]").textContent = message || "잠시만 기다려 주세요.";
+  card.querySelector("[data-document-progress-percent]").textContent = `${progress}%`;
+  const track = card.querySelector(".document-analysis-progress-track");
+  track.setAttribute("aria-valuenow", String(progress));
+  card.querySelector("[data-document-progress-bar]").style.width = `${progress}%`;
+  card.querySelectorAll("[data-document-progress-step]").forEach((step, index) => {
+    const isComplete = status === "complete" || index < currentPhase;
+    const isActive = status !== "complete" && index === currentPhase;
+    step.classList.toggle("is-complete", isComplete);
+    step.classList.toggle("is-active", isActive);
+    step.classList.toggle("is-error", status === "error" && isActive);
+  });
+}
+
 async function extractDesignDocument(form, kind, course) {
   const inputName = kind === "design" ? "designDocument" : kind === "rubric" ? "rubricDocument" : "exampleDocument";
   const input = form.elements[inputName];
@@ -1066,16 +1106,88 @@ async function extractDesignDocument(form, kind, course) {
   if (!apiKey) { setDesignStatus(form, "설정에서 Gemini API 키를 먼저 테스트하여 저장해 주세요.", true); return; }
   const model = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
   const button = form.querySelector(`[data-extract-document="${kind}"]`);
-  button.disabled = true;
+  const extractionButtons = Array.from(form.querySelectorAll("[data-extract-document]"));
+  const buttonLabels = new Map(extractionButtons.map((item) => [item, item.textContent]));
+  extractionButtons.forEach((item) => { item.disabled = true; });
   button.textContent = "AI가 문서를 읽는 중…";
   setDesignStatus(form, "표·수식·도형을 확대 분석하고 있습니다. 분수는 2차 검증 후 자동 입력하며 결과를 원본과 대조해 주세요.");
+  updateDocumentAnalysisProgress(form, kind, {
+    phase: 0,
+    title: `${documentLabel} 파일 확인 중`,
+    message: `${file.name}의 형식과 크기를 확인했습니다. 분석 자료를 준비합니다.`,
+  });
   try {
     let visionFiles = [];
     if (file.type === "application/pdf" && (kind === "design" || kind === "example")) {
+      updateDocumentAnalysisProgress(form, kind, {
+        phase: 1,
+        title: "작은 수식·분수 고해상도 확대 중",
+        message: "PDF를 문항 영역별 원본색·고대비 이미지로 나누고 있습니다.",
+      });
       try { visionFiles = await prepareEvaluationReferenceImages(file); }
-      catch (error) { console.warn("평가기준안 확대 이미지를 만들지 못해 원본 PDF로 계속합니다.", error); }
+      catch (error) {
+        console.warn("평가기준안 확대 이미지를 만들지 못해 원본 PDF로 계속합니다.", error);
+        updateDocumentAnalysisProgress(form, kind, {
+          phase: 1,
+          percent: 42,
+          title: "원본 PDF로 분석 계속",
+          message: "확대 이미지를 만들지 못했지만 원본 문서 분석은 계속 진행합니다.",
+        });
+      }
+    } else {
+      updateDocumentAnalysisProgress(form, kind, {
+        phase: 1,
+        title: kind === "rubric" ? "표 구조 분석 준비" : "원본 이미지 분석 준비",
+        message: file.type === "application/pdf" ? "표의 행·열과 병합 셀을 원본 PDF에서 확인합니다." : "이미지 원본을 그대로 사용해 글자와 표를 확인합니다.",
+      });
     }
-    const result = await ChaejeomAI.extractEvaluationDocument({ apiKey, file, kind, visionFiles, model });
+    updateDocumentAnalysisProgress(form, kind, {
+      phase: 2,
+      title: "AI가 문서 내용을 구조화하는 중",
+      message: kind === "design" ? "성취기준·채점기준·예시답안을 구분해 읽고 있습니다." : kind === "rubric" ? "문제별 평가요소와 배점 기준을 표에서 찾고 있습니다." : "문제별 예시답안과 수식을 읽고 있습니다.",
+    });
+    let fractionProgressWarning = "";
+    const result = await ChaejeomAI.extractEvaluationDocument({
+      apiKey,
+      file,
+      kind,
+      visionFiles,
+      model,
+      onProgress: ({ stage, enlargedImageCount, message: progressMessage }) => {
+        if (stage === "primary-complete") {
+          const canVerifyFractions = kind !== "rubric" && Number(enlargedImageCount || 0) > 0;
+          updateDocumentAnalysisProgress(form, kind, {
+            phase: 3,
+            title: canVerifyFractions ? "분수·수식 2차 검증 준비" : "AI 응답 항목 검증 중",
+            message: canVerifyFractions ? "1차 분석을 마쳤습니다. 작은 분자·분모 숫자를 다시 확인합니다." : "누락된 항목이 없는지 원본 분석 결과를 확인합니다.",
+          });
+        } else if (stage === "fraction-verification") {
+          updateDocumentAnalysisProgress(form, kind, {
+            phase: 3,
+            title: "분자·분모와 계산식 2차 검증 중",
+            message: "원본색·고대비 확대본을 대조하고 계산을 독립적으로 검산합니다.",
+          });
+        } else if (stage === "fraction-complete") {
+          updateDocumentAnalysisProgress(form, kind, {
+            phase: 4,
+            title: "검증 결과를 입력할 준비 중",
+            message: "분수 숫자 2차 검증을 마쳤습니다. 자동 입력 내용을 정리합니다.",
+          });
+        } else if (stage === "fraction-warning") {
+          fractionProgressWarning = progressMessage || "분수 2차 검증 확인사항이 있습니다.";
+          updateDocumentAnalysisProgress(form, kind, {
+            phase: 4,
+            title: "1차 분석 결과로 입력 준비 중",
+            message: "분수 2차 검증 확인사항을 함께 표시하고 나머지 결과를 적용합니다.",
+          });
+        }
+      },
+    });
+    updateDocumentAnalysisProgress(form, kind, {
+      phase: 4,
+      title: "분석 결과를 화면에 입력하는 중",
+      message: "AI가 찾은 항목을 교사가 수정할 수 있는 입력란에 옮기고 있습니다.",
+    });
     if (kind === "design") {
       const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
       const rubrics = normalizeRubricCriteria(result.rubricCriteria || []);
@@ -1103,11 +1215,26 @@ async function extractDesignDocument(form, kind, course) {
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
     const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
     setDesignStatus(form, `${file.name} ${completion}${note}`);
+    updateDocumentAnalysisProgress(form, kind, {
+      phase: 4,
+      status: "complete",
+      title: fractionProgressWarning ? `${documentLabel} 자동 입력 완료 · 확인 필요` : `${documentLabel} AI 자동 입력 완료`,
+      message: fractionProgressWarning ? "분수 2차 검증 확인사항이 결과에 표시되었습니다. 원본 문서와 대조해 주세요." : "입력된 내용을 원본 문서와 대조한 뒤 평가 설계를 저장해 주세요.",
+    });
   } catch (error) {
     setDesignStatus(form, friendlyError(error), true);
+    const progressCard = form.querySelector(`[data-document-progress="${kind}"]`);
+    updateDocumentAnalysisProgress(form, kind, {
+      phase: Number(progressCard?.dataset.phase || 0),
+      status: "error",
+      title: `${documentLabel} 분석을 완료하지 못했습니다`,
+      message: friendlyError(error),
+    });
   } finally {
-    button.disabled = false;
-    button.textContent = kind === "design" ? "AI로 1~3 자동 입력" : kind === "rubric" ? "AI로 채점기준 자동 입력" : "AI로 예시답안 자동 입력";
+    extractionButtons.forEach((item) => {
+      item.disabled = false;
+      item.textContent = buttonLabels.get(item);
+    });
   }
 }
 
@@ -2206,6 +2333,20 @@ function preliminaryReadingsFromResult(result) {
   }));
 }
 
+function mergePreliminaryReadings(baseReadings, verifiedReadings) {
+  const verifiedById = new Map((Array.isArray(verifiedReadings) ? verifiedReadings : [])
+    .map((item) => [item?.criterionId, item])
+    .filter(([criterionId]) => criterionId));
+  const merged = (Array.isArray(baseReadings) ? baseReadings : []).map((item) => (
+    verifiedById.has(item.criterionId)
+      ? { ...item, ...verifiedById.get(item.criterionId), criterionId: item.criterionId }
+      : item
+  ));
+  const existingIds = new Set(merged.map((item) => item.criterionId));
+  for (const item of verifiedById.values()) if (!existingIds.has(item.criterionId)) merged.push(item);
+  return merged;
+}
+
 async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
@@ -2252,34 +2393,81 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     files: firstPassFiles,
   });
   let enhancedFiles = [];
+  let fractionFiles = [];
+  let retainedEnhancementFiles = [];
+  let fractionVerification = null;
+  let fractionVerificationCompleted = false;
   let precisionPassCompleted = false;
-  const precisionCriterionIds = ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata);
-  if (needsPrecisionReview(result, baseMetadata) && precisionCriterionIds.length && !signal?.aborted) {
+  const initialPrecisionCriterionIds = needsPrecisionReview(result, baseMetadata)
+    ? ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata)
+    : [];
+  const fractionCriterionIds = ChaejeomAI.selectFractionCriterionIds(result, baseMetadata);
+  if (fractionCriterionIds.length && !signal?.aborted) {
     try {
-      onStage?.(`${precisionCriterionIds.length}개 문항 고해상도 보정 중`);
-      try {
-        enhancedFiles = await prepareEnhancedAnswerImages(studentFile, { signal });
-      } catch (error) {
-        if (signal?.aborted || error?.name === "AbortError") throw error;
-        recognitionWarnings.push(`필기 강조본을 만들지 못해 원본 PDF로 정밀 재검토했습니다. (${friendlyError(error)})`);
+      onStage?.(`${fractionCriterionIds.length}개 분수 문항 분자·분모 고해상도 확대 중`);
+      const verificationFixedBytes = [resolvedBlankFile, studentFile]
+        .reduce((sum, file) => sum + Number(file?.size || 0), 0);
+      const fractionImageBudget = Math.max(0, Math.min(9 * 1024 * 1024, ChaejeomAI.MAX_INLINE_BYTES - verificationFixedBytes - (256 * 1024)));
+      fractionFiles = await prepareFractionAnswerImages(studentFile, { signal, maxBytes: fractionImageBudget });
+      if (!fractionFiles.length) throw new Error("분수 판독용 확대 이미지를 만들지 못했습니다.");
+      onStage?.(`${fractionCriterionIds.length}개 분수 문항 숫자 구조·계산 검증 중`);
+      fractionVerification = await ChaejeomAI.verifyStudentAnswerFractions({
+        apiKey,
+        model: selectedModel,
+        signal,
+        metadata: {
+          ...baseMetadata,
+          fractionCriterionIds,
+          preReadings: preliminaryReadingsFromResult(result),
+        },
+        files: [
+          { role: "blank", file: resolvedBlankFile },
+          { role: "studentAnswer", file: studentFile },
+          ...fractionFiles.map((file) => ({ role: "fractionAnswer", file })),
+        ],
+      });
+      fractionVerificationCompleted = true;
+    } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
+      recognitionWarnings.push(`분수 숫자 구조화 검증을 완료하지 못해 확대본 정밀 채점으로 계속했습니다. (${friendlyError(error)})`);
+    }
+  }
+  const precisionCriterionIds = Array.from(new Set([...initialPrecisionCriterionIds, ...fractionCriterionIds]));
+  if (precisionCriterionIds.length && !signal?.aborted) {
+    try {
+      const fractionIdSet = new Set(fractionCriterionIds);
+      const needsGeneralEnhancement = initialPrecisionCriterionIds.some((criterionId) => !fractionIdSet.has(criterionId)) || !fractionFiles.length;
+      if (needsGeneralEnhancement) {
+        onStage?.(`${precisionCriterionIds.length}개 문항 고해상도 필기 보정 중`);
+        try {
+          enhancedFiles = await prepareEnhancedAnswerImages(studentFile, { signal });
+        } catch (error) {
+          if (signal?.aborted || error?.name === "AbortError") throw error;
+          recognitionWarnings.push(`필기 강조본을 만들지 못해 원본 PDF로 정밀 재검토했습니다. (${friendlyError(error)})`);
+        }
       }
       const fixedBytes = [...referenceFiles.map((item) => item.file), resolvedBlankFile, studentFile]
         .reduce((sum, file) => sum + Number(file?.size || 0), 0);
       const enhancedBudget = Math.max(0, ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - (256 * 1024));
       let retainedBytes = 0;
-      const retainedEnhancedFiles = enhancedFiles.filter((file) => {
-        if (retainedBytes + file.size > enhancedBudget) return false;
-        retainedBytes += file.size;
-        return true;
-      });
-      if (retainedEnhancedFiles.length < enhancedFiles.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 필기 강조 페이지는 제외했습니다.");
-      enhancedFiles = retainedEnhancedFiles;
-      const precisionFiles = [
-        ...firstPassFiles,
+      const candidateEnhancements = [
+        ...fractionFiles.map((file) => ({ role: "fractionAnswer", file })),
         ...enhancedFiles.map((file) => ({ role: "enhancedAnswer", file })),
       ];
+      retainedEnhancementFiles = candidateEnhancements.filter((item) => {
+        if (retainedBytes + item.file.size > enhancedBudget) return false;
+        retainedBytes += item.file.size;
+        return true;
+      });
+      if (retainedEnhancementFiles.length < candidateEnhancements.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 분수·필기 확대 이미지는 제외했습니다.");
+      const precisionFiles = [
+        ...firstPassFiles,
+        ...retainedEnhancementFiles,
+      ];
       const targetIdSet = new Set(precisionCriterionIds);
-      onStage?.(`${precisionCriterionIds.length}개 문항 선별 정밀 재검토 중`);
+      const preliminaryReadings = preliminaryReadingsFromResult(result);
+      const verifiedReadings = fractionVerification?.readings || [];
+      onStage?.(`${precisionCriterionIds.length}개 문항 분수·필기 정밀 재채점 중`);
       const precisionResult = await ChaejeomAI.gradeAnswer({
         apiKey,
         model: selectedModel,
@@ -2288,7 +2476,9 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           ...baseMetadata,
           precisionReview: true,
           precisionCriterionIds,
-          preReadings: preliminaryReadingsFromResult(result).filter((item) => targetIdSet.has(item.criterionId)),
+          fractionVerification: fractionVerificationCompleted,
+          fractionCriterionIds,
+          preReadings: mergePreliminaryReadings(preliminaryReadings, verifiedReadings).filter((item) => targetIdSet.has(item.criterionId)),
           recognitionWarnings,
         },
         files: precisionFiles,
@@ -2304,6 +2494,10 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
       result.reviewReasons = [...new Set([...(result.reviewReasons || []), `자동 정밀 재검토를 완료하지 못했습니다. (${friendlyError(error)})`])];
     }
   }
+  if (fractionVerification?.needsTeacherReview) {
+    result.needsTeacherReview = true;
+    result.reviewReasons = [...new Set([...(result.reviewReasons || []), ...(fractionVerification.reviewReasons || [])])];
+  }
   return {
     ...result,
     studentId: student.id,
@@ -2313,9 +2507,12 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     teacherScores: result.questionResults.map((item) => item.score),
     teacherTotal: result.totalScore,
     teacherFeedback: result.summary,
-    recognitionEnhanced: enhancedFiles.length > 0,
+    recognitionEnhanced: retainedEnhancementFiles.length > 0,
     recognitionPassCompleted: precisionPassCompleted,
     precisionTargetCount: precisionCriterionIds.length,
+    fractionVerificationCompleted,
+    fractionTargetCount: fractionCriterionIds.length,
+    fractionReviewCount: fractionVerification?.reviewReasons?.length || 0,
     fastIntegratedPass: true,
     teacherConfirmed: false,
     regradedAt: new Date().toISOString(),
@@ -2482,6 +2679,94 @@ async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
   }
 }
 
+async function prepareFractionAnswerImages(pdfFile, { signal, maxBytes = 8 * 1024 * 1024 } = {}) {
+  if (!window.pdfjsLib?.getDocument) throw new Error("분수 판독 도구를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.");
+  const byteBudget = Math.max(0, Number(maxBytes || 0));
+  if (!byteBudget) return [];
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  const data = new Uint8Array(await pdfFile.arrayBuffer());
+  const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
+  const pdfDocument = await loadingTask.promise;
+  const files = [];
+  let totalBytes = 0;
+  try {
+    for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+      const remainingPages = pdfDocument.numPages - pageNumber + 1;
+      const pageBudget = Math.max(0, Math.floor((byteBudget - totalBytes) / remainingPages));
+      if (!pageBudget) break;
+      const page = await pdfDocument.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetWidth = pdfDocument.numPages > 4 ? 2100 : 2400;
+      const scale = Math.min(4, Math.max(2, targetWidth / Math.max(1, baseViewport.width)));
+      const viewport = page.getViewport({ scale });
+      const sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = Math.round(viewport.width);
+      sourceCanvas.height = Math.round(viewport.height);
+      const sourceContext = sourceCanvas.getContext("2d", { alpha: false });
+      sourceContext.fillStyle = "#ffffff";
+      sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      sourceContext.imageSmoothingEnabled = true;
+      sourceContext.imageSmoothingQuality = "high";
+      await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+
+      const left = Math.round(sourceCanvas.width * 0.025);
+      const right = Math.round(sourceCanvas.width * 0.975);
+      const top = Math.round(sourceCanvas.height * 0.19);
+      const bottom = Math.round(sourceCanvas.height * 0.99);
+      const availableHeight = Math.max(1, bottom - top);
+      const overlap = Math.round(availableHeight * 0.045);
+      const bandHeight = Math.ceil(availableHeight / 3);
+      const regions = Array.from({ length: 3 }, (_value, index) => {
+        const y = Math.max(0, top + (index * bandHeight) - overlap);
+        const end = Math.min(sourceCanvas.height, top + ((index + 1) * bandHeight) + overlap);
+        return { x: left, y, width: Math.max(1, right - left), height: Math.max(1, end - y), index: index + 1 };
+      });
+      const variants = [
+        { label: "original-color", filter: "none" },
+        { label: "high-contrast", filter: "grayscale(1) contrast(1.38) brightness(1.05)" },
+      ];
+      let pageBytes = 0;
+      for (const region of regions) {
+        for (const variant of variants) {
+          if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+          const desiredWidth = pageBudget < 900 * 1024 ? 1800 : pageBudget < 1600 * 1024 ? 2200 : 2800;
+          const outputWidth = Math.min(3000, Math.max(region.width, desiredWidth));
+          const outputScale = Math.min(2, outputWidth / Math.max(1, region.width));
+          const cropCanvas = document.createElement("canvas");
+          cropCanvas.width = Math.round(region.width * outputScale);
+          cropCanvas.height = Math.round(region.height * outputScale);
+          const cropContext = cropCanvas.getContext("2d", { alpha: false });
+          cropContext.fillStyle = "#ffffff";
+          cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+          cropContext.imageSmoothingEnabled = true;
+          cropContext.imageSmoothingQuality = "high";
+          cropContext.filter = variant.filter;
+          cropContext.drawImage(sourceCanvas, region.x, region.y, region.width, region.height, 0, 0, cropCanvas.width, cropCanvas.height);
+          cropContext.filter = "none";
+          const quality = pageBudget < 900 * 1024 ? 0.82 : variant.label === "original-color" ? 0.93 : 0.91;
+          const blob = await canvasToBlob(cropCanvas, "image/jpeg", quality);
+          cropCanvas.width = 1;
+          cropCanvas.height = 1;
+          if (totalBytes + blob.size > byteBudget || (pageBytes > 0 && pageBytes + blob.size > pageBudget)) continue;
+          totalBytes += blob.size;
+          pageBytes += blob.size;
+          files.push(new File([blob], `student-fraction-page-${String(pageNumber).padStart(2, "0")}-band-${region.index}-${variant.label}.jpg`, { type: "image/jpeg" }));
+        }
+      }
+      sourceCanvas.width = 1;
+      sourceCanvas.height = 1;
+      page.cleanup();
+      if (totalBytes >= byteBudget) break;
+    }
+    return files;
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => {
     if (blob) resolve(blob);
@@ -2604,10 +2889,13 @@ async function openStudentResult(course, targetStudents, studentId) {
       : Number(item.score || 0);
     return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
   });
+  const fractionVerificationStatus = result.fractionVerificationCompleted
+    ? `분수 숫자 ${result.fractionTargetCount || 0}개 문항 구조화 검증 완료`
+    : result.fractionTargetCount ? `분수 숫자 ${result.fractionTargetCount}개 문항 확대 재채점` : "";
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}${fractionVerificationStatus ? ` · ${escapeHtml(fractionVerificationStatus)}` : ""}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">

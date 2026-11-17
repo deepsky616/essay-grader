@@ -101,6 +101,22 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /교사용 기준안·예시답안 페이지는 제외/);
 });
 
+test("assessment document AI input shows a visible five-stage progress card", () => {
+  assert.match(source, /data-document-progress="\$\{kind\}"/);
+  assert.match(source, /data-document-progress-percent/);
+  assert.match(source, /data-document-progress-bar/);
+  assert.match(source, /data-document-progress-step="\$\{index\}"/);
+  assert.match(source, /작은 수식·분수 고해상도 확대 중/);
+  assert.match(source, /AI가 문서 내용을 구조화하는 중/);
+  assert.match(source, /분자·분모와 계산식 2차 검증 중/);
+  assert.match(source, /분석 결과를 화면에 입력하는 중/);
+  assert.match(source, /status: "complete"/);
+  assert.match(source, /status: "error"/);
+  assert.match(styles, /\.document-analysis-progress \{[^}]*border:[^}]*background:/);
+  assert.match(styles, /\.document-analysis-progress ol \{[^}]*grid-template-columns: repeat\(5/);
+  assert.match(styles, /@keyframes document-progress-spin/);
+});
+
 test("downloaded student roster template includes school name and leaves every data row blank", () => {
   assert.match(source, /const rosterRows = \[\["학교명", "학년", "반", "번호", "이름"\]\]/);
   assert.match(source, /rosterRows\.push\(\["", "", "", "", ""\]\)/);
