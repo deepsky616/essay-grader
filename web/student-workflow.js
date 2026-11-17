@@ -161,6 +161,14 @@
     })).filter((student) => student.name || student.number));
   }
 
+  function rosterClasses(students, grade) {
+    const targetGrade = normalizeGrade(grade);
+    return Array.from(new Set(normalizeRoster(students)
+      .filter((student) => student.grade === targetGrade && student.className)
+      .map((student) => student.className)))
+      .sort((left, right) => left.localeCompare(right, "ko-KR", { numeric: true, sensitivity: "base" }));
+  }
+
   function parsePageNumbers(value, pageCount = Infinity) {
     const maxPage = positiveInteger(pageCount) || Infinity;
     const pages = [];
@@ -274,6 +282,7 @@
     parseRosterRows,
     selectRosterSheet,
     normalizeRoster,
+    rosterClasses,
     parsePageNumbers,
     validatePageAssignments,
     rosterIdentity,

@@ -455,6 +455,11 @@ function classOptions(selected = "1") {
   return Array.from({ length: 20 }, (_, index) => String(index + 1)).map((value) => `<option value="${value}" ${value === String(selected) ? "selected" : ""}>${value}반</option>`).join("");
 }
 
+function targetClassOptions(classes, selected) {
+  if (!classes.length) return '<option value="">등록된 반 없음</option>';
+  return classes.map((value) => `<option value="${escapeHtml(value)}" ${value === String(selected) ? "selected" : ""}>${escapeHtml(value)}반</option>`).join("");
+}
+
 function gradeOptions(selected = "6") {
   return Array.from({ length: 6 }, (_, index) => String(index + 1)).map((value) => `<option value="${value}" ${value === String(selected) ? "selected" : ""}>${value}학년</option>`).join("");
 }
@@ -521,16 +526,19 @@ function workflowTab(course, activeTab, id, number, label) {
 
 function renderTargetTab(course, students) {
   const courseGrade = String(course.grade || "6");
+  const availableClasses = StudentWorkflow.rosterClasses(students, courseGrade);
+  selectedTargetClass = availableClasses.includes(String(selectedTargetClass)) ? String(selectedTargetClass) : (availableClasses[0] || "");
   const classStudents = students.filter((student) => student.grade === courseGrade && student.className === selectedTargetClass);
   const targetIds = new Set(course.targetStudentIds || []);
   const selectedCount = classStudents.filter((student) => targetIds.has(student.id)).length;
+  const hasAvailableClass = availableClasses.length > 0;
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 1</p><h2>평가 대상</h2><p>학년과 반을 선택한 뒤 학생을 평가 대상에 추가하거나 제외하세요.</p></div><span>${course.targetStudentIds?.length || 0}명 선택</span></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 1</p><h2>평가 대상</h2><p>학생 관리에 등록된 ${escapeHtml(courseGrade)}학년 반만 표시됩니다. 반을 선택한 뒤 학생을 평가 대상에 추가하거나 제외하세요.</p></div><span>${course.targetStudentIds?.length || 0}명 선택</span></div>
     <div class="target-toolbar">
       <label>학년<select disabled><option>${escapeHtml(courseGrade)}학년</option></select></label>
-      <label>반<select data-target-class>${classOptions(selectedTargetClass)}</select></label>
-      <button class="primary-action" type="button" data-add-targets>평가 대상 추가</button>
-      <button class="secondary-action" type="button" data-remove-targets>평가 대상 제외</button>
+      <label>반<select data-target-class ${hasAvailableClass ? "" : "disabled"}>${targetClassOptions(availableClasses, selectedTargetClass)}</select></label>
+      <button class="primary-action" type="button" data-add-targets ${hasAvailableClass ? "" : "disabled"}>평가 대상 추가</button>
+      <button class="secondary-action" type="button" data-remove-targets ${hasAvailableClass ? "" : "disabled"}>평가 대상 제외</button>
     </div>
     ${classStudents.length ? `
       <div class="target-list">
@@ -541,7 +549,7 @@ function renderTargetTab(course, students) {
             <span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong>
             <em>${targetIds.has(student.id) ? "평가 대상" : "미포함"}</em>
           </label>`).join("")}
-      </div>` : `<div class="inline-empty"><strong>${escapeHtml(courseGrade)}학년 ${escapeHtml(selectedTargetClass)}반 학생이 없습니다.</strong><p>먼저 첫 페이지의 학생 관리에서 학생을 개별 또는 Excel로 생성해 주세요.</p><a class="primary-action" href="#/students">학생 관리 →</a></div>`}
+      </div>` : `<div class="inline-empty"><strong>${escapeHtml(courseGrade)}학년에 등록된 학생 명단이 없습니다.</strong><p>먼저 학생 관리에서 해당 학년 학생을 개별 또는 Excel로 생성해 주세요.</p><a class="primary-action" href="#/students">학생 관리 →</a></div>`}
     <div class="workflow-next"><span>대상 학생을 확인한 뒤 다음 단계로 이동하세요.</span><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=designs">평가 설계로 →</a></div>`;
 }
 

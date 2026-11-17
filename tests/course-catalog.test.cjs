@@ -85,6 +85,13 @@ test("student management filters roster cards to the selected school", () => {
   assert.match(source, /group\.hidden = Number\(group\.dataset\.studentSchoolGroup\) !== schoolIndex/);
 });
 
+test("assessment target class options come only from classes registered in student management", () => {
+  assert.match(source, /StudentWorkflow\.rosterClasses\(students, courseGrade\)/);
+  assert.match(source, /targetClassOptions\(availableClasses, selectedTargetClass\)/);
+  assert.doesNotMatch(source, /data-target-class>\$\{classOptions\(selectedTargetClass\)\}/);
+  assert.match(source, /학생 관리에 등록된 .*학년 반만 표시됩니다/);
+});
+
 test("home and navigation use the requested AI essay-assessment title", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);

@@ -104,6 +104,17 @@ test("selectRosterSheet reports missing required columns instead of a generic em
   assert.deepEqual(selected.missingHeaders, ["schoolName", "number", "name"]);
 });
 
+test("rosterClasses returns only classes registered for the selected grade in numeric order", () => {
+  const classes = Workflow.rosterClasses([
+    { schoolName: "한빛초등학교", grade: "5", className: "10", number: "1", name: "가람" },
+    { schoolName: "한빛초등학교", grade: "6", className: "3", number: "1", name: "나래" },
+    { schoolName: "한빛초등학교", grade: "5", className: "2", number: "1", name: "다온" },
+    { schoolName: "한빛초등학교", grade: "5학년", className: "2반", number: "2", name: "라온" },
+  ], "5학년");
+
+  assert.deepEqual(classes, ["2", "10"]);
+});
+
 test("parsePageNumbers expands ranges and reports invalid pages", () => {
   const parsed = Workflow.parsePageNumbers("1, 3-5, 9", 6);
   assert.deepEqual(parsed.pages, [1, 3, 4, 5]);
