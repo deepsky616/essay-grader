@@ -88,6 +88,11 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /data-extract-document="design">AI로 1~3 자동 입력/);
   assert.match(source, /prepareEvaluationReferenceImages\(file\)/);
   assert.match(source, /분수는 2차 검증 후 자동 입력/);
+  assert.match(source, /page\.getTextContent\(\)/);
+  assert.match(source, /pdfjsLib\?\.Util\?\.transform/);
+  assert.match(source, /문제-\$\{anchor\.number\}-예시답안/);
+  assert.match(source, /원본확대/);
+  assert.match(source, /고대비확대/);
   assert.match(source, /<strong>학생용 평가지 등록<\/strong>/);
   assert.match(source, /교사용 기준안·예시답안 페이지는 제외/);
 });

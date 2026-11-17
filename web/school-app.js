@@ -1114,14 +1114,14 @@ async function prepareEvaluationReferenceImages(pdfFile) {
   const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
   const pdfDocument = await loadingTask.promise;
   const files = [];
-  const maxBytes = 8 * 1024 * 1024;
+  const maxBytes = Math.max(0, Math.min(10 * 1024 * 1024, 17 * 1024 * 1024 - Number(pdfFile.size || 0)));
   let totalBytes = 0;
   try {
     const pageLimit = Math.min(pdfDocument.numPages, 6);
     for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
       const page = await pdfDocument.getPage(pageNumber);
       const baseViewport = page.getViewport({ scale: 1 });
-      const targetWidth = pdfDocument.numPages > 3 ? 1900 : 2300;
+      const targetWidth = pdfDocument.numPages > 3 ? 2100 : 2600;
       const scale = Math.min(4, Math.max(2, targetWidth / Math.max(1, baseViewport.width)));
       const viewport = page.getViewport({ scale });
       const sourceCanvas = document.createElement("canvas");
@@ -1134,39 +1134,37 @@ async function prepareEvaluationReferenceImages(pdfFile) {
       sourceContext.imageSmoothingQuality = "high";
       await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
 
-      const overlap = Math.round(sourceCanvas.height * 0.045);
-      const rowHeight = Math.ceil(sourceCanvas.height / 3);
-      const regions = Array.from({ length: 3 }, (_value, row) => {
-        const y = Math.max(0, row * rowHeight - overlap);
-        const end = Math.min(sourceCanvas.height, (row + 1) * rowHeight + overlap);
-        return { x: 0, y, width: sourceCanvas.width, height: end - y, label: `구간-${row + 1}` };
-      });
-      regions.push({
-        x: Math.round(sourceCanvas.width * 0.2),
-        y: Math.round(sourceCanvas.height * 0.43),
-        width: Math.round(sourceCanvas.width * 0.78),
-        height: Math.round(sourceCanvas.height * 0.54),
-        label: "표-수식-상세",
-      });
+      const textContent = await page.getTextContent();
+      const problemRegions = evaluationProblemRegions(textContent.items, viewport, sourceCanvas.width, sourceCanvas.height);
+      const fallbackRegions = evaluationFallbackRegions(sourceCanvas.width, sourceCanvas.height);
+      const regions = problemRegions.length ? [...problemRegions, ...fallbackRegions.slice(0, 1)] : fallbackRegions;
 
       for (const region of regions) {
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = region.width;
-        cropCanvas.height = region.height;
-        const cropContext = cropCanvas.getContext("2d", { alpha: false });
-        cropContext.fillStyle = "#ffffff";
-        cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-        cropContext.imageSmoothingEnabled = true;
-        cropContext.imageSmoothingQuality = "high";
-        cropContext.filter = "grayscale(1) contrast(1.2) brightness(1.03)";
-        cropContext.drawImage(sourceCanvas, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
-        cropContext.filter = "none";
-        const blob = await canvasToBlob(cropCanvas, "image/jpeg", 0.92);
-        cropCanvas.width = 1;
-        cropCanvas.height = 1;
-        if (totalBytes + blob.size > maxBytes) break;
-        totalBytes += blob.size;
-        files.push(new File([blob], `evaluation-page-${String(pageNumber).padStart(2, "0")}-${region.label}.jpg`, { type: "image/jpeg" }));
+        const variants = problemRegions.includes(region)
+          ? [{ label: "원본확대", filter: "none" }, { label: "고대비확대", filter: "grayscale(1) contrast(1.28) brightness(1.04)" }]
+          : [{ label: "고대비확대", filter: "grayscale(1) contrast(1.22) brightness(1.03)" }];
+        for (const variant of variants) {
+          const outputWidth = Math.min(3200, Math.max(region.width, 3000));
+          const outputScale = Math.min(2.2, outputWidth / Math.max(1, region.width));
+          const cropCanvas = document.createElement("canvas");
+          cropCanvas.width = Math.round(region.width * outputScale);
+          cropCanvas.height = Math.round(region.height * outputScale);
+          const cropContext = cropCanvas.getContext("2d", { alpha: false });
+          cropContext.fillStyle = "#ffffff";
+          cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+          cropContext.imageSmoothingEnabled = true;
+          cropContext.imageSmoothingQuality = "high";
+          cropContext.filter = variant.filter;
+          cropContext.drawImage(sourceCanvas, region.x, region.y, region.width, region.height, 0, 0, cropCanvas.width, cropCanvas.height);
+          cropContext.filter = "none";
+          const blob = await canvasToBlob(cropCanvas, "image/jpeg", variant.label === "원본확대" ? 0.95 : 0.94);
+          cropCanvas.width = 1;
+          cropCanvas.height = 1;
+          if (totalBytes + blob.size > maxBytes) break;
+          totalBytes += blob.size;
+          files.push(new File([blob], `evaluation-page-${String(pageNumber).padStart(2, "0")}-${region.label}-${variant.label}.jpg`, { type: "image/jpeg" }));
+        }
+        if (totalBytes >= maxBytes) break;
       }
       sourceCanvas.width = 1;
       sourceCanvas.height = 1;
@@ -1177,6 +1175,56 @@ async function prepareEvaluationReferenceImages(pdfFile) {
   } finally {
     await loadingTask.destroy();
   }
+}
+
+function evaluationProblemRegions(textItems, viewport, canvasWidth, canvasHeight) {
+  const transform = window.pdfjsLib?.Util?.transform;
+  if (typeof transform !== "function") return [];
+  const entries = (Array.isArray(textItems) ? textItems : []).map((item) => {
+    const matrix = transform(viewport.transform, item.transform);
+    return { text: String(item.str || "").trim(), x: matrix[4], y: matrix[5] };
+  }).filter((item) => item.text);
+  const tolerance = Math.max(8, viewport.scale * 3);
+  const lines = [];
+  for (const entry of entries.sort((a, b) => a.y - b.y || a.x - b.x)) {
+    let line = lines.find((candidate) => Math.abs(candidate.y - entry.y) <= tolerance);
+    if (!line) { line = { y: entry.y, items: [] }; lines.push(line); }
+    line.items.push(entry);
+  }
+  const anchors = lines.map((line) => {
+    const ordered = line.items.sort((a, b) => a.x - b.x);
+    const joined = ordered.map((item) => item.text).join(" ").replace(/\s+/g, " ");
+    const match = joined.match(/[\[\(]?\s*문제\s*([0-9]+)\s*[\]\)]?/);
+    return match ? { number: match[1], y: line.y } : null;
+  }).filter(Boolean).sort((a, b) => a.y - b.y);
+  if (!anchors.length) return [];
+  const left = Math.round(canvasWidth * 0.18);
+  const right = Math.round(canvasWidth * 0.985);
+  return anchors.map((anchor, index) => {
+    const previous = anchors[index - 1];
+    const next = anchors[index + 1];
+    const typicalGap = next ? next.y - anchor.y : previous ? anchor.y - previous.y : canvasHeight * 0.18;
+    const start = previous ? (previous.y + anchor.y) / 2 : anchor.y - typicalGap * 0.62;
+    const end = next ? (anchor.y + next.y) / 2 : anchor.y + typicalGap * 0.72;
+    const padding = Math.round(canvasHeight * 0.012);
+    const y = Math.max(0, Math.round(start - padding));
+    const bottom = Math.min(canvasHeight, Math.round(end + padding));
+    return { x: left, y, width: Math.max(1, right - left), height: Math.max(1, bottom - y), label: `문제-${anchor.number}-예시답안` };
+  }).filter((region) => region.height >= 40);
+}
+
+function evaluationFallbackRegions(canvasWidth, canvasHeight) {
+  const left = Math.round(canvasWidth * 0.18);
+  const top = Math.round(canvasHeight * 0.38);
+  const bottom = Math.round(canvasHeight * 0.985);
+  const availableHeight = Math.max(1, bottom - top);
+  const overlap = Math.round(availableHeight * 0.055);
+  const rowHeight = Math.ceil(availableHeight / 4);
+  return Array.from({ length: 4 }, (_value, row) => {
+    const y = Math.max(0, top + row * rowHeight - overlap);
+    const end = Math.min(canvasHeight, top + (row + 1) * rowHeight + overlap);
+    return { x: left, y, width: Math.max(1, Math.round(canvasWidth * 0.985) - left), height: Math.max(1, end - y), label: `수식구간-${row + 1}` };
+  });
 }
 
 function collectDesignForm(form, existing) {

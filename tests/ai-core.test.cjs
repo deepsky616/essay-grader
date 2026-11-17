@@ -740,11 +740,19 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
       requestCount += 1;
       const body = JSON.parse(options.body);
       if (requestCount === 2) {
-        assert.match(body.contents[0].parts[0].text, /분자와 분모/);
-        assert.match(body.contents[0].parts[0].text, /직접 검산/);
+        assert.match(body.contents[0].parts[0].text, /자연수 부분/);
+        assert.match(body.contents[0].parts[0].text, /각 줄을 독립적으로/);
+        assert.match(body.contents[0].parts[0].text, /독립적으로 다시 계산/);
+        const verificationItem = body.generationConfig.responseSchema.properties.exampleAnswers.items;
+        assert.equal(verificationItem.properties.mathLines.type, "array");
+        assert.equal(verificationItem.properties.mathLines.items.properties.fractions.type, "array");
+        assert.deepEqual(verificationItem.properties.mathLines.items.properties.fractions.items.required, ["wholeNumber", "numerator", "denominator"]);
         assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
         return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
-          exampleAnswers: [{ questionNumber: "1", answerText: "분자에 자연수를 곱한다.", mathNotation: "9/16 × 12 = 27/4 = 6 3/4", visualDescription: "" }],
+          exampleAnswers: [{
+            questionNumber: "1", answerText: "분자에 자연수를 곱한다.", mathNotation: "1-(1) 9/16 × 12 = 27/4 = 6 3/4", visualDescription: "",
+            mathLines: [{ lineLabel: "1-(1)", transcription: "9/16 × 12 = 27/4 = 6 3/4", fractions: [{ wholeNumber: "", numerator: "9", denominator: "16" }, { wholeNumber: "6", numerator: "3", denominator: "4" }], calculationStatus: "valid", confidence: "high" }],
+          }],
           notes: ["문제 1 분수 재확인 완료"],
         }) }] } }] }), { status: 200 });
       }
@@ -773,7 +781,8 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
   assert.equal(result.taskName, "분수의 곱셈을 활용하여 문제해결하기");
   assert.equal(result.achievementGroups[0].standardCode, "6수01-09");
   assert.equal(requestCount, 2);
-  assert.equal(result.exampleAnswers[0].mathNotation, "9/16 × 12 = 27/4 = 6 3/4");
+  assert.equal(result.exampleAnswers[0].mathNotation, "1-(1) 9/16 × 12 = 27/4 = 6 3/4");
+  assert.equal(result.exampleAnswers[0].mathLines[0].fractions[1].wholeNumber, "6");
   assert.match(result.notes.join(" "), /고해상도 이미지로 2차 검증/);
 });
 
