@@ -1368,9 +1368,9 @@ function renderSubmissionTab(course, targetStudents) {
       ${!isReady ? `<div class="submission-prerequisite"><strong>과제물 업로드 준비가 필요합니다.</strong><p>${!targetStudents.length ? "평가 대상 학생을 먼저 추가해 주세요. " : ""}${!designs.length ? "평가 설계를 한 개 이상 저장해 주세요." : ""}</p></div>` : ""}
       ${submission ? `
         <div class="submission-workspace">
-          <section class="pdf-preview-panel">
-            <div class="mini-panel-head"><strong>학급 PDF 미리보기</strong><span>${escapeHtml(submission.sourceFile.name)}</span></div>
-            <iframe src="${fitPdfPreviewUrl(previewUrl)}" title="업로드된 학급 답안 PDF 미리보기"></iframe>
+          <section class="pdf-preview-panel" data-submission-preview-panel data-class-preview-url="${escapeHtml(previewUrl)}">
+            <div class="mini-panel-head pdf-preview-head"><div><strong data-submission-preview-title>학급 PDF 미리보기</strong><span data-submission-preview-file>${escapeHtml(submission.sourceFile.name)}</span></div><button type="button" data-expand-submission-preview>전체 화면으로 크게 보기</button></div>
+            <iframe src="${fitPdfPreviewUrl(previewUrl)}" title="업로드된 학급 답안 PDF 미리보기" data-submission-preview-frame></iframe>
           </section>
           <section class="split-student-panel">
             <div class="mini-panel-head"><strong>학생 번호별 자동 분할</strong><span>체크 해제 시 다음 학생부터 페이지를 당겨 배정</span></div>
@@ -1382,7 +1382,8 @@ function renderSubmissionTab(course, targetStudents) {
               ${targetStudents.map((student) => {
                 const assignment = assignmentMap.get(student.id);
                 const included = submission.includedStudentIds?.includes(student.id);
-                return `<label class="split-row ${included ? "is-included" : "is-excluded"}"><input type="checkbox" data-include-submission value="${escapeHtml(student.id)}" ${included ? "checked" : ""}><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><em>${included ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽` : "채점 제외"}</em></label>`;
+                const inputId = `submission-student-${student.id}`;
+                return `<div class="split-row ${included ? "is-included" : "is-excluded"}" data-split-student="${escapeHtml(student.id)}"><input id="${escapeHtml(inputId)}" type="checkbox" data-include-submission value="${escapeHtml(student.id)}" ${included ? "checked" : ""}><label class="split-student-label" for="${escapeHtml(inputId)}"><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><em>${included ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽` : "채점 제외"}</em></label><button class="split-preview-button" type="button" data-preview-submission="${escapeHtml(student.id)}" ${assignment?.pageNumbers?.length ? "" : "disabled"}>평가지 미리보기</button></div>`;
               }).join("")}
             </div>
             <div class="split-summary"><strong data-split-completed>${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료</strong><p data-split-unused-pages>${submission.unusedPages?.length ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽` : "모든 페이지를 순서대로 배정했습니다."}</p></div>
@@ -1454,6 +1455,44 @@ function bindSubmissionTab(course, targetStudents) {
     [],
     "전체 학생의 분할 대상 선택을 해제했습니다.",
   ));
+  app.querySelector("[data-expand-submission-preview]")?.addEventListener("click", () => {
+    const frame = app.querySelector("[data-submission-preview-frame]");
+    const title = app.querySelector("[data-submission-preview-title]")?.textContent || "학생 평가지";
+    openPdfFullscreenPreview(frame?.src || "", title);
+  });
+  app.querySelectorAll("[data-preview-submission]").forEach((button) => button.addEventListener("click", async () => {
+    const studentId = button.dataset.previewSubmission;
+    const student = targetStudents.find((item) => item.id === studentId);
+    const assignment = course.submission?.assignments?.find((item) => item.studentId === studentId);
+    const panel = app.querySelector("[data-submission-preview-panel]");
+    const frame = panel?.querySelector("[data-submission-preview-frame]");
+    if (!student || !assignment?.pageNumbers?.length || !panel || !frame) { showToast("이 학생에게 배정된 평가지 페이지가 없습니다."); return; }
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "불러오는 중…";
+    try {
+      if (panel.dataset.studentPreviewUrl) {
+        URL.revokeObjectURL(panel.dataset.studentPreviewUrl);
+        previewUrls = previewUrls.filter((url) => url !== panel.dataset.studentPreviewUrl);
+      }
+      const assignmentIndex = Math.max(0, course.submission.assignments.findIndex((item) => item.studentId === studentId));
+      const studentFile = await splitStudentPdf(course.submission.sourceFile.blob, assignment.pageNumbers, assignmentIndex);
+      const studentPreviewUrl = createPreviewUrl(studentFile);
+      panel.dataset.studentPreviewUrl = studentPreviewUrl;
+      panel.dataset.previewStudentId = studentId;
+      frame.src = fitPdfPreviewUrl(studentPreviewUrl);
+      frame.title = `${student.name} 학생 평가지 미리보기`;
+      panel.querySelector("[data-submission-preview-title]").textContent = `${student.number}번 ${student.name} 평가지`;
+      panel.querySelector("[data-submission-preview-file]").textContent = `${assignment.pageNumbers.join("–")}쪽 · 화면 너비에 맞춤`;
+      app.querySelectorAll("[data-split-student]").forEach((row) => row.classList.toggle("is-previewing", row.dataset.splitStudent === studentId));
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      showToast(`학생 평가지 미리보기를 만들지 못했습니다. ${friendlyError(error)}`);
+    } finally {
+      button.textContent = originalLabel;
+      button.disabled = !course.submission?.assignments?.find((item) => item.studentId === studentId)?.pageNumbers?.length;
+    }
+  }));
 }
 
 function updateSubmissionSelectionView(submission, targetStudents) {
@@ -1471,6 +1510,8 @@ function updateSubmissionSelectionView(submission, targetStudents) {
     if (pageSummary) pageSummary.textContent = isIncluded
       ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽`
       : "채점 제외";
+    const previewButton = row?.querySelector("[data-preview-submission]");
+    if (previewButton) previewButton.disabled = !assignment?.pageNumbers?.length;
   });
   const selectedCount = (submission.includedStudentIds || []).length;
   const selectedCountNode = app.querySelector("[data-split-selected-count]");
@@ -1487,6 +1528,18 @@ function updateSubmissionSelectionView(submission, targetStudents) {
   if (unusedPagesNode) unusedPagesNode.textContent = submission.unusedPages?.length
     ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽`
     : "모든 페이지를 순서대로 배정했습니다.";
+  const previewPanel = app.querySelector("[data-submission-preview-panel]");
+  if (previewPanel?.dataset.studentPreviewUrl) {
+    URL.revokeObjectURL(previewPanel.dataset.studentPreviewUrl);
+    previewUrls = previewUrls.filter((url) => url !== previewPanel.dataset.studentPreviewUrl);
+    delete previewPanel.dataset.studentPreviewUrl;
+    delete previewPanel.dataset.previewStudentId;
+    const frame = previewPanel.querySelector("[data-submission-preview-frame]");
+    if (frame) { frame.src = fitPdfPreviewUrl(previewPanel.dataset.classPreviewUrl); frame.title = "업로드된 학급 답안 PDF 미리보기"; }
+    previewPanel.querySelector("[data-submission-preview-title]").textContent = "학급 PDF 미리보기";
+    previewPanel.querySelector("[data-submission-preview-file]").textContent = submission.sourceFile.name;
+    app.querySelectorAll("[data-split-student]").forEach((row) => row.classList.remove("is-previewing"));
+  }
 }
 
 function buildSubmission({ sourceFile, pageCount, pagesPerStudent, includedStudentIds, students, designId }) {
@@ -2556,7 +2609,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     <div class="student-result-shell">
       <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
-        <section class="student-answer-preview"><div class="mini-panel-head"><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기"></iframe></section>
+        <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
           <div class="teacher-total"><span>교사 확정 총점</span><strong data-teacher-total>${formatScore(teacherScores.reduce((sum, value) => sum + value, 0))} / ${formatScore(summary.maxScore)}점</strong></div>
@@ -2658,6 +2711,10 @@ async function openStudentResult(course, targetStudents, studentId) {
     slot.innerHTML = "";
   };
   panel.querySelector("[data-close-student-result]").addEventListener("click", closeCurrent);
+  panel.querySelector("[data-expand-student-answer]").addEventListener("click", () => openPdfFullscreenPreview(
+    panel.querySelector("[data-student-answer-frame]")?.src || "",
+    `${StudentWorkflow.rosterIdentity(student)} 학생 평가지`,
+  ));
   panel.querySelector("[data-regrade-student]").addEventListener("click", (event) => regradeSingleStudent(course, targetStudents, studentId, event.currentTarget));
   panel.querySelector("[data-previous-student]")?.addEventListener("click", async () => {
     await saveCurrent();
@@ -2815,7 +2872,26 @@ function fitPdfPreviewUrl(url) {
   return `${url.split("#")[0]}#view=FitH&zoom=page-width&pagemode=none`;
 }
 
+function openPdfFullscreenPreview(url, title = "학생 평가지") {
+  if (!url) { showToast("크게 볼 PDF를 찾지 못했습니다."); return; }
+  let dialog = document.querySelector("[data-pdf-fullscreen-dialog]");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.className = "pdf-fullscreen-dialog";
+    dialog.dataset.pdfFullscreenDialog = "true";
+    dialog.innerHTML = `<div class="pdf-fullscreen-shell"><header><div><strong data-pdf-fullscreen-title>학생 평가지</strong><span>화면 너비에 맞춰 표시합니다. PDF 도구의 확대 버튼으로 더 크게 볼 수 있습니다.</span></div><button type="button" data-close-pdf-fullscreen>닫기 ×</button></header><iframe title="학생 평가지 전체 화면 미리보기" data-pdf-fullscreen-frame></iframe></div>`;
+    document.body.append(dialog);
+    dialog.querySelector("[data-close-pdf-fullscreen]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener("close", () => { dialog.querySelector("[data-pdf-fullscreen-frame]").src = "about:blank"; });
+  }
+  dialog.querySelector("[data-pdf-fullscreen-title]").textContent = title;
+  dialog.querySelector("[data-pdf-fullscreen-frame]").src = fitPdfPreviewUrl(url);
+  if (!dialog.open) dialog.showModal();
+}
+
 function clearPreviewUrls() {
+  document.querySelector("[data-pdf-fullscreen-dialog][open]")?.close();
   previewUrls.forEach((url) => URL.revokeObjectURL(url));
   previewUrls = [];
 }

@@ -159,6 +159,16 @@ test("submission selection updates in place without jumping the student list to 
   assert.doesNotMatch(saveSource, /renderCourse\(course\.id, "submissions"\)/);
 });
 
+test("submission management can preview each student's assigned PDF at full screen", () => {
+  assert.match(source, /data-preview-submission="\$\{escapeHtml\(student\.id\)\}"/);
+  assert.match(source, /data-expand-submission-preview>전체 화면으로 크게 보기<\/button>/);
+  assert.match(source, /splitStudentPdf\(course\.submission\.sourceFile\.blob, assignment\.pageNumbers, assignmentIndex\)/);
+  assert.match(source, /frame\.src = fitPdfPreviewUrl\(studentPreviewUrl\)/);
+  assert.match(source, /openPdfFullscreenPreview\(frame\?\.src/);
+  assert.match(styles, /\.split-preview-button \{/);
+  assert.match(styles, /\.pdf-fullscreen-dialog \{[^}]*width: calc\(100vw - 16px\);[^}]*height: calc\(100vh - 16px\)/);
+});
+
 test("home and navigation use the requested AI essay-assessment title", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);

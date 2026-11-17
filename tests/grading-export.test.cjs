@@ -212,8 +212,11 @@ test("student answer PDF previews open fitted to the available panel width", () 
   assert.match(schoolSource, /function fitPdfPreviewUrl\(url\)/);
   assert.match(schoolSource, /#view=FitH&zoom=page-width&pagemode=none/);
   assert.match(schoolSource, /학생 답안 PDF[^]*iframe src="\$\{fitPdfPreviewUrl\(previewUrl\)\}"/);
+  assert.match(schoolSource, /data-expand-student-answer>전체 화면으로 크게 보기<\/button>/);
+  assert.match(schoolSource, /openPdfFullscreenPreview\([^]*학생 평가지/);
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.student-answer-preview iframe \{ height: clamp\(720px,82vh,1040px\); \}/);
+  assert.match(styles, /\.pdf-fullscreen-shell iframe \{[^}]*width: 100%;[^}]*height: 100%;/);
 });
 
 test("teacher confirmation dismisses the review-required guidance and persists AI scores", () => {
