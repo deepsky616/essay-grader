@@ -1375,7 +1375,7 @@ function renderSubmissionTab(course, targetStudents) {
           <section class="split-student-panel">
             <div class="mini-panel-head"><strong>학생 번호별 자동 분할</strong><span>체크 해제 시 다음 학생부터 페이지를 당겨 배정</span></div>
             <div class="split-selection-toolbar">
-              <div><strong>분할 대상 <b>${includedStudentCount}</b> / ${targetStudents.length}명</strong><span>필요 ${requiredPageCount}쪽 · 업로드 PDF ${submission.pageCount}쪽</span></div>
+              <div><strong>분할 대상 <b data-split-selected-count>${includedStudentCount}</b> / ${targetStudents.length}명</strong><span data-split-page-summary>필요 ${requiredPageCount}쪽 · 업로드 PDF ${submission.pageCount}쪽</span></div>
               <div class="split-bulk-actions"><button type="button" data-select-all-submissions ${allStudentsIncluded ? "disabled" : ""}>전체 학생 선택</button><button type="button" data-clear-all-submissions ${includedStudentCount ? "" : "disabled"}>전체 선택 해제</button></div>
             </div>
             <div class="split-list">
@@ -1385,7 +1385,7 @@ function renderSubmissionTab(course, targetStudents) {
                 return `<label class="split-row ${included ? "is-included" : "is-excluded"}"><input type="checkbox" data-include-submission value="${escapeHtml(student.id)}" ${included ? "checked" : ""}><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><em>${included ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽` : "채점 제외"}</em></label>`;
               }).join("")}
             </div>
-            <div class="split-summary"><strong>${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료</strong><p>${submission.unusedPages?.length ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽` : "모든 페이지를 순서대로 배정했습니다."}</p></div>
+            <div class="split-summary"><strong data-split-completed>${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료</strong><p data-split-unused-pages>${submission.unusedPages?.length ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽` : "모든 페이지를 순서대로 배정했습니다."}</p></div>
           </section>
         </div>` : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=designs">← 평가 설계</a><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=grading">AI 채점으로 →</a></div>`;
@@ -1440,7 +1440,7 @@ function bindSubmissionTab(course, targetStudents) {
     course.updatedAt = new Date().toISOString();
     await putCourse(course);
     if (message) showToast(message);
-    renderCourse(course.id, "submissions");
+    updateSubmissionSelectionView(course.submission, targetStudents);
   };
   app.querySelectorAll("[data-include-submission]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
     const includedStudentIds = Array.from(app.querySelectorAll("[data-include-submission]:checked")).map((input) => input.value);
@@ -1454,6 +1454,39 @@ function bindSubmissionTab(course, targetStudents) {
     [],
     "전체 학생의 분할 대상 선택을 해제했습니다.",
   ));
+}
+
+function updateSubmissionSelectionView(submission, targetStudents) {
+  if (!submission) return;
+  const included = new Set(submission.includedStudentIds || []);
+  const assignmentMap = new Map((submission.assignments || []).map((item) => [item.studentId, item]));
+  app.querySelectorAll("[data-include-submission]").forEach((checkbox) => {
+    const isIncluded = included.has(checkbox.value);
+    const assignment = assignmentMap.get(checkbox.value);
+    checkbox.checked = isIncluded;
+    const row = checkbox.closest(".split-row");
+    row?.classList.toggle("is-included", isIncluded);
+    row?.classList.toggle("is-excluded", !isIncluded);
+    const pageSummary = row?.querySelector("em");
+    if (pageSummary) pageSummary.textContent = isIncluded
+      ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽`
+      : "채점 제외";
+  });
+  const selectedCount = (submission.includedStudentIds || []).length;
+  const selectedCountNode = app.querySelector("[data-split-selected-count]");
+  if (selectedCountNode) selectedCountNode.textContent = String(selectedCount);
+  const pageSummary = app.querySelector("[data-split-page-summary]");
+  if (pageSummary) pageSummary.textContent = `필요 ${selectedCount * submission.pagesPerStudent}쪽 · 업로드 PDF ${submission.pageCount}쪽`;
+  const selectAllButton = app.querySelector("[data-select-all-submissions]");
+  if (selectAllButton) selectAllButton.disabled = Boolean(targetStudents.length) && selectedCount === targetStudents.length;
+  const clearAllButton = app.querySelector("[data-clear-all-submissions]");
+  if (clearAllButton) clearAllButton.disabled = selectedCount === 0;
+  const completedNode = app.querySelector("[data-split-completed]");
+  if (completedNode) completedNode.textContent = `${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료`;
+  const unusedPagesNode = app.querySelector("[data-split-unused-pages]");
+  if (unusedPagesNode) unusedPagesNode.textContent = submission.unusedPages?.length
+    ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽`
+    : "모든 페이지를 순서대로 배정했습니다.";
 }
 
 function buildSubmission({ sourceFile, pageCount, pagesPerStudent, includedStudentIds, students, designId }) {
@@ -1509,7 +1542,10 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const waitingCount = Math.max(0, progressTotal - completedCount - activeCount);
   const canContinue = ["running", "stopped", "partial"].includes(displayStatus) && results.length < progressTotal;
   const runButtonLabel = canContinue ? "AI 채점 계속" : grading.status === "complete" ? "AI 채점 다시 실행" : "AI 채점 실행";
-  const scanReady = Boolean(submission && design?.blankFile);
+  const selectedSubmissionCount = submission?.includedStudentIds?.filter((id) => targetStudents.some((student) => student.id === id)).length
+    ?? submission?.assignments?.length
+    ?? 0;
+  const scanReady = Boolean(submission && design?.blankFile && selectedSubmissionCount > 0);
   return `
     <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>학생용 평가지 원본과 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
     <div class="grading-quality-grid">
@@ -1518,10 +1554,11 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
       <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 검증에 걸린 문항만 고해상도로 다시 확인합니다. 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
-      <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
+      <div class="grading-launch-info"><div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `1인당 ${submission.pagesPerStudent}쪽 · 총 ${submission.assignments.reduce((sum, item) => sum + item.pageNumbers.length, 0)}쪽 배정` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>${submission ? `<div class="grading-selection-count"><span>과제물 관리에서 선택</span><strong>${selectedSubmissionCount}명</strong><small>평가 대상 ${targetStudents.length}명 중</small></div>` : ""}</div>
       ${hasApiKey ? `<div class="grading-run-actions"><button class="primary-action" type="button" data-run-grading ${!scanReady || isActivelyRunning ? "disabled" : ""}>${runButtonLabel}</button><button class="stop-grading-action" type="button" data-stop-grading ${isActivelyRunning ? "" : "hidden"}>채점 멈추기</button></div>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
     ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>학생용 평가지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 평가지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
+    ${submission && !selectedSubmissionCount ? `<div class="grading-prerequisite"><strong>채점할 학생 선택이 필요합니다.</strong><p>3 과제물 관리에서 자동 분할할 학생을 한 명 이상 선택해 주세요.</p><button type="button" data-open-submissions>과제물 관리로</button></div>` : ""}
     <section class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress aria-live="polite" aria-busy="${isActivelyRunning}">
       <div class="grading-progress-overview">
         <div class="grading-progress-dial" style="--progress:${progress}%" role="progressbar" aria-label="전체 AI 채점 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" data-progress-dial><strong data-progress-percent>${progress}%</strong><span>전체 진행</span></div>
@@ -1790,6 +1827,7 @@ function bindGradingTab(course, targetStudents) {
     editingDesignId = course.submission?.designId || "";
     renderCourse(course.id, "designs");
   });
+  app.querySelector("[data-open-submissions]")?.addEventListener("click", () => renderCourse(course.id, "submissions"));
   app.querySelectorAll("[data-open-student-result]").forEach((button) => button.addEventListener("click", () => openStudentResult(course, targetStudents, button.dataset.openStudentResult)));
 }
 

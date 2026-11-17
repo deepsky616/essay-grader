@@ -136,12 +136,27 @@ test("assessment target class options come only from classes registered in stude
 test("submission splitting can select or clear every target student at once", () => {
   assert.match(source, /data-select-all-submissions[^>]*>전체 학생 선택<\/button>/);
   assert.match(source, /data-clear-all-submissions[^>]*>전체 선택 해제<\/button>/);
-  assert.match(source, /분할 대상 <b>\$\{includedStudentCount\}<\/b> \/ \$\{targetStudents\.length\}명/);
+  assert.match(source, /분할 대상 <b[^>]*>\$\{includedStudentCount\}<\/b> \/ \$\{targetStudents\.length\}명/);
   assert.match(source, /필요 \$\{requiredPageCount\}쪽 · 업로드 PDF \$\{submission\.pageCount\}쪽/);
   assert.match(source, /data-select-all-submissions[\s\S]*?targetStudents\.map\(\(student\) => student\.id\)/);
   assert.match(source, /data-clear-all-submissions[\s\S]*?saveSubmissionSelection\(\s*\[\]/);
   assert.match(styles, /\.split-selection-toolbar \{[^}]*justify-content: space-between/);
   assert.match(styles, /\.split-bulk-actions \{[^}]*display: flex/);
+});
+
+test("submission selection updates in place without jumping the student list to the top", () => {
+  const bindStart = source.indexOf("function bindSubmissionTab");
+  const buildStart = source.indexOf("function buildSubmission", bindStart);
+  const selectionSource = source.slice(bindStart, buildStart);
+  const saveStart = selectionSource.indexOf("const saveSubmissionSelection");
+  const updateStart = selectionSource.indexOf("function updateSubmissionSelectionView");
+  const saveSource = selectionSource.slice(saveStart, updateStart);
+  assert.match(selectionSource, /function updateSubmissionSelectionView\(submission, targetStudents\)/);
+  assert.match(selectionSource, /updateSubmissionSelectionView\(course\.submission, targetStudents\)/);
+  assert.match(selectionSource, /data-split-selected-count/);
+  assert.match(selectionSource, /data-split-page-summary/);
+  assert.match(selectionSource, /row\?\.classList\.toggle\("is-included", isIncluded\)/);
+  assert.doesNotMatch(saveSource, /renderCourse\(course\.id, "submissions"\)/);
 });
 
 test("home and navigation use the requested AI essay-assessment title", () => {
