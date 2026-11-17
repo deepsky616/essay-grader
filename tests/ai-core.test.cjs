@@ -728,12 +728,26 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
 test("extractEvaluationDocument can fill achievement, rubric, and example sections from one design PDF", async () => {
   const bytes = new TextEncoder().encode("combined design pdf");
   const file = { name: "평가기준안.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
+  const enlargedBytes = new TextEncoder().encode("enlarged fraction image");
+  const visionFiles = [{ name: "evaluation-page-01-표-수식-상세.jpg", type: "image/jpeg", size: enlargedBytes.byteLength, arrayBuffer: async () => enlargedBytes.buffer }];
+  let requestCount = 0;
   const result = await AI.extractEvaluationDocument({
     apiKey: VALID_KEY,
     file,
     kind: "design",
+    visionFiles,
     fetchImpl: async (_url, options) => {
+      requestCount += 1;
       const body = JSON.parse(options.body);
+      if (requestCount === 2) {
+        assert.match(body.contents[0].parts[0].text, /분자와 분모/);
+        assert.match(body.contents[0].parts[0].text, /직접 검산/);
+        assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          exampleAnswers: [{ questionNumber: "1", answerText: "분자에 자연수를 곱한다.", mathNotation: "9/16 × 12 = 27/4 = 6 3/4", visualDescription: "" }],
+          notes: ["문제 1 분수 재확인 완료"],
+        }) }] } }] }), { status: 200 });
+      }
       const schema = body.generationConfig.responseSchema;
       assert.equal(schema.properties.achievementGroups.type, "array");
       assert.equal(schema.properties.rubricCriteria.type, "array");
@@ -758,7 +772,9 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
 
   assert.equal(result.taskName, "분수의 곱셈을 활용하여 문제해결하기");
   assert.equal(result.achievementGroups[0].standardCode, "6수01-09");
-  assert.equal(result.exampleAnswers[0].mathNotation, "9/16 × 12 = 27/4");
+  assert.equal(requestCount, 2);
+  assert.equal(result.exampleAnswers[0].mathNotation, "9/16 × 12 = 27/4 = 6 3/4");
+  assert.match(result.notes.join(" "), /고해상도 이미지로 2차 검증/);
 });
 
 test("generateRubricCriteria requests the exact teacher-selected band scores", async () => {

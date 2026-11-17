@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
+const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
 
 function loadSubjectCatalog() {
   const start = source.indexOf("const COURSE_SUBJECTS_BY_GRADE");
@@ -19,6 +20,16 @@ test("grades 1 and 2 offer the five lower-primary subjects", () => {
   const expected = ["국어", "수학", "바른 생활", "슬기로운 생활", "즐거운 생활"];
   assert.deepEqual([...catalog["1"]], expected);
   assert.deepEqual([...catalog["2"]], expected);
+});
+
+test("the interface uses readable body and control text without enlarging page titles", () => {
+  const printableReportStart = styles.indexOf(".result-print-preview .result-report-sheet");
+  const interfaceStyles = styles.slice(0, printableReportStart);
+  assert.match(interfaceStyles, /body\s*\{[\s\S]*?font-size:\s*16px;[\s\S]*?line-height:\s*1\.55;/);
+  assert.doesNotMatch(interfaceStyles, /font-size:\s*(?:[0-9]|1[01])px;/);
+  assert.match(interfaceStyles, /\.primary-action\s*\{[\s\S]*?font-size:\s*16px;/);
+  assert.match(interfaceStyles, /\.design-form-status\s*\{[^}]*font-size:\s*13px;/);
+  assert.match(interfaceStyles, /\.school-hero h1\s*\{[^}]*font-size:\s*clamp\(52px, 7vw, 82px\);/);
 });
 
 test("grades 3 and 4 offer the requested nine subjects without practical arts", () => {
@@ -59,6 +70,8 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /name="rubricAiBandCount"/);
   assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
   assert.match(source, /data-extract-document="design">AI로 1~3 자동 입력/);
+  assert.match(source, /prepareEvaluationReferenceImages\(file\)/);
+  assert.match(source, /분수는 2차 검증 후 자동 입력/);
   assert.match(source, /<strong>학생용 평가지 등록<\/strong>/);
   assert.match(source, /교사용 기준안·예시답안 페이지는 제외/);
 });

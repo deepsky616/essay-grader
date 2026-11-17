@@ -133,7 +133,7 @@ async function renderHome() {
 
       <section class="privacy-strip">
         <span class="privacy-dot" aria-hidden="true"></span>
-        <div><strong>학생 명단·수업·파일은 이 브라우저에 저장됩니다.</strong><p>AI 채점 시 실제 이름 대신 익명 채점번호를 사용하지만, 답안 스캔에 보이는 이름은 Gemini가 볼 수 있습니다.</p></div>
+        <div><strong>학생 명단·수업·파일은 이 브라우저에 저장됩니다.</strong><p>AI 채점 전 각 답안의 상단 신원 영역을 픽셀 단위로 삭제하고, 실제 이름 대신 익명 채점번호만 전송합니다.</p></div>
         <button type="button" data-notice>보호 방식 보기</button>
       </section>
     </div>`;
@@ -1064,9 +1064,14 @@ async function extractDesignDocument(form, kind, course) {
   const button = form.querySelector(`[data-extract-document="${kind}"]`);
   button.disabled = true;
   button.textContent = "AI가 문서를 읽는 중…";
-  setDesignStatus(form, "표, 수식, 도형을 분석하고 있습니다. 자동 입력 후 원본과 대조해 주세요.");
+  setDesignStatus(form, "표·수식·도형을 확대 분석하고 있습니다. 분수는 2차 검증 후 자동 입력하며 결과를 원본과 대조해 주세요.");
   try {
-    const result = await ChaejeomAI.extractEvaluationDocument({ apiKey, file, kind, model });
+    let visionFiles = [];
+    if (file.type === "application/pdf" && (kind === "design" || kind === "example")) {
+      try { visionFiles = await prepareEvaluationReferenceImages(file); }
+      catch (error) { console.warn("평가기준안 확대 이미지를 만들지 못해 원본 PDF로 계속합니다.", error); }
+    }
+    const result = await ChaejeomAI.extractEvaluationDocument({ apiKey, file, kind, visionFiles, model });
     if (kind === "design") {
       const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
       const rubrics = normalizeRubricCriteria(result.rubricCriteria || []);
@@ -1099,6 +1104,78 @@ async function extractDesignDocument(form, kind, course) {
   } finally {
     button.disabled = false;
     button.textContent = kind === "design" ? "AI로 1~3 자동 입력" : kind === "rubric" ? "AI로 채점기준 자동 입력" : "AI로 예시답안 자동 입력";
+  }
+}
+
+async function prepareEvaluationReferenceImages(pdfFile) {
+  if (!window.pdfjsLib?.getDocument || pdfFile.type !== "application/pdf") return [];
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  const data = new Uint8Array(await pdfFile.arrayBuffer());
+  const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
+  const pdfDocument = await loadingTask.promise;
+  const files = [];
+  const maxBytes = 8 * 1024 * 1024;
+  let totalBytes = 0;
+  try {
+    const pageLimit = Math.min(pdfDocument.numPages, 6);
+    for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+      const page = await pdfDocument.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetWidth = pdfDocument.numPages > 3 ? 1900 : 2300;
+      const scale = Math.min(4, Math.max(2, targetWidth / Math.max(1, baseViewport.width)));
+      const viewport = page.getViewport({ scale });
+      const sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = Math.round(viewport.width);
+      sourceCanvas.height = Math.round(viewport.height);
+      const sourceContext = sourceCanvas.getContext("2d", { alpha: false });
+      sourceContext.fillStyle = "#ffffff";
+      sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+      sourceContext.imageSmoothingEnabled = true;
+      sourceContext.imageSmoothingQuality = "high";
+      await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
+
+      const overlap = Math.round(sourceCanvas.height * 0.045);
+      const rowHeight = Math.ceil(sourceCanvas.height / 3);
+      const regions = Array.from({ length: 3 }, (_value, row) => {
+        const y = Math.max(0, row * rowHeight - overlap);
+        const end = Math.min(sourceCanvas.height, (row + 1) * rowHeight + overlap);
+        return { x: 0, y, width: sourceCanvas.width, height: end - y, label: `구간-${row + 1}` };
+      });
+      regions.push({
+        x: Math.round(sourceCanvas.width * 0.2),
+        y: Math.round(sourceCanvas.height * 0.43),
+        width: Math.round(sourceCanvas.width * 0.78),
+        height: Math.round(sourceCanvas.height * 0.54),
+        label: "표-수식-상세",
+      });
+
+      for (const region of regions) {
+        const cropCanvas = document.createElement("canvas");
+        cropCanvas.width = region.width;
+        cropCanvas.height = region.height;
+        const cropContext = cropCanvas.getContext("2d", { alpha: false });
+        cropContext.fillStyle = "#ffffff";
+        cropContext.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+        cropContext.imageSmoothingEnabled = true;
+        cropContext.imageSmoothingQuality = "high";
+        cropContext.filter = "grayscale(1) contrast(1.2) brightness(1.03)";
+        cropContext.drawImage(sourceCanvas, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
+        cropContext.filter = "none";
+        const blob = await canvasToBlob(cropCanvas, "image/jpeg", 0.92);
+        cropCanvas.width = 1;
+        cropCanvas.height = 1;
+        if (totalBytes + blob.size > maxBytes) break;
+        totalBytes += blob.size;
+        files.push(new File([blob], `evaluation-page-${String(pageNumber).padStart(2, "0")}-${region.label}.jpg`, { type: "image/jpeg" }));
+      }
+      sourceCanvas.width = 1;
+      sourceCanvas.height = 1;
+      page.cleanup();
+      if (totalBytes >= maxBytes) break;
+    }
+    return files;
+  } finally {
+    await loadingTask.destroy();
   }
 }
 
@@ -1359,7 +1436,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>학생용 평가지 원본과 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
     <div class="grading-quality-grid">
       <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>학생용 평가지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 학생이 작성하기 전의 평가지 PDF를 등록해 주세요."}</p></div></article>
-      <article class="is-ready"><span>2</span><div><strong>필기·도형 고해상도 보정</strong><p>신원 영역을 가린 뒤 흐린 연필선과 작은 수식을 강조한 AI 전송용 이미지를 만듭니다.</p></div></article>
+      <article class="is-ready"><span>2</span><div><strong>신원 삭제·고해상도 보정</strong><p>상단 신원 영역의 원본 픽셀을 삭제·평면화한 뒤 흐린 연필선과 작은 수식을 강조합니다.</p></div></article>
       <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 검증에 걸린 문항만 고해상도로 다시 확인합니다. 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
     </div>
     <div class="grading-launch-card">
@@ -1658,7 +1735,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       : allAssignments;
   if (!assignments.length) { showToast("채점할 학생 답안 페이지가 없습니다."); return; }
   const actionLabel = retryFailedOnly ? "실패 학생을 다시 채점" : canResume ? "남은 학생의 AI 채점을 계속" : "AI 채점을 실행";
-  if (!window.confirm(`${assignments.length}명의 ${actionLabel}할까요? AI 전송용 사본에서는 고정 학생정보 영역을 가리고 S001 같은 익명 번호를 사용합니다. 자유롭게 적은 이름은 남을 수 있으므로 원본도 확인해 주세요.`)) return;
+  if (!window.confirm(`${assignments.length}명의 ${actionLabel}할까요? AI 전송 전에 각 페이지의 상단 신원 영역을 삭제한 뒤 새 이미지 PDF로 평면화하고, S001 같은 익명 번호만 사용합니다.`)) return;
   const selectedModel = await getSetting(GEMINI_MODEL_SETTING) || ChaejeomAI.MODEL;
   const keyStatus = await getSetting(GEMINI_STATUS_SETTING);
   if (!keyStatus?.generationVerified || keyStatus.model !== selectedModel) {
@@ -1902,7 +1979,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
   const maxScore = rubricTotalScore(design.rubricCriteria || []);
   if (maxScore <= 0) throw new Error("채점기준의 평가요소별 최고 배점을 0점보다 크게 입력해 주세요.");
-  onStage?.("학생 답안 페이지 분리·개인정보 가림 중");
+  onStage?.("학생 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중");
   const studentFile = await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
@@ -2058,19 +2135,66 @@ async function regradeSingleStudent(course, targetStudents, studentId, button) {
 }
 
 async function splitStudentPdf(sourceBlob, pageNumbers, index = 0, { anonymize = false } = {}) {
+  if (anonymize) return createPrivacyRedactedStudentPdf(sourceBlob, pageNumbers, index);
   const source = await PDFLib.PDFDocument.load(await sourceBlob.arrayBuffer(), { ignoreEncryption: false, updateMetadata: false });
   const output = await PDFLib.PDFDocument.create();
   const pages = await output.copyPages(source, pageNumbers.map((page) => page - 1));
-  pages.forEach((page, pageIndex) => {
-    output.addPage(page);
-    if (!anonymize) return;
-    const { width, height } = page.getSize();
-    const maskHeight = pageIndex === 0 ? 50 : 18;
-    const maskY = pageIndex === 0 ? Math.max(0, height - 170) : Math.max(0, height - maskHeight);
-    page.drawRectangle({ x: 0, y: maskY, width, height: maskHeight, color: PDFLib.rgb(1, 1, 1), opacity: 1 });
-  });
+  pages.forEach((page) => output.addPage(page));
   const bytes = await output.save({ useObjectStreams: true, addDefaultPage: false });
   return new File([bytes], `student-${String(index + 1).padStart(3, "0")}_pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
+}
+
+async function createPrivacyRedactedStudentPdf(sourceBlob, pageNumbers, index = 0) {
+  if (!window.pdfjsLib?.getDocument) throw new Error("개인정보 보호 도구를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  const data = new Uint8Array(await sourceBlob.arrayBuffer());
+  const loadingTask = window.pdfjsLib.getDocument({ data, isEvalSupported: false });
+  const source = await loadingTask.promise;
+  const output = await PDFLib.PDFDocument.create();
+  const anonymousCode = `S${String(index + 1).padStart(3, "0")}`;
+  try {
+    for (const sourcePageNumber of pageNumbers) {
+      if (sourcePageNumber < 1 || sourcePageNumber > source.numPages) throw new Error(`${sourcePageNumber}쪽을 답안 PDF에서 찾지 못했습니다.`);
+      const page = await source.getPage(sourcePageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetWidth = pageNumbers.length > 5 ? 1500 : 1800;
+      const scale = Math.min(3, Math.max(1.5, targetWidth / Math.max(1, baseViewport.width)));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
+      redactIdentityHeader(canvas, anonymousCode);
+      const blob = await canvasToBlob(canvas, "image/jpeg", pageNumbers.length > 5 ? 0.86 : 0.9);
+      const image = await output.embedJpg(await blob.arrayBuffer());
+      const outputPage = output.addPage([baseViewport.width, baseViewport.height]);
+      outputPage.drawImage(image, { x: 0, y: 0, width: baseViewport.width, height: baseViewport.height });
+      canvas.width = 1;
+      canvas.height = 1;
+      page.cleanup();
+    }
+    const bytes = await output.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
+    return new File([bytes], `anonymous-${anonymousCode}_redacted-pages-${pageNumbers.join("-")}.pdf`, { type: "application/pdf" });
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
+function redactIdentityHeader(canvas, anonymousCode) {
+  const context = canvas.getContext("2d", { alpha: false });
+  const maskHeight = Math.max(1, Math.round(canvas.height * 0.22));
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, maskHeight);
+  context.strokeStyle = "#d9dce5";
+  context.lineWidth = Math.max(2, Math.round(canvas.width * 0.0015));
+  context.strokeRect(0, 0, canvas.width, maskHeight);
+  context.fillStyle = "#596176";
+  context.font = `700 ${Math.max(18, Math.round(canvas.width * 0.013))}px sans-serif`;
+  context.textBaseline = "middle";
+  context.fillText(`ANON ${anonymousCode} · IDENTITY REDACTED`, Math.round(canvas.width * 0.025), Math.round(maskHeight * 0.5));
 }
 
 async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
@@ -2124,7 +2248,7 @@ async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => {
     if (blob) resolve(blob);
-    else reject(new Error("필기 강조 이미지를 만들지 못했습니다."));
+    else reject(new Error("PDF 판독용 이미지를 만들지 못했습니다."));
   }, type, quality));
 }
 
@@ -2385,7 +2509,7 @@ async function renderSettings() {
           <div class="settings-actions"><button class="primary-action" type="submit">키 테스트 후 저장</button>${hasSavedKey ? `<button class="secondary-action danger-action" type="button" data-delete-api-key>저장된 키 삭제</button>` : ""}</div>
         </form>
       </section>
-      <section class="key-safety-grid"><article><span>1</span><div><strong>실제 생성 확인</strong><p>모델 조회뿐 아니라 짧은 구조화 응답 생성까지 성공해야 저장됩니다.</p></div></article><article><span>2</span><div><strong>최소 전송</strong><p>고정 학생정보 영역을 가린 사본과 익명 채점번호를 사용합니다.</p></div></article><article><span>3</span><div><strong>교사 최종 확인</strong><p>자유롭게 적은 이름이나 흐린 필기는 교사가 원본과 함께 확인해야 합니다.</p></div></article></section>
+      <section class="key-safety-grid"><article><span>1</span><div><strong>실제 생성 확인</strong><p>모델 조회뿐 아니라 짧은 구조화 응답 생성까지 성공해야 저장됩니다.</p></div></article><article><span>2</span><div><strong>신원 픽셀 삭제</strong><p>각 페이지의 상단 신원 영역을 지우고 새 이미지 PDF로 평면화한 뒤 익명 채점번호만 전송합니다.</p></div></article><article><span>3</span><div><strong>교사 최종 확인</strong><p>답안 본문에 이름을 따로 적지 않도록 안내하고, 흐린 필기는 교사가 원본과 함께 확인합니다.</p></div></article></section>
     </div>`;
   const form = app.querySelector("#api-key-form");
   const input = form.elements.apiKey;

@@ -15,6 +15,20 @@ test("student management uses clear Excel bulk-create labels and supports more t
   assert.doesNotMatch(schoolAppSource, /학생 명단 불러오기|Excel·CSV 선택/);
 });
 
+test("AI grading securely removes identity pixels before sending an anonymous answer PDF", () => {
+  assert.match(schoolAppSource, /if \(anonymize\) return createPrivacyRedactedStudentPdf\(sourceBlob, pageNumbers, index\);/);
+  const start = schoolAppSource.indexOf("async function createPrivacyRedactedStudentPdf");
+  const end = schoolAppSource.indexOf("async function prepareEnhancedAnswerImages", start);
+  const privacyPipeline = schoolAppSource.slice(start, end);
+  assert.match(privacyPipeline, /page\.render\(\{ canvasContext: context/);
+  assert.match(privacyPipeline, /redactIdentityHeader\(canvas, anonymousCode\)/);
+  assert.match(privacyPipeline, /output\.embedJpg\(await blob\.arrayBuffer\(\)\)/);
+  assert.doesNotMatch(privacyPipeline, /copyPages/);
+  assert.match(privacyPipeline, /canvas\.height \* 0\.22/);
+  assert.match(privacyPipeline, /IDENTITY REDACTED/);
+  assert.match(schoolAppSource, /상단 신원 영역을 픽셀 단위로 삭제/);
+});
+
 test("decodeTextBytes automatically reads a Windows Korean CP949 roster", () => {
   const cp949Bytes = Buffer.from("C7D0B3E22CB9DD2CB9F8C8A32CC0CCB8A70D0A362C312C312CB0ADBFACBFEC0D0A", "hex");
   assert.equal(Workflow.decodeTextBytes(cp949Bytes), "학년,반,번호,이름\r\n6,1,1,강연우\r\n");
