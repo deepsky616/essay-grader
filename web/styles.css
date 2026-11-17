@@ -799,6 +799,15 @@ a { color: inherit; text-decoration: none; }
 .mini-panel-head strong { font-size: 15px; }
 .mini-panel-head span { overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .pdf-preview-panel iframe, .student-answer-preview iframe { display: block; width: 100%; height: clamp(620px,76vh,920px); border: 0; background: #eceff3; }
+.split-selection-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 15px; border-bottom: 1px solid var(--line); background: rgba(233,239,255,.38); }
+.split-selection-toolbar > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.split-selection-toolbar strong { font-size: 14px; }
+.split-selection-toolbar strong b { color: var(--blue); font-size: 17px; }
+.split-selection-toolbar span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.split-bulk-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.split-bulk-actions button { min-width: max-content; padding: 8px 10px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; white-space: nowrap; }
+.split-bulk-actions button:last-child { color: #8b2e20; }
+.split-bulk-actions button:disabled { cursor: not-allowed; filter: grayscale(.7); opacity: .48; }
 .split-list { max-height: 520px; overflow: auto; }
 .split-row { display: grid; grid-template-columns: 24px 50px minmax(100px,1fr) auto; gap: 8px; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .split-row.is-included { background: rgba(185,234,210,.14); }
@@ -1053,6 +1062,9 @@ a { color: inherit; text-decoration: none; }
   .rubric-section-title > button { align-self: flex-start; }
   .rubric-ai-launch { grid-template-columns: 1fr; gap: 10px; }
   .rubric-ai-launch > button { width: 100%; }
+  .split-selection-toolbar { align-items: stretch; flex-direction: column; }
+  .split-bulk-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .split-bulk-actions button { min-width: 0; }
   .grading-progress-card { padding-inline: 18px; }
   .grading-progress-overview { grid-template-columns: 1fr; justify-items: start; }
   .grading-progress-main { width: 100%; }

@@ -1353,6 +1353,9 @@ function renderSubmissionTab(course, targetStudents) {
   const submission = course.submission;
   const isReady = targetStudents.length > 0 && designs.length > 0;
   const assignmentMap = new Map((submission?.assignments || []).map((item) => [item.studentId, item]));
+  const includedStudentCount = submission?.includedStudentIds?.filter((id) => targetStudents.some((student) => student.id === id)).length || 0;
+  const allStudentsIncluded = Boolean(targetStudents.length) && includedStudentCount === targetStudents.length;
+  const requiredPageCount = includedStudentCount * Number(submission?.pagesPerStudent || 0);
   const previewUrl = submission?.sourceFile?.blob ? createPreviewUrl(submission.sourceFile.blob) : "";
   return `
     <div class="workflow-heading"><div><p class="section-kicker">STEP 3</p><h2>과제물 관리</h2><p>학급 답안 PDF 1개를 올리면 선택한 학생 순서와 1인당 페이지 수에 따라 자동 분할합니다.</p></div><span>${submission ? `${submission.pageCount}쪽` : "업로드 전"}</span></div>
@@ -1371,6 +1374,10 @@ function renderSubmissionTab(course, targetStudents) {
           </section>
           <section class="split-student-panel">
             <div class="mini-panel-head"><strong>학생 번호별 자동 분할</strong><span>체크 해제 시 다음 학생부터 페이지를 당겨 배정</span></div>
+            <div class="split-selection-toolbar">
+              <div><strong>분할 대상 <b>${includedStudentCount}</b> / ${targetStudents.length}명</strong><span>필요 ${requiredPageCount}쪽 · 업로드 PDF ${submission.pageCount}쪽</span></div>
+              <div class="split-bulk-actions"><button type="button" data-select-all-submissions ${allStudentsIncluded ? "disabled" : ""}>전체 학생 선택</button><button type="button" data-clear-all-submissions ${includedStudentCount ? "" : "disabled"}>전체 선택 해제</button></div>
+            </div>
             <div class="split-list">
               ${targetStudents.map((student) => {
                 const assignment = assignmentMap.get(student.id);
@@ -1423,17 +1430,30 @@ function bindSubmissionTab(course, targetStudents) {
       renderCourse(course.id, "submissions");
     } catch (error) { showToast(friendlyError(error)); }
   });
-  app.querySelectorAll("[data-include-submission]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
-    const includedStudentIds = Array.from(app.querySelectorAll("[data-include-submission]:checked")).map((input) => input.value);
+  const saveSubmissionSelection = async (includedStudentIds, message = "") => {
     course.submission = buildSubmission({
       ...course.submission,
       includedStudentIds,
       students: targetStudents,
     });
     course.grading = null;
+    course.updatedAt = new Date().toISOString();
     await putCourse(course);
+    if (message) showToast(message);
     renderCourse(course.id, "submissions");
+  };
+  app.querySelectorAll("[data-include-submission]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
+    const includedStudentIds = Array.from(app.querySelectorAll("[data-include-submission]:checked")).map((input) => input.value);
+    await saveSubmissionSelection(includedStudentIds);
   }));
+  app.querySelector("[data-select-all-submissions]")?.addEventListener("click", () => saveSubmissionSelection(
+    targetStudents.map((student) => student.id),
+    `전체 학생 ${targetStudents.length}명을 분할 대상으로 선택했습니다.`,
+  ));
+  app.querySelector("[data-clear-all-submissions]")?.addEventListener("click", () => saveSubmissionSelection(
+    [],
+    "전체 학생의 분할 대상 선택을 해제했습니다.",
+  ));
 }
 
 function buildSubmission({ sourceFile, pageCount, pagesPerStudent, includedStudentIds, students, designId }) {

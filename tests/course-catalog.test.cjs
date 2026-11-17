@@ -133,6 +133,17 @@ test("assessment target class options come only from classes registered in stude
   assert.match(source, /학생 관리에 등록된 .*학년 반만 표시됩니다/);
 });
 
+test("submission splitting can select or clear every target student at once", () => {
+  assert.match(source, /data-select-all-submissions[^>]*>전체 학생 선택<\/button>/);
+  assert.match(source, /data-clear-all-submissions[^>]*>전체 선택 해제<\/button>/);
+  assert.match(source, /분할 대상 <b>\$\{includedStudentCount\}<\/b> \/ \$\{targetStudents\.length\}명/);
+  assert.match(source, /필요 \$\{requiredPageCount\}쪽 · 업로드 PDF \$\{submission\.pageCount\}쪽/);
+  assert.match(source, /data-select-all-submissions[\s\S]*?targetStudents\.map\(\(student\) => student\.id\)/);
+  assert.match(source, /data-clear-all-submissions[\s\S]*?saveSubmissionSelection\(\s*\[\]/);
+  assert.match(styles, /\.split-selection-toolbar \{[^}]*justify-content: space-between/);
+  assert.match(styles, /\.split-bulk-actions \{[^}]*display: flex/);
+});
+
 test("home and navigation use the requested AI essay-assessment title", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.match(source, /<h1>AI 서·논술형<br><span>평가지원시스템<\/span><\/h1>/);
