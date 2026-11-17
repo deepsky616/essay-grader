@@ -563,7 +563,7 @@ test("gradeAnswer requires a blank answer sheet for scanned-paper grading", asyn
       metadata: { requireBlankComparison: true, rubricCriteria: [], exampleAnswers: [] },
       files: [{ role: "studentAnswer", file }],
     }),
-    /빈 답안지 PDF가 필요합니다/,
+    /동일한 평가지 PDF가 필요합니다/,
   );
 });
 
@@ -723,6 +723,42 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
   });
   assert.equal(result.rubricCriteria[0].scoreLevels[0].score, 5);
   assert.equal(result.rubricCriteria[0].scoreLevels[1].criterion, "조건 1개 충족");
+});
+
+test("extractEvaluationDocument can fill achievement, rubric, and example sections from one design PDF", async () => {
+  const bytes = new TextEncoder().encode("combined design pdf");
+  const file = { name: "평가기준안.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
+  const result = await AI.extractEvaluationDocument({
+    apiKey: VALID_KEY,
+    file,
+    kind: "design",
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const schema = body.generationConfig.responseSchema;
+      assert.equal(schema.properties.achievementGroups.type, "array");
+      assert.equal(schema.properties.rubricCriteria.type, "array");
+      assert.equal(schema.properties.exampleAnswers.type, "array");
+      assert.match(body.contents[0].parts[0].text, /배점 추정/);
+      assert.match(body.contents[0].parts[0].text, /학생용 평가지의 빈 응답칸/);
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+        taskName: "분수의 곱셈을 활용하여 문제해결하기",
+        achievementGroups: [{
+          itemRange: "1~4번",
+          standard: "[6수01-09] 분수의 곱셈의 계산 원리를 탐구하고 그 계산을 할 수 있다.",
+          standardCode: "6수01-09",
+          domain: "수와 연산",
+          levels: [{ label: "매우 잘함", description: "계산 원리를 잘 이해하고 정확히 해결한다." }],
+        }],
+        rubricCriteria: [{ questionNumber: "1", evaluationElement: "분수의 곱셈 계산", scoreLevels: [{ score: 3, criterion: "모두 정확하다." }, { score: 0, criterion: "해결하지 못했다." }] }],
+        exampleAnswers: [{ questionNumber: "1", answerText: "분자에 자연수를 곱한다.", mathNotation: "9/16 × 12 = 27/4", visualDescription: "" }],
+        notes: ["배점 추정"],
+      }) }] } }] }), { status: 200 });
+    },
+  });
+
+  assert.equal(result.taskName, "분수의 곱셈을 활용하여 문제해결하기");
+  assert.equal(result.achievementGroups[0].standardCode, "6수01-09");
+  assert.equal(result.exampleAnswers[0].mathNotation, "9/16 × 12 = 27/4");
 });
 
 test("generateRubricCriteria requests the exact teacher-selected band scores", async () => {

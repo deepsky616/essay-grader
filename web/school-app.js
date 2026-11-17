@@ -596,7 +596,7 @@ function renderDesignTab(course) {
 function designCard(design, index) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
   const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
-  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점 · 빈 답안지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
+  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(rubricTotalScore(rubricCriteria))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
 
 function createEmptyDesign() {
@@ -627,6 +627,15 @@ function designEditor(design, course) {
       <label class="design-name-field">평가(과제)명<input name="taskName" value="${escapeHtml(design.taskName)}" placeholder="예: 원의 넓이 서·논술형 평가" required maxlength="100"></label>
 
       <section class="design-editor-section">
+        <div class="editor-section-title"><div><span>AI</span><strong>평가기준안 한 번에 자동 입력</strong><p>성취기준·성취수준·문제별 채점기준·예시답안이 포함된 PDF 또는 사진을 올리면 아래 1~3을 함께 작성합니다.</p></div></div>
+        <div class="document-auto-row">
+          <label>평가기준안 PDF·사진<input name="designDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
+          <button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>
+          <span>${design.sourceFile ? `저장됨: ${escapeHtml(design.sourceFile.name)}` : "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요."}</span>
+        </div>
+      </section>
+
+      <section class="design-editor-section">
         <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과의 2022 개정 교육과정을 영역별로 선택하면 A·B·C가 상·중·하로 자동 입력됩니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
         ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취기준 선택 가능</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 성취기준 자료를 찾지 못했습니다.</span></div>`}
         <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course)).join("")}</div>
@@ -653,13 +662,13 @@ function designEditor(design, course) {
         <div data-example-rows>${(design.exampleAnswers || []).map(exampleEditorRow).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
-        <div class="editor-section-title"><div><span>4</span><strong>빈 답안지 등록</strong><p>학생이 쓰기 전의 동일한 답안지를 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다.</p></div></div>
+        <div class="editor-section-title"><div><span>4</span><strong>학생용 평가지 등록</strong><p>학생이 작성하기 전의 평가지 원본을 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다. 교사용 기준안·예시답안 페이지는 제외하세요.</p></div></div>
         <div class="document-auto-row">
-          <label>빈 답안지 PDF<input name="blankDocument" type="file" accept="application/pdf"></label>
-          <span>${design.blankFile ? `저장됨: ${escapeHtml(design.blankFile.name)}` : "종이 스캔 답안 AI 채점에는 등록이 필요합니다."}</span>
+          <label>학생용 평가지 PDF<input name="blankDocument" type="file" accept="application/pdf"></label>
+          <span>${design.blankFile ? `저장됨: ${escapeHtml(design.blankFile.name)}` : "학생에게 배부한 작성 전 평가지만 PDF로 등록해 주세요."}</span>
         </div>
-        ${design.blankFile ? `<label class="remove-saved-file"><input name="removeBlankDocument" type="checkbox"> 저장된 빈 답안지 제거</label>` : ""}
-        <p class="blank-answer-help">학생별 답안 페이지 수와 빈 답안지 페이지 수가 같아야 합니다. 빈 답안지는 학생 페이지 분할 수에 포함되지 않습니다.</p>
+        ${design.blankFile ? `<label class="remove-saved-file"><input name="removeBlankDocument" type="checkbox"> 저장된 학생용 평가지 제거</label>` : ""}
+        <p class="blank-answer-help">학생 1명의 작성 답안 페이지 수와 학생용 평가지 페이지 수가 같아야 합니다. 교사용 기준안·정답 페이지는 넣지 않으며, 학생용 평가지 자체는 학생 답안 페이지 분할 수에 포함되지 않습니다.</p>
       </section>
       <p class="design-form-status" data-design-status role="status">자동 입력 결과는 반드시 원본과 대조해 주세요.</p>
       <div class="form-bottom-actions"><button class="secondary-action" type="button" data-cancel-design>취소</button><button class="primary-action" type="submit">평가 설계 저장</button></div>
@@ -785,7 +794,7 @@ function bindDesignTab(course) {
     if (!event.target.matches('[name="exampleText"], [name="exampleVisual"]')) return;
     event.target.value = toTeacherFriendlyMath(event.target.value);
   });
-  form.querySelectorAll("[data-extract-document]").forEach((button) => button.addEventListener("click", () => extractDesignDocument(form, button.dataset.extractDocument)));
+  form.querySelectorAll("[data-extract-document]").forEach((button) => button.addEventListener("click", () => extractDesignDocument(form, button.dataset.extractDocument, course)));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -1042,10 +1051,12 @@ function renderMathPreview(textarea) {
   catch { preview.textContent = expression; }
 }
 
-async function extractDesignDocument(form, kind) {
-  const input = form.elements[kind === "rubric" ? "rubricDocument" : "exampleDocument"];
+async function extractDesignDocument(form, kind, course) {
+  const inputName = kind === "design" ? "designDocument" : kind === "rubric" ? "rubricDocument" : "exampleDocument";
+  const input = form.elements[inputName];
   const file = input.files?.[0];
-  if (!file) { setDesignStatus(form, `${kind === "rubric" ? "채점기준표" : "예시답안"} PDF 또는 사진을 먼저 선택해 주세요.`, true); return; }
+  const documentLabel = kind === "design" ? "평가기준안" : kind === "rubric" ? "채점기준표" : "예시답안";
+  if (!file) { setDesignStatus(form, `${documentLabel} PDF 또는 사진을 먼저 선택해 주세요.`, true); return; }
   if (!ACCEPTED_DOCUMENT_TYPES.has(file.type) || file.size > MAX_FILE_BYTES) { setDesignStatus(form, "PDF·JPG·PNG·WEBP 형식의 20MB 이하 파일을 선택해 주세요.", true); return; }
   const apiKey = await loadGeminiApiKey();
   if (!apiKey) { setDesignStatus(form, "설정에서 Gemini API 키를 먼저 테스트하여 저장해 주세요.", true); return; }
@@ -1056,7 +1067,22 @@ async function extractDesignDocument(form, kind) {
   setDesignStatus(form, "표, 수식, 도형을 분석하고 있습니다. 자동 입력 후 원본과 대조해 주세요.");
   try {
     const result = await ChaejeomAI.extractEvaluationDocument({ apiKey, file, kind, model });
-    if (kind === "rubric") {
+    if (kind === "design") {
+      const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
+      const rubrics = normalizeRubricCriteria(result.rubricCriteria || []);
+      const examples = Array.isArray(result.exampleAnswers) ? result.exampleAnswers : [];
+      if (!achievements.length || !rubrics.length || !examples.length) throw new Error("문서에서 성취기준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
+      if (result.taskName) form.elements.taskName.value = String(result.taskName).trim();
+      form.querySelector("[data-achievement-groups]").innerHTML = achievements.map((group, index) => achievementEditor({
+        ...group,
+        id: crypto.randomUUID(),
+        levels: (group.levels || []).map((level) => ({ ...level, id: crypto.randomUUID() })),
+      }, index, course)).join("");
+      form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
+      form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID() })).join("");
+      form._designSourceFile = file;
+      refreshMathPreviews(form);
+    } else if (kind === "rubric") {
       const items = normalizeRubricCriteria(result.rubricCriteria || []);
       if (!items.length) throw new Error("문서에서 채점기준 행을 찾지 못했습니다.");
       form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
@@ -1066,12 +1092,13 @@ async function extractDesignDocument(form, kind) {
       form.querySelector("[data-example-rows]").innerHTML = items.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID() })).join("");
     }
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
-    setDesignStatus(form, `${file.name} 자동 입력을 마쳤습니다.${note}`);
+    const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
+    setDesignStatus(form, `${file.name} ${completion}${note}`);
   } catch (error) {
     setDesignStatus(form, friendlyError(error), true);
   } finally {
     button.disabled = false;
-    button.textContent = kind === "rubric" ? "AI로 채점기준 자동 입력" : "AI로 예시답안 자동 입력";
+    button.textContent = kind === "design" ? "AI로 1~3 자동 입력" : kind === "rubric" ? "AI로 채점기준 자동 입력" : "AI로 예시답안 자동 입력";
   }
 }
 
@@ -1120,14 +1147,16 @@ function collectDesignForm(form, existing) {
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");
   const rubricFile = form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
   const exampleFile = form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
+  const sourceFile = form._designSourceFile || existing?.sourceFile || null;
   const blankFile = form.elements.removeBlankDocument?.checked
     ? null
     : form.elements.blankDocument.files?.[0] || existing?.blankFile || null;
   if (rubricFile) validateDocumentFile(rubricFile);
   if (exampleFile) validateDocumentFile(exampleFile);
+  if (sourceFile) validateDocumentFile(sourceFile);
   if (blankFile) {
     validateDocumentFile(blankFile);
-    if (blankFile.type !== "application/pdf") throw new Error("빈 답안지는 여러 페이지를 비교할 수 있도록 PDF 파일로 등록해 주세요.");
+    if (blankFile.type !== "application/pdf") throw new Error("학생용 평가지는 여러 페이지를 비교할 수 있도록 PDF 파일로 등록해 주세요.");
   }
   return {
     id: existing?.id || crypto.randomUUID(),
@@ -1137,6 +1166,7 @@ function collectDesignForm(form, existing) {
     exampleAnswers,
     rubricFile,
     exampleFile,
+    sourceFile,
     blankFile,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1244,7 +1274,7 @@ function bindSubmissionTab(course, targetStudents) {
       if (selectedDesign?.blankFile) {
         const blankPageCount = await getPdfPageCount(asFile(selectedDesign.blankFile));
         const pagesPerStudent = Math.max(1, Math.min(50, Number(form.elements.pagesPerStudent.value) || 1));
-        if (blankPageCount !== pagesPerStudent) throw new Error(`빈 답안지는 ${blankPageCount}쪽입니다. 학생 1명당 답안지 페이지 수도 ${blankPageCount}쪽으로 맞춰 주세요.`);
+        if (blankPageCount !== pagesPerStudent) throw new Error(`학생용 평가지는 ${blankPageCount}쪽입니다. 학생 1명당 작성 답안 페이지 수도 ${blankPageCount}쪽으로 맞춰 주세요.`);
       }
       const includedStudentIds = selectedFile || !course.submission
         ? targetStudents.map((student) => student.id)
@@ -1326,9 +1356,9 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const runButtonLabel = canContinue ? "AI 채점 계속" : grading.status === "complete" ? "AI 채점 다시 실행" : "AI 채점 실행";
   const scanReady = Boolean(submission && design?.blankFile);
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>빈 답안지와 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 4 · ${escapeHtml(selectedModel)}</p><h2>AI 채점</h2><p>학생용 평가지 원본과 손글씨 답안을 비교한 뒤 성취기준·채점기준·예시답안에 따라 점수와 피드백을 작성합니다.</p></div><span class="grading-state state-${escapeHtml(displayStatus)}">${statusLabel}</span></div>
     <div class="grading-quality-grid">
-      <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>빈 답안지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 빈 답안지 PDF를 등록해 주세요."}</p></div></article>
+      <article class="${design?.blankFile ? "is-ready" : "is-missing"}"><span>1</span><div><strong>학생용 평가지 비교</strong><p>${design?.blankFile ? escapeHtml(design.blankFile.name) : "평가 설계에서 학생이 작성하기 전의 평가지 PDF를 등록해 주세요."}</p></div></article>
       <article class="is-ready"><span>2</span><div><strong>필기·도형 고해상도 보정</strong><p>신원 영역을 가린 뒤 흐린 연필선과 작은 수식을 강조한 AI 전송용 이미지를 만듭니다.</p></div></article>
       <article class="is-ready"><span>3</span><div><strong>빠른 선별 검증 채점</strong><p>최대 ${GRADING_PARALLELISM}명을 동시에 1차 채점하고, 확신도가 낮거나 검증에 걸린 문항만 고해상도로 다시 확인합니다. 사용량 제한 시 동시 처리 수를 자동으로 낮춥니다.</p></div></article>
     </div>
@@ -1336,7 +1366,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
       <div><strong>${design ? escapeHtml(design.taskName) : "채점할 평가 설계가 연결되지 않았습니다."}</strong><p>${submission ? `${submission.assignments.length}명 답안 · 1인당 ${submission.pagesPerStudent}쪽` : "과제물 관리에서 학급 PDF를 먼저 자동 분할해 주세요."}</p></div>
       ${hasApiKey ? `<div class="grading-run-actions"><button class="primary-action" type="button" data-run-grading ${!scanReady || isActivelyRunning ? "disabled" : ""}>${runButtonLabel}</button><button class="stop-grading-action" type="button" data-stop-grading ${isActivelyRunning ? "" : "hidden"}>채점 멈추기</button></div>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
-    ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>빈 답안지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 답안지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
+    ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>학생용 평가지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 평가지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
     <div class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress>
       <div><span data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`))}</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}명 완료</strong></div>
       <div class="grading-progress-meta"><span data-progress-time>경과 ${formatElapsedTime(elapsed)}</span><span data-progress-percent>${progress}%</span></div>
@@ -1603,13 +1633,13 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   const submission = course.submission;
   const design = course.designs?.find((item) => item.id === submission?.designId);
   if (!submission || !design) { showToast("과제물 분할과 평가 설계를 먼저 준비해 주세요."); return; }
-  if (!design.blankFile) { showToast("평가 설계에서 동일한 빈 답안지 PDF를 먼저 등록해 주세요."); return; }
+  if (!design.blankFile) { showToast("평가 설계에서 학생이 작성하기 전의 평가지 PDF를 먼저 등록해 주세요."); return; }
   const blankFile = asFile(design.blankFile);
   let blankPageCount = 0;
   try { blankPageCount = await getPdfPageCount(blankFile); }
-  catch { showToast("빈 답안지 PDF를 읽지 못했습니다. 평가 설계에서 정상 PDF로 다시 등록해 주세요."); return; }
+  catch { showToast("학생용 평가지 PDF를 읽지 못했습니다. 평가 설계에서 정상 PDF로 다시 등록해 주세요."); return; }
   if (blankPageCount !== submission.pagesPerStudent) {
-    showToast(`빈 답안지는 ${blankPageCount}쪽이고 학생 답안은 1명당 ${submission.pagesPerStudent}쪽입니다. 페이지 수를 같게 맞춰 주세요.`);
+    showToast(`학생용 평가지는 ${blankPageCount}쪽이고 학생 답안은 1명당 ${submission.pagesPerStudent}쪽입니다. 페이지 수를 같게 맞춰 주세요.`);
     return;
   }
   const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
@@ -1984,7 +2014,7 @@ async function regradeSingleStudent(course, targetStudents, studentId, button) {
   const assignment = submission?.assignments?.find((item) => item.studentId === studentId && item.pageNumbers.length);
   const student = targetStudents.find((item) => item.id === studentId);
   if (!submission || !design || !assignment || !student) { showToast("이 학생의 평가 설계 또는 답안 페이지를 찾지 못했습니다."); return; }
-  if (!design.blankFile) { showToast("평가 설계에서 빈 답안지 PDF를 먼저 등록해 주세요."); return; }
+  if (!design.blankFile) { showToast("평가 설계에서 학생용 평가지 PDF를 먼저 등록해 주세요."); return; }
   if (!window.confirm(`${StudentWorkflow.rosterIdentity(student)} 학생만 AI로 다시 채점할까요? 이 학생의 기존 AI 점수와 교사 수정 내용은 새 결과로 교체됩니다.`)) return;
   const [apiKey, selectedModel, keyStatus] = await Promise.all([
     loadGeminiApiKey(),
@@ -1999,7 +2029,7 @@ async function regradeSingleStudent(course, targetStudents, studentId, button) {
   const blankFile = asFile(design.blankFile);
   try {
     const blankPageCount = await getPdfPageCount(blankFile);
-    if (blankPageCount !== assignment.pageNumbers.length) throw new Error(`빈 답안지는 ${blankPageCount}쪽이고 이 학생 답안은 ${assignment.pageNumbers.length}쪽입니다.`);
+    if (blankPageCount !== assignment.pageNumbers.length) throw new Error(`학생용 평가지는 ${blankPageCount}쪽이고 이 학생 답안은 ${assignment.pageNumbers.length}쪽입니다.`);
   } catch (error) {
     showToast(friendlyError(error));
     return;

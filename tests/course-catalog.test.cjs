@@ -58,6 +58,9 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /data-open-rubric-ai>채점기준 AI 생성/);
   assert.match(source, /name="rubricAiBandCount"/);
   assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
+  assert.match(source, /data-extract-document="design">AI로 1~3 자동 입력/);
+  assert.match(source, /<strong>학생용 평가지 등록<\/strong>/);
+  assert.match(source, /교사용 기준안·예시답안 페이지는 제외/);
 });
 
 test("downloaded student roster template includes school name and leaves every data row blank", () => {
