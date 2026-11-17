@@ -32,9 +32,13 @@ test("the interface uses readable body and control text without enlarging page t
   assert.match(interfaceStyles, /\.school-hero h1\s*\{[^}]*font-size:\s*clamp\(52px, 7vw, 82px\);/);
 });
 
-test("the rubric AI action stays horizontal without one-character wrapping", () => {
+test("the rubric AI action has its own unclipped launch row", () => {
   assert.match(source, /data-open-rubric-ai>채점기준 AI 생성<\/button>/);
-  assert.match(styles, /\.editor-title-actions button \{[^}]*min-width: max-content;[^}]*white-space: nowrap;[^}]*word-break: keep-all;[^}]*writing-mode: horizontal-tb;/);
+  assert.match(source, /class="rubric-ai-launch"[\s\S]*?data-open-rubric-ai>채점기준 AI 생성<\/button>/);
+  assert.match(source, /class="editor-section-title rubric-section-title"[\s\S]*?data-add-rubric>＋ 평가요소 추가<\/button><\/div>[\s\S]*?class="rubric-ai-launch"/);
+  assert.match(styles, /\.rubric-ai-launch \{[^}]*grid-template-columns: minmax\(0,1fr\) auto;[^}]*gap: 18px;/);
+  assert.match(styles, /\.rubric-ai-launch > button \{[^}]*min-width: max-content;[^}]*white-space: nowrap;[^}]*word-break: keep-all;[^}]*writing-mode: horizontal-tb;/);
+  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.rubric-ai-launch \{ grid-template-columns: 1fr;/);
 });
 
 test("AI grading guidance cards wrap long Korean copy without text overlap", () => {

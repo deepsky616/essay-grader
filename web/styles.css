@@ -694,9 +694,12 @@ a { color: inherit; text-decoration: none; }
 .editor-section-title strong { font-size: 16px; }
 .editor-section-title p { margin: 0; color: var(--muted); font-size: 13px; }
 .editor-section-title > button, .mini-add, .document-auto-row button { padding: 8px 11px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; }
-.editor-title-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
-.editor-title-actions button { flex: 0 0 auto; min-width: max-content; padding: 8px 11px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; white-space: nowrap; word-break: keep-all; writing-mode: horizontal-tb; }
-.editor-title-actions button:first-child { background: var(--ink); color: white; }
+.rubric-section-title > button { flex: 0 0 auto; min-width: max-content; white-space: nowrap; word-break: keep-all; }
+.rubric-ai-launch { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: center; margin-bottom: 13px; padding: 13px 15px; border: 1px solid rgba(49,84,214,.24); border-radius: 11px; background: rgba(233,239,255,.48); }
+.rubric-ai-launch > div { display: grid; gap: 4px; min-width: 0; }
+.rubric-ai-launch strong { color: var(--ink); font-size: 15px; }
+.rubric-ai-launch span { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.rubric-ai-launch > button { min-width: max-content; padding: 10px 14px; border: 1px solid var(--ink); border-radius: 9px; background: var(--ink); color: white; cursor: pointer; font-size: 14px; font-weight: 900; white-space: nowrap; word-break: keep-all; writing-mode: horizontal-tb; }
 .curriculum-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(185,234,210,.25); }
 .curriculum-context strong { color: #27634c; font-size: 14px; }
 .curriculum-context span { color: var(--muted); font-size: 13px; }
@@ -1015,7 +1018,9 @@ a { color: inherit; text-decoration: none; }
   .design-card { grid-template-columns: 38px minmax(0,1fr); }
   .design-card button { grid-column: 2; justify-self: start; }
   .editor-section-title { align-items: stretch; flex-direction: column; }
-  .editor-title-actions { justify-content: flex-start; }
+  .rubric-section-title > button { align-self: flex-start; }
+  .rubric-ai-launch { grid-template-columns: 1fr; gap: 10px; }
+  .rubric-ai-launch > button { width: 100%; }
   .curriculum-context { align-items: flex-start; flex-direction: column; }
   .level-editor-row { grid-template-columns: 75px minmax(0,1fr) 36px; }
   .student-review-actions, .detail-ai-actions, .score-bulk-actions { grid-template-columns: 1fr; }

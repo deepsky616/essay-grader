@@ -642,7 +642,11 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>직접 추가하거나 평가요소와 급간 수를 입력해 AI로 배점별 기준을 만들 수 있습니다.</p></div><div class="editor-title-actions"><button type="button" data-open-rubric-ai>채점기준 AI 생성</button><button type="button" data-add-rubric>＋ 평가요소 추가</button></div></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>직접 추가하거나 평가요소와 급간 수를 입력해 AI로 배점별 기준을 만들 수 있습니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="rubric-ai-launch">
+          <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 급간 수를 확인한 뒤 배점별 채점기준을 한 번에 생성합니다.</span></div>
+          <button type="button" data-open-rubric-ai>채점기준 AI 생성</button>
+        </div>
         <div class="document-auto-row">
           <label>채점기준표 PDF·사진<input name="rubricDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
           <button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>
