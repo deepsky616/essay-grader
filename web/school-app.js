@@ -304,7 +304,11 @@ async function renderStudentManagement() {
       renderStudentManagement();
     } catch (error) { showToast(friendlyError(error)); }
   });
-  app.querySelector("[data-student-import]").addEventListener("change", (event) => importStudentFile(event.currentTarget.files?.[0]));
+  app.querySelector("[data-student-import]").addEventListener("change", async (event) => {
+    const input = event.currentTarget;
+    await importStudentFile(input.files?.[0]);
+    input.value = "";
+  });
   app.querySelector("[data-download-student-template]").addEventListener("click", downloadStudentTemplate);
   const schoolFilterButtons = Array.from(app.querySelectorAll("[data-student-school-filter]"));
   const schoolRosterGroups = Array.from(app.querySelectorAll("[data-student-school-group]"));
@@ -358,17 +362,40 @@ async function importStudentFile(file) {
   if (!file) return;
   const status = app.querySelector("[data-student-import-status]");
   status.textContent = `${file.name} 읽는 중…`;
+  status.classList.remove("is-error");
   try {
-    let rows;
+    let sheets;
     if (/\.xlsx?$/i.test(file.name)) {
       if (!window.XLSX) throw new Error("Excel 읽기 도구를 불러오지 못했습니다. CSV 파일로 다시 시도해 주세요.");
       const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-      rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false, defval: "" });
-    } else rows = StudentWorkflow.parseDelimited(StudentWorkflow.decodeTextBytes(await file.arrayBuffer()));
-    const roster = StudentWorkflow.parseRosterRows(rows);
-    if (!roster.length) throw new Error("명단에서 학생을 찾지 못했습니다.");
+      sheets = workbook.SheetNames.map((sheetName) => ({
+        name: sheetName,
+        rows: window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false, defval: "" }),
+      }));
+    } else {
+      sheets = [{
+        name: file.name,
+        rows: StudentWorkflow.parseDelimited(StudentWorkflow.decodeTextBytes(await file.arrayBuffer())),
+      }];
+    }
+    const selected = StudentWorkflow.selectRosterSheet(sheets, {
+      preferredSheetName: "학생명단",
+      requiredFields: ["schoolName", "grade", "className", "number", "name"],
+    });
+    if (!selected.roster.length) {
+      if (selected.missingHeaders.length) {
+        const labels = { schoolName: "학교명", grade: "학년", className: "반", number: "번호", name: "이름" };
+        const missing = selected.missingHeaders.map((field) => labels[field]).join(", ");
+        throw new Error(`${selected.sheetName || "첫 번째"} 시트에서 필수 열을 찾지 못했습니다: ${missing}. 첫 행의 열 이름을 확인해 주세요.`);
+      }
+      throw new Error(`${selected.sheetName || "명단"} 시트에서 등록 가능한 학생을 찾지 못했습니다. 학교명, 학년, 반, 번호, 이름을 모두 입력해 주세요.`);
+    }
+    if (selected.incompleteCount) {
+      throw new Error(`${selected.sheetName} 시트에서 필수 값이 비어 있는 학생 ${selected.incompleteCount}명을 찾았습니다. 학교명, 학년, 반, 번호, 이름을 모두 입력해 주세요.`);
+    }
+    const roster = selected.roster;
     await addStudents(roster);
-    showToast(`${roster.length}명의 학생을 일괄 생성했습니다.`);
+    showToast(`${selected.sheetName} 시트에서 ${roster.length}명의 학생을 일괄 생성했습니다.`);
     renderStudentManagement();
   } catch (error) {
     status.textContent = friendlyError(error);

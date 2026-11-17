@@ -12,6 +12,7 @@
     number: ["번호", "출석번호", "학번", "no", "number"],
     name: ["이름", "성명", "학생명", "name"],
   };
+  const ROSTER_FIELDS = ["schoolName", "grade", "className", "number", "name"];
 
   function decodeTextBytes(input) {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || 0);
@@ -90,6 +91,63 @@
     })).filter((student) => student.name || student.number);
 
     return dedupeStudents(students);
+  }
+
+  function selectRosterSheet(sheets, options = {}) {
+    const defaults = options.defaults || {};
+    const requestedFields = Array.isArray(options.requiredFields) && options.requiredFields.length
+      ? options.requiredFields
+      : ["number", "name"];
+    const requiredFields = requestedFields.filter((field) => ROSTER_FIELDS.includes(field));
+    const candidates = (Array.isArray(sheets) ? sheets : []).map((sheet, index) => {
+      const rows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+      const normalizedRows = rows
+        .map((row) => (Array.isArray(row) ? row : Object.values(row || {})).map(clean))
+        .filter((row) => row.some(Boolean));
+      const headerIndex = normalizedRows.findIndex((row) => headerScore(row) >= 2);
+      const headers = headerIndex >= 0 ? normalizedRows[headerIndex] : [];
+      const missingHeaders = requiredFields.filter((field) => {
+        if (clean(defaults[field])) return false;
+        return findHeaderIndex(headers, HEADER_ALIASES[field], -1) < 0;
+      });
+      const parsedRoster = parseRosterRows(rows, defaults);
+      const roster = parsedRoster.filter((student) => requiredFields.every((field) => clean(student[field])));
+      return {
+        index,
+        sheetName: clean(sheet?.name) || `시트 ${index + 1}`,
+        roster,
+        parsedCount: parsedRoster.length,
+        incompleteCount: parsedRoster.length - roster.length,
+        missingHeaders,
+        headerFound: headerIndex >= 0,
+      };
+    });
+
+    const preferredSheetName = normalizeHeader(options.preferredSheetName || "학생명단");
+    const rank = (candidate) => [
+      candidate.roster.length,
+      normalizeHeader(candidate.sheetName) === preferredSheetName ? 1 : 0,
+      candidate.parsedCount,
+      candidate.headerFound ? 1 : 0,
+      -candidate.index,
+    ];
+    const ranked = [...candidates].sort((left, right) => {
+      const leftRank = rank(left);
+      const rightRank = rank(right);
+      for (let index = 0; index < leftRank.length; index += 1) {
+        if (leftRank[index] !== rightRank[index]) return rightRank[index] - leftRank[index];
+      }
+      return 0;
+    });
+    const selected = ranked[0] || null;
+    return {
+      sheetName: selected?.sheetName || "",
+      roster: selected?.roster || [],
+      parsedCount: selected?.parsedCount || 0,
+      incompleteCount: selected?.incompleteCount || 0,
+      missingHeaders: selected?.missingHeaders || [...requiredFields],
+      candidates,
+    };
   }
 
   function normalizeRoster(students) {
@@ -201,12 +259,12 @@
     return index >= 0 ? index : fallback;
   }
 
-  function normalizeHeader(value) { return clean(value).toLocaleLowerCase("ko-KR").replace(/[\s_.-]/g, ""); }
+  function normalizeHeader(value) { return clean(value).toLocaleLowerCase("ko-KR").replace(/[\s_.\-\uFEFF\u200B-\u200D]/g, ""); }
   function normalizeGrade(value) { return clean(value).replace(/학년$/u, "").trim(); }
   function normalizeClassName(value) { return clean(value).replace(/반$/u, "").trim(); }
   function normalizeNumber(value) { return clean(value).replace(/번$/u, "").replace(/\.0+$/, "").trim(); }
   function cell(row, index) { return index >= 0 ? clean(row[index]) : ""; }
-  function clean(value) { return String(value ?? "").trim(); }
+  function clean(value) { return String(value ?? "").replace(/^\uFEFF/u, "").trim(); }
   function positiveInteger(value) { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : 0; }
   function countDelimiter(line, delimiter) { return line.split(delimiter).length - 1; }
 
@@ -214,6 +272,7 @@
     decodeTextBytes,
     parseDelimited,
     parseRosterRows,
+    selectRosterSheet,
     normalizeRoster,
     parsePageNumbers,
     validatePageAssignments,

@@ -50,6 +50,60 @@ test("parseRosterRows fills missing grade and class from assessment defaults", (
   assert.deepEqual(roster, [{ schoolName: "", grade: "5", className: "3", number: "01", name: "홍길동" }]);
 });
 
+test("selectRosterSheet finds a complete roster even when an instruction sheet comes first", () => {
+  const selected = Workflow.selectRosterSheet([
+    {
+      name: "작성 안내",
+      rows: [
+        ["학생 명단 작성 안내"],
+        ["열 이름", "입력 방법", "예시"],
+        ["학교명", "학교 이름을 입력합니다.", "한빛초등학교"],
+      ],
+    },
+    {
+      name: "학생명단",
+      rows: [
+        ["학교명", "학년", "반", "번호", "이름"],
+        ["한빛초등학교", "6", "4", "1", "홍길동"],
+      ],
+    },
+  ], {
+    requiredFields: ["schoolName", "grade", "className", "number", "name"],
+  });
+
+  assert.equal(selected.sheetName, "학생명단");
+  assert.deepEqual(selected.roster, [
+    { schoolName: "한빛초등학교", grade: "6", className: "4", number: "1", name: "홍길동" },
+  ]);
+});
+
+test("selectRosterSheet accepts BOM and zero-width characters in header cells", () => {
+  const selected = Workflow.selectRosterSheet([{
+    name: "학생명단",
+    rows: [
+      ["\uFEFF학교명", "학\u200B년", "반", "번호", "이름"],
+      ["한빛초등학교", "6", "4", "1", "홍길동"],
+    ],
+  }], {
+    requiredFields: ["schoolName", "grade", "className", "number", "name"],
+  });
+
+  assert.equal(selected.roster.length, 1);
+  assert.deepEqual(selected.missingHeaders, []);
+});
+
+test("selectRosterSheet reports missing required columns instead of a generic empty-roster error", () => {
+  const selected = Workflow.selectRosterSheet([{
+    name: "Sheet1",
+    rows: [["학년", "반"], ["6", "1"]],
+  }], {
+    requiredFields: ["schoolName", "grade", "className", "number", "name"],
+  });
+
+  assert.deepEqual(selected.roster, []);
+  assert.deepEqual(selected.missingHeaders, ["schoolName", "number", "name"]);
+});
+
 test("parsePageNumbers expands ranges and reports invalid pages", () => {
   const parsed = Workflow.parsePageNumbers("1, 3-5, 9", 6);
   assert.deepEqual(parsed.pages, [1, 3, 4, 5]);

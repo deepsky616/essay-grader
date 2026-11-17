@@ -64,8 +64,8 @@ test("downloaded student roster template includes school name and leaves every d
   assert.match(source, /const rosterRows = \[\["학교명", "학년", "반", "번호", "이름"\]\]/);
   assert.match(source, /rosterRows\.push\(\["", "", "", "", ""\]\)/);
   assert.doesNotMatch(source, /rosterRows\.push\(\[6, "", "", ""\]\)/);
-  assert.match(source, /StudentWorkflow\.parseRosterRows\(rows\)/);
-  assert.doesNotMatch(source, /StudentWorkflow\.parseRosterRows\(rows, \{ grade: "6" \}\)/);
+  assert.match(source, /StudentWorkflow\.selectRosterSheet\(sheets/);
+  assert.match(source, /workbook\.SheetNames\.map/);
 });
 
 test("student management renders a separate roster for every school, grade, and class group", () => {
