@@ -27,12 +27,13 @@ const ACHIEVEMENT_LEVEL_EXAMPLES = {
   "중": "예: 기준을 이해하고 기본 조건에 맞게 수행할 수 있다.",
   "하": "예: 기준의 일부를 알고 수행을 시도한다.",
 };
+const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS = Object.freeze({ excellent: 80, good: 60, average: 40, effort: 20 });
 const RUBRIC_PERFORMANCE_BANDS = Object.freeze([
-  Object.freeze({ label: "매우잘함", range: "80% 이상", representativeRatio: 1, defaultCriterion: "평가요소를 충분히 충족하고 풀이·설명·근거가 정확하고 완전한 경우" }),
-  Object.freeze({ label: "잘함", range: "60% 이상 80% 미만", representativeRatio: 0.7, defaultCriterion: "평가요소를 대체로 충족했으나 풀이·설명·근거의 일부 보완이 필요한 경우" }),
-  Object.freeze({ label: "보통", range: "40% 이상 60% 미만", representativeRatio: 0.5, defaultCriterion: "평가요소를 부분적으로 충족하고 핵심 풀이·설명·근거가 일부 확인되는 경우" }),
-  Object.freeze({ label: "노력요함", range: "20% 이상 40% 미만", representativeRatio: 0.3, defaultCriterion: "평가요소와 관련된 기초적인 시도 또는 제한적인 근거만 확인되는 경우" }),
-  Object.freeze({ label: "미응답·근거 없음", range: "20% 미만", representativeRatio: 0, defaultCriterion: "무응답이거나 평가요소와 관련된 풀이·설명·근거를 확인하기 어려운 경우" }),
+  Object.freeze({ key: "excellent", label: "매우잘함", defaultCriterion: "평가요소를 충분히 충족하고 풀이·설명·근거가 정확하고 완전한 경우" }),
+  Object.freeze({ key: "good", label: "잘함", defaultCriterion: "평가요소를 대체로 충족했으나 풀이·설명·근거의 일부 보완이 필요한 경우" }),
+  Object.freeze({ key: "average", label: "보통", defaultCriterion: "평가요소를 부분적으로 충족하고 핵심 풀이·설명·근거가 일부 확인되는 경우" }),
+  Object.freeze({ key: "effort", label: "노력요함", defaultCriterion: "평가요소와 관련된 기초적인 시도 또는 제한적인 근거만 확인되는 경우" }),
+  Object.freeze({ key: "effortZero", label: "노력요함", defaultCriterion: "미응답이거나 평가요소와 관련된 풀이·설명·근거를 확인하기 어려운 경우" }),
 ]);
 
 const app = document.querySelector("#app");
@@ -601,7 +602,7 @@ function renderDesignTab(course) {
 }
 
 function designCard(design, index) {
-  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || [], normalizePerformanceThresholds(design.performanceThresholds));
   const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
   return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(assessmentDesignTotalScore(design))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
@@ -613,6 +614,7 @@ function createEmptyDesign() {
     achievementGroups: [{ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }],
     rubricCriteria: [{ id: crypto.randomUUID(), questionNumber: "1", evaluationElement: "", scoreLevels: defaultRubricScoreLevels() }],
     exampleAnswers: [{ id: crypto.randomUUID(), questionNumber: "1", maxScore: 10, answerText: "", mathNotation: "", visualDescription: "" }],
+    performanceThresholds: { ...DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS },
   };
 }
 
@@ -636,7 +638,8 @@ function defaultAchievementLevels() {
 }
 
 function designEditor(design, course) {
-  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const performanceThresholds = normalizePerformanceThresholds(design.performanceThresholds);
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || [], performanceThresholds);
   const rubricQuestionScores = rubricQuestionMaxScoreMap(rubricCriteria);
   const exampleAnswers = (design.exampleAnswers || []).map((item) => ({
     ...item,
@@ -666,8 +669,9 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>매우잘함 80% 이상 · 잘함 60~80% · 보통 40~60% · 노력요함 20~40% 기준으로 대표 배점이 자동 계산됩니다. 1-(1), 1-(2) 같은 하위 문항은 문제 1에 합산됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>아래 성취수준별 최소 비율을 수정하면 대표 배점과 AI 채점기준이 자동으로 다시 계산됩니다. 미응답 또는 근거 없음은 노력요함의 0점 기준에 포함됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
+        ${performanceThresholdEditor(performanceThresholds)}
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
           <button type="button" data-open-rubric-ai>채점기준 AI 생성</button>
@@ -678,7 +682,7 @@ function designEditor(design, course) {
           <span>${design.rubricFile ? `저장됨: ${escapeHtml(design.rubricFile.name)}` : "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다."}</span>
         </div>
         ${documentAnalysisProgressMarkup("rubric")}
-        <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map(rubricEditorGroup).join("")}</div>
+        <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map((item, index) => rubricEditorGroup(item, index, performanceThresholds)).join("")}</div>
         ${rubricAiDialog(rubricAiSeeds, course)}
       </section>
 
@@ -753,26 +757,43 @@ function levelEditor(level) {
   return `<div class="level-editor-row" data-level data-level-id="${escapeHtml(level.id || "")}"><input name="levelLabel" value="${escapeHtml(level.label || "")}" placeholder="수준 이름" required><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea><button type="button" data-remove-level>삭제</button></div>`;
 }
 
-function rubricEditorGroup(item, index) {
+function performanceThresholdEditor(value) {
+  const thresholds = normalizePerformanceThresholds(value);
+  const definitions = performanceBandDefinitions(thresholds);
+  const fields = [
+    { key: "excellent", name: "performanceExcellentMin", label: "매우잘함", value: thresholds.excellent },
+    { key: "good", name: "performanceGoodMin", label: "잘함", value: thresholds.good },
+    { key: "average", name: "performanceAverageMin", label: "보통", value: thresholds.average },
+    { key: "effort", name: "performanceEffortMin", label: "노력요함", value: thresholds.effort },
+  ];
+  return `<section class="performance-threshold-editor" data-performance-threshold-editor>
+    <div class="performance-threshold-head"><div><strong>성취수준별 배점 기준</strong><span>최소 비율을 수정하면 상한과 대표점수가 자동으로 조정됩니다.</span></div><button type="button" data-reset-performance-thresholds>기본값 80·60·40·20</button></div>
+    <div class="performance-threshold-grid">${fields.map((field) => `<label><strong>${field.label}</strong><span><input name="${field.name}" type="number" min="1" max="100" step="1" value="${formatThresholdPercent(field.value)}" required><b>% 이상</b></span></label>`).join("")}</div>
+    <p data-performance-threshold-summary>${definitions.slice(0, 4).map((band) => `${band.label}: ${band.range}`).join(" · ")} · 미응답 또는 근거 없음: 노력요함 0점</p>
+  </section>`;
+}
+
+function rubricEditorGroup(item, index, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  const bandDefinitions = performanceBandDefinitions(thresholds);
   return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
     <div class="rubric-group-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>평가요소 삭제</button></div>
     <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
-    <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span>각 구간의 대표점수로 채점하며, 미응답·근거 없음은 0점으로 처리합니다.</span></div>
+    <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span>미응답 또는 근거 없음은 노력요함의 0점 기준에 포함됩니다.</span></div>
     <div class="rubric-score-head"><span>성취수준 · 비율 · 대표점수</span><span>해당 수준의 채점기준</span></div>
-    <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map(rubricScoreRow).join("")}</div>
+    <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map((level, levelIndex) => rubricScoreRow(level, levelIndex, bandDefinitions)).join("")}</div>
   </article>`;
 }
 
-function rubricScoreRow(level, index) {
-  const band = RUBRIC_PERFORMANCE_BANDS[index] || RUBRIC_PERFORMANCE_BANDS.at(-1);
-  return `<div class="rubric-score-row" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><div class="rubric-derived-score"><strong>${escapeHtml(band.label)}</strong><span>${escapeHtml(band.range)}</span><em data-rubric-score-value>${formatScore(Number(level.score || 0))}점</em></div><input name="rubricScore" type="hidden" value="${Number(level.score || 0)}"><textarea name="rubricCriterion" rows="2" placeholder="${escapeHtml(band.defaultCriterion)}" required>${escapeHtml(level.criterion || band.defaultCriterion)}</textarea></div>`;
+function rubricScoreRow(level, index, bandDefinitions = performanceBandDefinitions()) {
+  const band = bandDefinitions[index] || bandDefinitions.at(-1);
+  return `<div class="rubric-score-row ${index === bandDefinitions.length - 1 ? "is-effort-zero" : ""}" data-rubric-score data-score-id="${escapeHtml(level.id || "")}"><div class="rubric-derived-score"><strong data-rubric-band-label>${escapeHtml(band.label)}</strong><span data-rubric-band-range>${escapeHtml(band.range)}</span><em data-rubric-score-value>${formatScore(Number(level.score || 0))}점</em></div><input name="rubricScore" type="hidden" value="${Number(level.score || 0)}"><textarea name="rubricCriterion" rows="2" placeholder="${escapeHtml(band.defaultCriterion)}" required>${escapeHtml(level.criterion || band.defaultCriterion)}</textarea></div>`;
 }
 
 function rubricAiDialog(items, course) {
   return `<dialog class="rubric-ai-dialog" data-rubric-ai-dialog>
     <div class="rubric-ai-shell">
       <div class="rubric-ai-heading"><div><p class="section-kicker">GEMINI RUBRIC BUILDER</p><h3>채점기준 AI 생성</h3><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과에 맞춰 평가요소별 배점 기준을 만듭니다.</p></div><button type="button" data-close-rubric-ai aria-label="닫기">×</button></div>
-      <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점과 네 성취구간에 맞춰 자동 배치됩니다.</strong><span>매우잘함·잘함·보통·노력요함의 기준과 무응답 0점 기준을 함께 생성합니다.</span></div>
+      <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점과 네 성취구간에 맞춰 자동 배치됩니다.</strong><span>미응답 또는 근거 없음은 노력요함의 0점 기준으로 함께 생성합니다.</span></div>
       <div class="rubric-ai-element-list" data-rubric-ai-elements>${items.map((item, index) => rubricAiElementRow(item, index)).join("")}</div>
       <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 평가요소 추가</button>
       <p class="rubric-ai-status" data-rubric-ai-status role="status">설정에 저장된 Gemini 모델과 API 키를 사용합니다.</p>
@@ -782,7 +803,7 @@ function rubricAiDialog(items, course) {
 }
 
 function rubricAiElementRow(item = {}, index = 0) {
-  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${RUBRIC_PERFORMANCE_BANDS.length}"><span class="rubric-ai-fixed-levels">4개 성취구간 + 0점</span></label></div></article>`;
+  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${RUBRIC_PERFORMANCE_BANDS.length}"><span class="rubric-ai-fixed-levels">4개 성취수준 · 노력요함 0점 포함</span></label></div></article>`;
 }
 
 function exampleEditorRow(item) {
@@ -802,38 +823,78 @@ function positiveDesignScore(value) {
   return Number.isFinite(score) && score > 0 ? Math.round(score * 100) / 100 : 0;
 }
 
-function performanceBandScores(targetMaxScore) {
+function normalizePerformanceThresholds(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(Object.entries(DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS).map(([key, fallback]) => {
+    const numeric = Number(source[key]);
+    return [key, Number.isFinite(numeric) ? Math.round(numeric * 100) / 100 : fallback];
+  }));
+}
+
+function performanceThresholdsAreValid(value) {
+  const { excellent, good, average, effort } = value || {};
+  return [excellent, good, average, effort].every(Number.isFinite)
+    && excellent <= 100
+    && excellent > good
+    && good > average
+    && average > effort
+    && effort > 0;
+}
+
+function formatThresholdPercent(value) {
+  const rounded = Math.round(Number(value || 0) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function performanceBandDefinitions(thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  const normalized = normalizePerformanceThresholds(thresholds);
+  const { excellent, good, average, effort } = normalized;
+  const ranges = [
+    `${formatThresholdPercent(excellent)}% 이상`,
+    `${formatThresholdPercent(good)}% 이상 ${formatThresholdPercent(excellent)}% 미만`,
+    `${formatThresholdPercent(average)}% 이상 ${formatThresholdPercent(good)}% 미만`,
+    `${formatThresholdPercent(effort)}% 이상 ${formatThresholdPercent(average)}% 미만`,
+    "미응답 또는 근거 없음",
+  ];
+  const representativeRatios = [1, (good + excellent) / 200, (average + good) / 200, (effort + average) / 200, 0];
+  return RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({ ...band, range: ranges[index], representativeRatio: representativeRatios[index] }));
+}
+
+function performanceBandScores(targetMaxScore, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maxScore = Math.max(0, Number(targetMaxScore || 0));
-  return RUBRIC_PERFORMANCE_BANDS.map((band, index) => {
+  return performanceBandDefinitions(thresholds).map((band, index) => {
     if (index === 0) return maxScore;
     if (band.representativeRatio === 0) return 0;
     return Math.round(maxScore * band.representativeRatio * 100) / 100;
   });
 }
 
-function defaultRubricScoreLevels() {
+function defaultRubricScoreLevels(thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  const scores = performanceBandScores(1, thresholds);
   return RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({
     id: crypto.randomUUID(),
-    score: performanceBandScores(1)[index],
+    score: scores[index],
     criterion: band.defaultCriterion,
   }));
 }
 
-function rubricPerformanceLevels(levels) {
+function rubricPerformanceLevels(levels, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const source = (Array.isArray(levels) ? levels : [])
     .map((level) => ({ ...level, score: Math.max(0, Number(level?.score || 0)), criterion: String(level?.criterion || "").trim() }))
     .sort((a, b) => b.score - a.score);
   const sourceMax = Math.max(0, ...source.map((level) => level.score));
   const targetMax = sourceMax || 1;
+  const bandDefinitions = performanceBandDefinitions(thresholds);
+  const targetScores = performanceBandScores(targetMax, thresholds);
   const result = RUBRIC_PERFORMANCE_BANDS.map((band, index) => ({
     id: crypto.randomUUID(),
-    score: performanceBandScores(targetMax)[index],
+    score: targetScores[index],
     criterion: band.defaultCriterion,
   }));
   for (const level of source) {
     const ratio = sourceMax > 0 ? level.score / sourceMax : 0;
-    const targetIndex = RUBRIC_PERFORMANCE_BANDS.reduce((bestIndex, band, index) => {
-      const bestDistance = Math.abs(ratio - RUBRIC_PERFORMANCE_BANDS[bestIndex].representativeRatio);
+    const targetIndex = bandDefinitions.reduce((bestIndex, band, index) => {
+      const bestDistance = Math.abs(ratio - bandDefinitions[bestIndex].representativeRatio);
       const distance = Math.abs(ratio - band.representativeRatio);
       return distance < bestDistance ? index : bestIndex;
     }, 0);
@@ -846,6 +907,39 @@ function rubricPerformanceLevels(levels) {
     }
   }
   return result;
+}
+
+function performanceThresholdsFromForm(form) {
+  return {
+    excellent: Number(form?.elements?.performanceExcellentMin?.value),
+    good: Number(form?.elements?.performanceGoodMin?.value),
+    average: Number(form?.elements?.performanceAverageMin?.value),
+    effort: Number(form?.elements?.performanceEffortMin?.value),
+  };
+}
+
+function syncPerformanceThresholdUI(form) {
+  const candidate = performanceThresholdsFromForm(form);
+  const valid = performanceThresholdsAreValid(candidate);
+  if (valid) form._lastValidPerformanceThresholds = { ...candidate };
+  const active = valid
+    ? candidate
+    : form._lastValidPerformanceThresholds || { ...DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS };
+  const definitions = performanceBandDefinitions(active);
+  const editor = form.querySelector("[data-performance-threshold-editor]");
+  editor?.classList.toggle("is-warning", !valid);
+  const summary = form.querySelector("[data-performance-threshold-summary]");
+  if (summary) summary.textContent = valid
+    ? `${definitions.slice(0, 4).map((band) => `${band.label}: ${band.range}`).join(" · ")} · 미응답 또는 근거 없음: 노력요함 0점`
+    : "배점 기준은 100 ≥ 매우잘함 > 잘함 > 보통 > 노력요함 > 0 순서로 입력해 주세요.";
+  form.querySelectorAll("[data-rubric-score]").forEach((row, index) => {
+    const band = definitions[index] || definitions.at(-1);
+    const label = row.querySelector("[data-rubric-band-label]");
+    const range = row.querySelector("[data-rubric-band-range]");
+    if (label) label.textContent = band.label;
+    if (range) range.textContent = band.range;
+  });
+  return active;
 }
 
 function questionScoreGroupKey(value) {
@@ -903,10 +997,10 @@ function allocateQuestionScore(totalScore, count) {
   return Array.from({ length: itemCount }, (_value, index) => (baseUnits + (index < remainder ? 1 : 0)) / 2);
 }
 
-function derivedBandScores(targetMaxScore, currentScores) {
+function derivedBandScores(targetMaxScore, currentScores, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maxScore = Math.max(0, Number(targetMaxScore || 0));
   const source = (Array.isArray(currentScores) ? currentScores : []).map(Number).filter(Number.isFinite);
-  if (source.length === RUBRIC_PERFORMANCE_BANDS.length) return performanceBandScores(maxScore);
+  if (source.length === RUBRIC_PERFORMANCE_BANDS.length) return performanceBandScores(maxScore, thresholds);
   const count = Math.max(1, source.length);
   const currentMax = Math.max(0, ...source);
   const uniqueScores = new Set(source.map((score) => String(score)));
@@ -938,6 +1032,7 @@ function rubricAllocationsFromElements(elements, questionScores) {
 }
 
 function syncQuestionScoreUI(form) {
+  const performanceThresholds = syncPerformanceThresholdUI(form);
   const questionScores = questionScoreMapFromForm(form);
   const rubricGroups = Array.from(form.querySelectorAll("[data-rubric-group]"));
   const elements = rubricGroups.map((group) => ({
@@ -950,7 +1045,7 @@ function syncQuestionScoreUI(form) {
     const targetMax = allocations.get(index) || 0;
     const rows = Array.from(group.querySelectorAll("[data-rubric-score]"));
     const currentScores = rows.map((row) => Number(row.querySelector('[name="rubricScore"]')?.value || 0));
-    const scores = derivedBandScores(targetMax, currentScores);
+    const scores = derivedBandScores(targetMax, currentScores, performanceThresholds);
     rows.forEach((row, scoreIndex) => {
       const score = scores[scoreIndex] ?? 0;
       row.querySelector('[name="rubricScore"]').value = String(score);
@@ -1020,7 +1115,7 @@ function bindDesignTab(course) {
   form.addEventListener("input", (event) => {
     if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
     if (event.target.matches('[name="achievementStandard"]')) clearChangedCurriculumSelection(event.target, course);
-    if (event.target.matches('[name="exampleQuestion"], [name="exampleMaxScore"], [name="rubricQuestion"], [name="rubricAiQuestion"], [name="rubricAiBandCount"]')) syncQuestionScoreUI(form);
+    if (event.target.matches('[name="exampleQuestion"], [name="exampleMaxScore"], [name="rubricQuestion"], [name="rubricAiQuestion"], [name="rubricAiBandCount"], [name^="performance"][type="number"]')) syncQuestionScoreUI(form);
   });
   form.addEventListener("focusout", (event) => {
     if (!event.target.matches('[name="exampleText"], [name="exampleVisual"]')) return;
@@ -1046,6 +1141,15 @@ function bindDesignTab(course) {
 }
 
 function handleDesignEditorClick(event, form, course) {
+  const resetPerformanceThresholds = event.target.closest("[data-reset-performance-thresholds]");
+  if (resetPerformanceThresholds) {
+    form.elements.performanceExcellentMin.value = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS.excellent;
+    form.elements.performanceGoodMin.value = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS.good;
+    form.elements.performanceAverageMin.value = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS.average;
+    form.elements.performanceEffortMin.value = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS.effort;
+    syncQuestionScoreUI(form);
+    return;
+  }
   const openRubricAi = event.target.closest("[data-open-rubric-ai]");
   if (openRubricAi) {
     const dialog = form.querySelector("[data-rubric-ai-dialog]");
@@ -1088,7 +1192,8 @@ function handleDesignEditorClick(event, form, course) {
   const addRubric = event.target.closest("[data-add-rubric]");
   if (addRubric) {
     const list = form.querySelector("[data-rubric-groups]");
-    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: defaultRubricScoreLevels() }, list.querySelectorAll("[data-rubric-group]").length));
+    const thresholds = syncPerformanceThresholdUI(form);
+    list.insertAdjacentHTML("beforeend", rubricEditorGroup({ id: crypto.randomUUID(), questionNumber: "", evaluationElement: "", scoreLevels: defaultRubricScoreLevels(thresholds) }, list.querySelectorAll("[data-rubric-group]").length, thresholds));
     syncQuestionScoreUI(form);
     return;
   }
@@ -1170,16 +1275,19 @@ function rubricAiElements(dialog, form) {
     bandCount: Number(row.querySelector('[name="rubricAiBandCount"]').value),
   }));
   if (!elements.length || elements.some((item) => !item.evaluationElement)) throw new Error("모든 평가요소의 이름을 입력해 주세요.");
+  const performanceThresholds = syncPerformanceThresholdUI(form);
+  if (!performanceThresholdsAreValid(performanceThresholdsFromForm(form))) throw new Error("성취수준별 배점 기준을 올바른 순서로 입력해 주세요.");
+  const bandDefinitions = performanceBandDefinitions(performanceThresholds);
   const questionScores = questionScoreMapFromForm(form);
   const allocations = rubricAllocationsFromElements(elements, questionScores);
   const prepared = elements.map((item, index) => {
     const maxScore = allocations.get(index) || 0;
-    const scoreValues = performanceBandScores(maxScore);
+    const scoreValues = performanceBandScores(maxScore, performanceThresholds);
     return {
       ...item,
       maxScore,
       scoreValues,
-      performanceBands: RUBRIC_PERFORMANCE_BANDS.map((band, bandIndex) => ({
+      performanceBands: bandDefinitions.map((band, bandIndex) => ({
         label: band.label,
         range: band.range,
         score: scoreValues[bandIndex],
@@ -1234,7 +1342,8 @@ async function generateRubricWithAi(form, course) {
       elements,
     });
     const rubrics = alignGeneratedRubrics(result, elements);
-    form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map(rubricEditorGroup).join("");
+    const performanceThresholds = syncPerformanceThresholdUI(form);
+    form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup(item, index, performanceThresholds)).join("");
     syncQuestionScoreUI(form);
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
     setDesignStatus(form, `${rubrics.length}개 평가요소의 채점기준을 문제별 배점 총합에 맞춰 AI로 생성했습니다. 내용을 검토한 뒤 저장해 주세요.${note}`);
@@ -1432,9 +1541,10 @@ async function extractDesignDocument(form, kind, course) {
       title: "분석 결과를 화면에 입력하는 중",
       message: "AI가 찾은 항목을 교사가 수정할 수 있는 입력란에 옮기고 있습니다.",
     });
+    const performanceThresholds = syncPerformanceThresholdUI(form);
     if (kind === "design") {
       const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
-      const rubrics = normalizeRubricCriteria(result.rubricCriteria || []);
+      const rubrics = normalizeRubricCriteria(result.rubricCriteria || [], performanceThresholds);
       const examples = Array.isArray(result.exampleAnswers) ? result.exampleAnswers : [];
       if (!achievements.length || !rubrics.length || !examples.length) throw new Error("문서에서 성취기준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
       if (result.taskName) form.elements.taskName.value = String(result.taskName).trim();
@@ -1443,7 +1553,7 @@ async function extractDesignDocument(form, kind, course) {
         id: crypto.randomUUID(),
         levels: (group.levels || []).map((level) => ({ ...level, id: crypto.randomUUID() })),
       }, index, course)).join("");
-      form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
+      form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       const rubricScores = rubricQuestionMaxScoreMap(rubrics);
       form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({
         ...item,
@@ -1454,9 +1564,9 @@ async function extractDesignDocument(form, kind, course) {
       refreshMathPreviews(form);
       syncQuestionScoreUI(form);
     } else if (kind === "rubric") {
-      const items = normalizeRubricCriteria(result.rubricCriteria || []);
+      const items = normalizeRubricCriteria(result.rubricCriteria || [], performanceThresholds);
       if (!items.length) throw new Error("문서에서 채점기준 행을 찾지 못했습니다.");
-      form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index)).join("");
+      form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       syncQuestionScoreUI(form);
     } else {
       const items = result.exampleAnswers || [];
@@ -1634,6 +1744,8 @@ function collectDesignForm(form, existing) {
       description: level.querySelector('[name="levelDescription"]').value.trim(),
     })),
   }));
+  const performanceThresholds = performanceThresholdsFromForm(form);
+  if (!performanceThresholdsAreValid(performanceThresholds)) throw new Error("성취수준별 배점 기준은 100 ≥ 매우잘함 > 잘함 > 보통 > 노력요함 > 0 순서로 입력해 주세요.");
   const rubricCriteria = normalizeRubricCriteria(Array.from(form.querySelectorAll("[data-rubric-group]")).map((group) => ({
     id: group.dataset.groupId || crypto.randomUUID(),
     questionNumber: group.querySelector('[name="rubricQuestion"]').value.trim(),
@@ -1643,7 +1755,7 @@ function collectDesignForm(form, existing) {
       score: Number(level.querySelector('[name="rubricScore"]').value),
       criterion: level.querySelector('[name="rubricCriterion"]').value.trim(),
     })),
-  })));
+  })), performanceThresholds);
   const existingExamples = new Map((existing?.exampleAnswers || []).map((item) => [item.id, item]));
   const exampleAnswers = Array.from(form.querySelectorAll("[data-example-row]")).map((row) => {
     const id = row.dataset.rowId || crypto.randomUUID();
@@ -1693,6 +1805,7 @@ function collectDesignForm(form, existing) {
     achievementGroups,
     rubricCriteria,
     exampleAnswers,
+    performanceThresholds,
     rubricFile,
     exampleFile,
     sourceFile,
@@ -1702,7 +1815,7 @@ function collectDesignForm(form, existing) {
   };
 }
 
-function normalizeRubricCriteria(items) {
+function normalizeRubricCriteria(items, performanceThresholds = null) {
   const grouped = new Map();
   for (const raw of Array.isArray(items) ? items : []) {
     const questionNumber = String(raw?.questionNumber || "").trim();
@@ -1724,7 +1837,9 @@ function normalizeRubricCriteria(items) {
   }
   return Array.from(grouped.values()).map((group) => ({
     ...group,
-    scoreLevels: rubricPerformanceLevels(group.scoreLevels),
+    scoreLevels: performanceThresholds
+      ? rubricPerformanceLevels(group.scoreLevels, performanceThresholds)
+      : group.scoreLevels.sort((a, b) => b.score - a.score),
   }));
 }
 
@@ -2093,7 +2208,7 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
       name: student.name,
     },
     achievementStandards: (design.achievementGroups || []).map((item) => ({ itemRange: item.itemRange, standard: item.standard })),
-    rubricCriteria: normalizeRubricCriteria(design.rubricCriteria || []),
+    rubricCriteria: normalizeRubricCriteria(design.rubricCriteria || [], normalizePerformanceThresholds(design.performanceThresholds)),
     scoreRows,
     totalScore: Number(result.teacherTotal ?? scoreRows.reduce((sum, item) => sum + item.score, 0)),
     maxScore: summary.maxScore,
@@ -2228,7 +2343,7 @@ function achievementLevelForExport(result, group, index) {
 function downloadGradingResultsExcel(course, targetStudents) {
   const design = course.designs?.find((item) => item.id === course.submission?.designId);
   if (!window.XLSX || !window.ChaejeomExport || !design) { showToast("채점 결과 Excel을 만들지 못했습니다. 인터넷 연결을 확인해 주세요."); return; }
-  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || []);
+  const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || [], normalizePerformanceThresholds(design.performanceThresholds));
   const achievementGroups = Array.isArray(design.achievementGroups) ? design.achievementGroups : [];
   const resultMap = new Map((course.grading?.results || []).map((result) => [result.studentId, result]));
   const errorMap = new Map((course.grading?.errors || []).map((error) => [error.studentId, error]));
@@ -3053,7 +3168,7 @@ function asFile(file) {
 }
 
 function resultQuestionRows(result, design) {
-  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || []);
+  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || [], normalizePerformanceThresholds(design?.performanceThresholds));
   const storedRows = Array.isArray(result?.questionResults) ? result.questionResults : [];
   if (!rubricCriteria.length) return storedRows.map((item, index) => ({ ...item, sourceIndex: index, missingResult: false }));
   const usedIndexes = new Set();
@@ -3094,7 +3209,7 @@ function resultScoreSummary(result, design) {
 }
 
 function scoreChoicesForResultRow(item, design) {
-  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || []);
+  const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || [], normalizePerformanceThresholds(design?.performanceThresholds));
   const rubric = rubricCriteria.find((candidate) => item?.criterionId && candidate.id === item.criterionId)
     || rubricCriteria.find((candidate) => candidate.questionNumber === String(item?.questionNumber || "").trim()
       && candidate.evaluationElement === String(item?.evaluationElement || "").trim());

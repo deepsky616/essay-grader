@@ -16,12 +16,12 @@ function loadSubjectCatalog() {
 }
 
 function loadQuestionScoreHelpers() {
-  const bandsStart = source.indexOf("const RUBRIC_PERFORMANCE_BANDS");
+  const bandsStart = source.indexOf("const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS");
   const bandsEnd = source.indexOf("\n\nconst app", bandsStart);
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -111,7 +111,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceThresholdsAreValid, performanceBandDefinitions, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -124,6 +124,11 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
   assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3, 0]);
   assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5, 0]);
+  const customThresholds = { excellent: 85, good: 65, average: 45, effort: 25 };
+  assert.equal(performanceThresholdsAreValid(customThresholds), true);
+  assert.equal(performanceThresholdsAreValid({ excellent: 80, good: 80, average: 40, effort: 20 }), false);
+  assert.deepEqual(performanceBandScores(10, customThresholds), [10, 7.5, 5.5, 3.5, 0]);
+  assert.deepEqual(performanceBandDefinitions(customThresholds).map((band) => band.range), ["85% 이상", "65% 이상 85% 미만", "45% 이상 65% 미만", "25% 이상 45% 미만", "미응답 또는 근거 없음"]);
   assert.deepEqual(rubricPerformanceLevels([
     { id: "high", score: 10, criterion: "완전한 수행" },
     { id: "middle", score: 5, criterion: "부분 수행" },
@@ -141,8 +146,12 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /name="rubricScore" type="hidden"/);
   assert.match(source, /data-question-score-summary/);
   assert.match(source, /문제별 배점 총합/);
-  assert.match(source, /매우잘함 80% 이상/);
-  assert.match(source, /4개 성취구간 \+ 0점/);
+  assert.match(source, /name: "performanceExcellentMin"/);
+  assert.match(source, /name: "performanceGoodMin"/);
+  assert.match(source, /name: "performanceAverageMin"/);
+  assert.match(source, /name: "performanceEffortMin"/);
+  assert.match(source, /4개 성취수준 · 노력요함 0점 포함/);
+  assert.match(source, /performanceThresholds,/);
   assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
   assert.match(styles, /\.question-score-summary \{/);
