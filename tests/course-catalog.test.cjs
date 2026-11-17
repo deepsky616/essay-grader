@@ -37,6 +37,17 @@ test("the rubric AI action stays horizontal without one-character wrapping", () 
   assert.match(styles, /\.editor-title-actions button \{[^}]*min-width: max-content;[^}]*white-space: nowrap;[^}]*word-break: keep-all;[^}]*writing-mode: horizontal-tb;/);
 });
 
+test("AI grading guidance cards wrap long Korean copy without text overlap", () => {
+  assert.match(source, /<strong>학생용 평가지 비교<\/strong>/);
+  assert.match(source, /<strong>신원 삭제·고해상도 보정<\/strong>/);
+  assert.match(source, /<strong>빠른 선별 검증 채점<\/strong>/);
+  assert.match(styles, /\.grading-quality-grid article \{[^}]*min-height: 156px;[^}]*padding: 20px;/);
+  assert.match(styles, /\.grading-quality-grid article > div \{[^}]*gap: 7px;/);
+  assert.match(styles, /\.grading-quality-grid strong \{[^}]*line-height: 1\.45;[^}]*word-break: keep-all;/);
+  assert.match(styles, /\.grading-quality-grid p \{[^}]*line-height: 1\.7;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;[^}]*word-break: keep-all;/);
+  assert.doesNotMatch(styles, /\.grading-quality-grid p \{[^}]*white-space: nowrap;/);
+});
+
 test("grades 3 and 4 offer the requested nine subjects without practical arts", () => {
   const catalog = loadSubjectCatalog();
   const expected = ["국어", "사회", "도덕", "수학", "과학", "체육", "음악", "미술", "영어"];

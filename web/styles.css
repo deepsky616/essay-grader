@@ -806,13 +806,14 @@ a { color: inherit; text-decoration: none; }
 .split-summary strong { font-size: 15px; }
 .split-summary p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .grading-quality-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--line); }
-.grading-quality-grid article { display: grid; grid-template-columns: 30px 1fr; gap: 10px; min-width: 0; padding: 14px 18px; border-right: 1px solid var(--line); }
+.grading-quality-grid article { display: grid; grid-template-columns: 34px minmax(0,1fr); align-content: start; align-items: start; gap: 12px; min-width: 0; min-height: 156px; padding: 20px; border-right: 1px solid var(--line); }
 .grading-quality-grid article:last-child { border-right: 0; }
-.grading-quality-grid article > span { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: var(--mint); color: #27634c; font-size: 13px; font-weight: 950; }
+.grading-quality-grid article > span { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: var(--mint); color: #27634c; font-size: 14px; font-weight: 950; line-height: 1; }
+.grading-quality-grid article > div { display: grid; min-width: 0; gap: 7px; }
 .grading-quality-grid article.is-missing { background: rgba(242,217,167,.23); }
 .grading-quality-grid article.is-missing > span { background: #ffe4de; color: #8b2e20; }
-.grading-quality-grid strong { font-size: 14px; }
-.grading-quality-grid p { overflow: hidden; margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.grading-quality-grid strong { display: block; font-size: 16px; line-height: 1.45; word-break: keep-all; }
+.grading-quality-grid p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; white-space: normal; word-break: keep-all; }
 .grading-launch-card, .grading-result-summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 27px; }
 .grading-launch-card strong, .grading-result-summary strong { font-size: 16px; }
 .grading-launch-card p, .grading-result-summary p { margin: 5px 0 0; color: var(--muted); font-size: 14px; }
