@@ -1481,6 +1481,12 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const elapsed = isActivelyRunning
     ? Number(grading.elapsedMs || 0) + Math.max(0, Date.now() - activeGradingRun.startedAt)
     : Number(grading.elapsedMs || 0);
+  const activeTasks = isActivelyRunning ? (activeGradingRun.activeTasks || grading.activeTasks || []) : [];
+  const completedCount = Number(grading.completedCount || 0);
+  const successCount = results.length;
+  const failureCount = errors.length;
+  const activeCount = activeTasks.length;
+  const waitingCount = Math.max(0, progressTotal - completedCount - activeCount);
   const canContinue = ["running", "stopped", "partial"].includes(displayStatus) && results.length < progressTotal;
   const runButtonLabel = canContinue ? "AI 채점 계속" : grading.status === "complete" ? "AI 채점 다시 실행" : "AI 채점 실행";
   const scanReady = Boolean(submission && design?.blankFile);
@@ -1496,11 +1502,26 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
       ${hasApiKey ? `<div class="grading-run-actions"><button class="primary-action" type="button" data-run-grading ${!scanReady || isActivelyRunning ? "disabled" : ""}>${runButtonLabel}</button><button class="stop-grading-action" type="button" data-stop-grading ${isActivelyRunning ? "" : "hidden"}>채점 멈추기</button></div>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
     ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>학생용 평가지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 평가지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
-    <div class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress>
-      <div><span data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`))}</span><strong data-progress-copy>${grading.completedCount || 0} / ${progressTotal}명 완료</strong></div>
-      <div class="grading-progress-meta"><span data-progress-time>경과 ${formatElapsedTime(elapsed)}</span><span data-progress-percent>${progress}%</span></div>
-      <span class="${isActivelyRunning ? "is-active" : ""}" data-progress-track><i data-progress-bar style="width:${progress}%"></i></span>
-    </div>
+    <section class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress aria-live="polite" aria-busy="${isActivelyRunning}">
+      <div class="grading-progress-overview">
+        <div class="grading-progress-dial" style="--progress:${progress}%" role="progressbar" aria-label="전체 AI 채점 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" data-progress-dial><strong data-progress-percent>${progress}%</strong><span>전체 진행</span></div>
+        <div class="grading-progress-main">
+          <div class="grading-progress-headline"><span class="grading-live-dot ${isActivelyRunning ? "is-active" : ""}" data-progress-live-dot aria-hidden="true"></span><strong data-progress-stage>${escapeHtml(grading.currentStage || (displayStatus === "stopped" ? "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다." : `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`))}</strong></div>
+          <div class="grading-progress-stats" aria-label="채점 인원 현황">
+            <span class="is-success"><strong data-progress-success>${successCount}</strong><small>완료</small></span>
+            <span class="is-processing"><strong data-progress-active>${activeCount}</strong><small>처리 중</small></span>
+            <span class="is-waiting"><strong data-progress-pending>${waitingCount}</strong><small>대기</small></span>
+            <span class="is-failure"><strong data-progress-failure>${failureCount}</strong><small>실패</small></span>
+          </div>
+          <div class="grading-progress-meta"><span data-progress-copy>${completedCount} / ${progressTotal}명 처리</span><span data-progress-time>경과 ${formatElapsedTime(elapsed)}</span><span data-progress-remaining>${formatGradingRemaining(elapsed, completedCount, progressTotal)}</span></div>
+        </div>
+      </div>
+      <span class="grading-progress-track ${isActivelyRunning ? "is-active" : ""}" data-progress-track role="progressbar" aria-label="AI 채점 완료 인원" aria-valuemin="0" aria-valuemax="${progressTotal}" aria-valuenow="${completedCount}"><i data-progress-bar style="width:${progress}%"></i></span>
+      <div class="grading-active-tasks">
+        <div class="grading-active-tasks-head"><strong>현재 처리 단계</strong><span data-progress-concurrency>${activeCount ? `${activeCount}명 동시 처리 중` : displayStatus === "stopped" ? "채점 멈춤" : "작업 준비 중"}</span></div>
+        <div class="grading-active-task-grid" data-progress-workers>${gradingActiveTaskMarkup(activeTasks, isActivelyRunning)}</div>
+      </div>
+    </section>
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
@@ -1817,6 +1838,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     submissionUpdatedAt: submission.updatedAt,
     elapsedMs: baseElapsedMs,
     currentStage: "첫 학생의 답안을 준비하고 있습니다.",
+    activeTasks: [],
   };
   const controller = new AbortController();
   activeGradingRun = {
@@ -1826,12 +1848,18 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     baseElapsedMs,
     completed: course.grading.completedCount,
     total: allAssignments.length,
+    successCount: course.grading.results.length,
+    failureCount: course.grading.errors.length,
+    activeTasks: [],
   };
   await putCourse(course);
   updateGradingProgress(course.grading.completedCount, allAssignments.length, {
     stage: course.grading.currentStage,
     elapsedMs: baseElapsedMs,
     running: true,
+    successCount: course.grading.results.length,
+    failureCount: course.grading.errors.length,
+    activeTasks: [],
   });
   const startButton = app.querySelector("[data-run-grading]");
   if (startButton) { startButton.disabled = true; startButton.textContent = "채점 진행 중…"; }
@@ -1845,6 +1873,9 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       stage: course.grading.currentStage,
       elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
       running: true,
+      successCount: course.grading.results.length,
+      failureCount: course.grading.errors.length,
+      activeTasks: course.grading.activeTasks || [],
     });
   }, 1000);
   let stopped = false;
@@ -1867,14 +1898,21 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     return saveQueue;
   };
   const refreshParallelProgress = () => {
-    const stages = Array.from(activeStages.values());
-    course.grading.currentStage = stages.length
-      ? `${stages.length}명 동시 처리 중 · ${stages.slice(0, 2).join(" / ")}${stages.length > 2 ? " 외" : ""}`
+    const tasks = Array.from(activeStages.entries()).sort(([left], [right]) => left - right).map(([, task]) => task);
+    course.grading.activeTasks = tasks;
+    activeGradingRun.activeTasks = tasks;
+    activeGradingRun.successCount = course.grading.results.length;
+    activeGradingRun.failureCount = course.grading.errors.length;
+    course.grading.currentStage = tasks.length
+      ? `${tasks.length}명의 답안을 동시에 처리하고 있습니다.`
       : "완료 결과를 저장하고 있습니다.";
     updateGradingProgress(course.grading.completedCount, allAssignments.length, {
       stage: course.grading.currentStage,
       elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
       running: true,
+      successCount: course.grading.results.length,
+      failureCount: course.grading.errors.length,
+      activeTasks: tasks,
     });
   };
   const processNextAssignment = async (workerIndex) => {
@@ -1883,8 +1921,9 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       const assignment = pendingAssignments.shift();
       if (!assignment) return;
       const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
-      const currentLabel = currentStudent?.number ? `${currentStudent.number}번` : "학생";
-      activeStages.set(workerIndex, `${currentLabel} 답안 준비`);
+      const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
+      const currentLabel = `${currentStudent?.number ? `${currentStudent.number}번` : "학생"} · 익명 S${String(anonymousIndex + 1).padStart(3, "0")}`;
+      activeStages.set(workerIndex, { label: currentLabel, stage: "답안 준비 중" });
       refreshParallelProgress();
       try {
         const nextResult = await gradeStudentAssignment({
@@ -1897,7 +1936,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           blankFile,
           signal: controller.signal,
           onStage: (stage) => {
-            activeStages.set(workerIndex, `${currentLabel} ${stage}`);
+            activeStages.set(workerIndex, { label: currentLabel, stage });
             refreshParallelProgress();
           },
         });
@@ -1913,7 +1952,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           activeGradingRun.parallelism = desiredParallelism;
           if (retries <= 2) {
             pendingAssignments.push(assignment);
-            activeStages.set(workerIndex, `사용량 제한 감지 · ${desiredParallelism}명 동시 처리로 조정`);
+            activeStages.set(workerIndex, { label: currentLabel, stage: `사용량 제한 감지 · ${desiredParallelism}명 동시 처리로 자동 조정` });
             refreshParallelProgress();
             await waitForGradingRetry(1500 * retries, controller.signal);
             activeStages.delete(workerIndex);
@@ -1937,6 +1976,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   window.clearInterval(elapsedTimer);
   course.grading.elapsedMs = baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt);
   delete course.grading.currentStudentId;
+  course.grading.activeTasks = [];
   if (stopped || controller.signal.aborted) {
     course.grading.status = "stopped";
     course.grading.stoppedAt = new Date().toISOString();
@@ -1970,6 +2010,9 @@ function stopCourseGrading(courseId) {
     stage: "현재 요청을 안전하게 중단하고 완료된 결과를 저장하고 있습니다.",
     elapsedMs: run.baseElapsedMs + Math.max(0, Date.now() - run.startedAt),
     running: false,
+    successCount: run.successCount,
+    failureCount: run.failureCount,
+    activeTasks: run.activeTasks || [],
   });
 }
 
@@ -1992,17 +2035,48 @@ function waitForGradingRetry(milliseconds, signal) {
   });
 }
 
-function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`, elapsedMs = 0, running = false } = {}) {
+function gradingActiveTaskMarkup(tasks, running) {
+  const activeTasks = Array.isArray(tasks) ? tasks.filter((task) => task?.label || task?.stage) : [];
+  if (!activeTasks.length) return `<p class="grading-active-task-empty">${running ? "다음 학생 답안을 준비하고 있습니다." : "현재 처리 중인 학생이 없습니다."}</p>`;
+  return activeTasks.map((task) => `<article><span class="grading-task-spinner" aria-hidden="true"></span><div><strong>${escapeHtml(task.label || "익명 학생")}</strong><p>${escapeHtml(task.stage || "답안 처리 중")}</p></div></article>`).join("");
+}
+
+function formatGradingRemaining(elapsedMs, completed, total) {
+  const done = Math.max(0, Number(completed || 0));
+  const count = Math.max(0, Number(total || 0));
+  if (count && done >= count) return "마무리 저장 중";
+  if (!done || !elapsedMs) return "남은 시간 계산 중";
+  const remainingMs = (Number(elapsedMs) / done) * Math.max(0, count - done);
+  return `예상 남은 약 ${formatElapsedTime(remainingMs)}`;
+}
+
+function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PARALLELISM}명의 학생 답안을 동시에 채점하고 있습니다.`, elapsedMs = 0, running = false, successCount = completed, failureCount = 0, activeTasks = [] } = {}) {
   const card = app.querySelector("[data-grading-progress]");
   if (!card) return;
   card.hidden = false;
   const progress = total ? Math.round((completed / total) * 100) : 0;
+  const tasks = Array.isArray(activeTasks) ? activeTasks : [];
+  const activeCount = tasks.length;
+  const pendingCount = Math.max(0, total - completed - activeCount);
+  card.setAttribute("aria-busy", String(running));
   card.querySelector("[data-progress-stage]").textContent = stage;
-  card.querySelector("[data-progress-copy]").textContent = `${completed} / ${total}명 완료`;
+  card.querySelector("[data-progress-copy]").textContent = `${completed} / ${total}명 처리`;
   card.querySelector("[data-progress-time]").textContent = `경과 ${formatElapsedTime(elapsedMs)}`;
+  card.querySelector("[data-progress-remaining]").textContent = formatGradingRemaining(elapsedMs, completed, total);
   card.querySelector("[data-progress-percent]").textContent = `${progress}%`;
+  card.querySelector("[data-progress-success]").textContent = String(successCount);
+  card.querySelector("[data-progress-active]").textContent = String(activeCount);
+  card.querySelector("[data-progress-pending]").textContent = String(pendingCount);
+  card.querySelector("[data-progress-failure]").textContent = String(failureCount);
   card.querySelector("[data-progress-bar]").style.width = `${progress}%`;
   card.querySelector("[data-progress-track]").classList.toggle("is-active", running);
+  card.querySelector("[data-progress-track]").setAttribute("aria-valuenow", String(completed));
+  const dial = card.querySelector("[data-progress-dial]");
+  dial.style.setProperty("--progress", `${progress}%`);
+  dial.setAttribute("aria-valuenow", String(progress));
+  card.querySelector("[data-progress-live-dot]").classList.toggle("is-active", running);
+  card.querySelector("[data-progress-concurrency]").textContent = activeCount ? `${activeCount}명 동시 처리 중` : running ? "다음 작업 준비 중" : "채점 멈춤";
+  card.querySelector("[data-progress-workers]").innerHTML = gradingActiveTaskMarkup(tasks, running);
 }
 
 function needsPrecisionReview(result, metadata) {

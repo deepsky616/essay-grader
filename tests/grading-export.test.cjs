@@ -153,6 +153,24 @@ test("course grading uses adaptive four-worker grading and selectively rechecks 
   assert.doesNotMatch(schoolSource.slice(assignmentStart, assignmentEnd), /ChaejeomAI\.recognizeAnswer/);
 });
 
+test("AI grading exposes a visible live progress dashboard", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  assert.match(schoolSource, /class="grading-progress-dial"[^>]*data-progress-dial/);
+  assert.match(schoolSource, /data-progress-success/);
+  assert.match(schoolSource, /data-progress-active/);
+  assert.match(schoolSource, /data-progress-pending/);
+  assert.match(schoolSource, /data-progress-failure/);
+  assert.match(schoolSource, /data-progress-remaining/);
+  assert.match(schoolSource, /data-progress-workers/);
+  assert.match(schoolSource, /익명 S\$\{String\(anonymousIndex \+ 1\)\.padStart\(3, "0"\)\}/);
+  assert.match(schoolSource, /formatGradingRemaining\(elapsedMs, completed, total\)/);
+  assert.match(schoolSource, /gradingActiveTaskMarkup\(tasks, running\)/);
+  assert.match(styles, /\.grading-progress-dial \{[^}]*conic-gradient/);
+  assert.match(styles, /\.grading-progress-stats \{[^}]*grid-template-columns: repeat\(4/);
+  assert.match(styles, /\.grading-active-task-grid \{[^}]*grid-template-columns: repeat\(2/);
+  assert.match(styles, /@keyframes grading-spinner/);
+});
+
 test("student grading detail gives the scoring panel more horizontal space", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.student-review-grid \{[^}]*grid-template-columns: minmax\(0,\.88fr\) minmax\(520px,1\.12fr\)/);
