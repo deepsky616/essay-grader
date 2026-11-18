@@ -20,7 +20,10 @@ window.addEventListener("message", (event) => {
   if (!message || message.source !== PAGE_SOURCE || message.version !== 1) return;
   if (typeof message.requestId !== "string" || !/^[a-zA-Z0-9-]{8,80}$/.test(message.requestId)) return;
   if (message.type === "NEIS_EXTENSION_PING") {
-    respond("NEIS_EXTENSION_PONG", message.requestId, { ready: true });
+    respond("NEIS_EXTENSION_PONG", message.requestId, {
+      ready: true,
+      extensionVersion: chrome.runtime.getManifest().version,
+    });
     return;
   }
   if (message.type !== "NEIS_AUTO_FILL_REQUEST") return;

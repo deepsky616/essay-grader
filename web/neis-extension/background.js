@@ -35,7 +35,7 @@ function validatePayload(payload) {
   return { classLabel, course, assessment, records };
 }
 
-async function neisAssessmentFrameOperation(payload, applyChanges) {
+function neisAssessmentFrameOperation(payload, applyChanges) {
   const normalize = (value) => String(value ?? "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim();
   const compact = (value) => normalize(value).replace(/\s+/g, "");
   const sameName = (left, right) => compact(left).normalize("NFC") === compact(right).normalize("NFC");
@@ -46,7 +46,6 @@ async function neisAssessmentFrameOperation(payload, applyChanges) {
     const rect = element.getBoundingClientRect();
     return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
   };
-  const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
   const dispatchMouseSequence = (element) => {
     if (!element || !element.isConnected) return false;
     element.focus?.({ preventScroll: true });
@@ -59,6 +58,10 @@ async function neisAssessmentFrameOperation(payload, applyChanges) {
       clientY: rect.top + Math.max(1, rect.height / 2),
       button: 0,
     };
+    if (typeof PointerEvent === "function") {
+      element.dispatchEvent(new PointerEvent("pointerdown", { ...eventOptions, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      element.dispatchEvent(new PointerEvent("pointerup", { ...eventOptions, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+    }
     const MouseEventConstructor = typeof MouseEvent === "function" ? MouseEvent : Event;
     for (const [type, buttons] of [["mousedown", 1], ["mouseup", 0], ["click", 0]]) {
       element.dispatchEvent(new MouseEventConstructor(type, { ...eventOptions, buttons }));
@@ -66,55 +69,44 @@ async function neisAssessmentFrameOperation(payload, applyChanges) {
     return true;
   };
   const visibleComboOptions = () => Array.from(document.querySelectorAll('[role="listbox"] [role="option"],.cl-combobox-list [data-role="option"]')).filter(visible);
-  const waitForComboOptions = async () => {
-    for (let attempt = 0; attempt < 15; attempt += 1) {
-      const options = visibleComboOptions();
-      if (options.length) return options;
-      await pause(20);
-    }
-    return [];
-  };
-  const closeCustomCombo = async (combo) => {
+  const closeCustomCombo = (combo) => {
     const KeyboardEventConstructor = typeof KeyboardEvent === "function" ? KeyboardEvent : Event;
     for (const target of [combo, document.activeElement, document].filter((item, index, items) => item?.dispatchEvent && items.indexOf(item) === index)) {
       target.dispatchEvent(new KeyboardEventConstructor("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
       target.dispatchEvent(new KeyboardEventConstructor("keyup", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
     }
-    await pause(20);
     if (visibleComboOptions().length) {
       dispatchMouseSequence(combo);
-      await pause(20);
     }
   };
-  const openCustomCombo = async (combo) => {
+  const openCustomCombo = (combo) => {
     const currentOptions = visibleComboOptions();
     if (currentOptions.length) return currentOptions;
     dispatchMouseSequence(combo);
-    let options = await waitForComboOptions();
+    let options = visibleComboOptions();
     if (options.length) return options;
     const control = combo.closest?.(".cl-combobox");
     if (control && control !== combo) {
       dispatchMouseSequence(control);
-      options = await waitForComboOptions();
+      options = visibleComboOptions();
     }
     return options;
   };
-  const customComboSupportsLevels = async (combo, levels) => {
-    const options = await openCustomCombo(combo);
+  const customComboSupportsLevels = (combo, levels) => {
+    const options = openCustomCombo(combo);
     const supported = levels.every((level) => options.some((option) => compact(option.textContent) === compact(level)));
-    await closeCustomCombo(combo);
+    closeCustomCombo(combo);
     return supported;
   };
-  const setCustomComboLevel = async (combo, level) => {
+  const setCustomComboLevel = (combo, level) => {
     if (compact(combo.textContent) === compact(level)) return "already";
-    const options = await openCustomCombo(combo);
+    const options = openCustomCombo(combo);
     const option = options.find((candidate) => compact(candidate.textContent) === compact(level));
     if (!option) {
-      await closeCustomCombo(combo);
+      closeCustomCombo(combo);
       return "failed";
     }
     dispatchMouseSequence(option);
-    await pause(60);
     return compact(combo.textContent) === compact(level) ? "updated" : "failed";
   };
   const pageText = normalize(document.body?.innerText || document.body?.textContent || "").slice(0, 50000);
@@ -248,14 +240,14 @@ async function neisAssessmentFrameOperation(payload, applyChanges) {
     }
     if (customComboActions.length) {
       const allLevels = Array.from(new Set(payload.records.map((record) => record.level)));
-      if (!await customComboSupportsLevels(customComboActions[0].combo, allLevels)) {
+      if (!customComboSupportsLevels(customComboActions[0].combo, allLevels)) {
         return { status: "incomplete", method: "cpr", matched: 0, missing: payload.records.map((record) => record.number) };
       }
       if (!applyChanges) return { status: "ready", method: "cpr", matched: nativePlan.matched, missing: [] };
       let updated = 0;
       let already = 0;
       for (const action of customComboActions) {
-        const outcome = await setCustomComboLevel(action.combo, action.record.level);
+        const outcome = setCustomComboLevel(action.combo, action.record.level);
         if (outcome === "already") already += 1;
         else if (outcome === "updated") updated += 1;
         else return { status: "failed", method: "cpr", matched: nativePlan.matched, updated, already, missing: [action.record.number] };
@@ -344,15 +336,25 @@ async function findSingleNeisTab() {
   return tabs[0];
 }
 
+function withOperationTimeout(promise, milliseconds, message) {
+  let timer = 0;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    }),
+  ]);
+}
+
 async function executeAutoFill(rawPayload) {
   const payload = validatePayload(rawPayload);
   const tab = await findSingleNeisTab();
-  const inspected = await chrome.scripting.executeScript({
+  const inspected = await withOperationTimeout(chrome.scripting.executeScript({
     target: { tabId: tab.id, allFrames: true },
     world: "MAIN",
     func: neisAssessmentFrameOperation,
     args: [payload, false],
-  });
+  }), 10000, "NEIS 표 대조 단계가 10초 안에 끝나지 않았습니다. NEIS와 웹앱을 새로고침한 뒤 다시 실행해 주세요.");
   const readyFrames = inspected.filter((entry) => entry.result?.status === "ready");
   if (readyFrames.length !== 1) {
     if (readyFrames.length > 1) throw new Error("입력 가능한 NEIS 표가 둘 이상입니다. 입력할 화면 하나만 남겨 주세요.");
@@ -361,12 +363,12 @@ async function executeAutoFill(rawPayload) {
     throw new Error(friendlyOperationError(best));
   }
   const frameId = readyFrames[0].frameId;
-  const applied = await chrome.scripting.executeScript({
+  const applied = await withOperationTimeout(chrome.scripting.executeScript({
     target: { tabId: tab.id, frameIds: [frameId] },
     world: "MAIN",
     func: neisAssessmentFrameOperation,
     args: [payload, true],
-  });
+  }), 10000, "NEIS 단계 입력이 10초 안에 끝나지 않았습니다. 아직 저장되지 않았으므로 화면의 단계 값을 확인해 주세요.");
   const result = applied[0]?.result;
   if (result?.status !== "ok") throw new Error(friendlyOperationError(result));
   await chrome.tabs.update(tab.id, { active: true });

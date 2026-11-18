@@ -14,13 +14,13 @@ const install = fs.readFileSync(path.join(root, "web", "neis-extension-install.h
 
 function loadPayloadValidator() {
   const start = background.indexOf("const ACHIEVEMENT_LEVELS");
-  const end = background.indexOf("async function neisAssessmentFrameOperation", start);
+  const end = background.indexOf("function neisAssessmentFrameOperation", start);
   assert.ok(start >= 0 && end > start);
   return new Function(`${background.slice(start, end)}; return validatePayload;`)();
 }
 
 function loadFrameOperation() {
-  const start = background.indexOf("async function neisAssessmentFrameOperation");
+  const start = background.indexOf("function neisAssessmentFrameOperation");
   const end = background.indexOf("function friendlyOperationError", start);
   assert.ok(start >= 0 && end > start);
   return new Function(`${background.slice(start, end)}; return neisAssessmentFrameOperation;`)();
@@ -59,6 +59,9 @@ test("NEIS helper preflights every frame before applying to exactly one frame", 
   assert.match(background, /target: \{ tabId: tab\.id, frameIds: \[frameId\] \}/);
   assert.match(background, /args: \[payload, true\]/);
   assert.match(background, /sender\.tab\?\.url\?\.startsWith\(WEBAPP_URL_PREFIX\)/);
+  assert.match(background, /withOperationTimeout\(chrome\.scripting\.executeScript/);
+  assert.match(background, /NEIS 표 대조 단계가 10초 안에 끝나지 않았습니다/);
+  assert.match(background, /NEIS 단계 입력이 10초 안에 끝나지 않았습니다/);
 });
 
 test("NEIS helper matches student names and levels despite display-only spacing", async () => {
@@ -181,11 +184,14 @@ test("NEIS helper never sends data to a server or presses the NEIS save button",
 
 test("the grading web app detects the extension and keeps copy and Excel fallbacks", () => {
   assert.match(school, /function detectNeisExtension\(\)/);
+  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.0\.3"/);
+  assert.match(school, /확장 도우미 \$\{extension\.version\} 업데이트 필요/);
   assert.match(school, /NEIS_AUTO_FILL_REQUEST/);
   assert.match(school, /data-auto-fill-neis disabled>NEIS 단계 자동 입력/);
   assert.match(school, /저장은 자동으로 누르지 않습니다/);
   assert.match(school, /data-copy-neis-transfer/);
   assert.match(school, /data-download-neis-transfer/);
   assert.match(install, /href="\.\/neis-extension\.zip" download/);
+  assert.match(bridge, /chrome\.runtime\.getManifest\(\)\.version/);
   assert.ok(fs.existsSync(path.join(root, "web", "neis-extension.zip")), "extension ZIP must be packaged");
 });

@@ -2674,6 +2674,7 @@ const NEIS_PERFORMANCE_LEVELS = Object.freeze([
 ]);
 const NEIS_EXTENSION_PAGE_SOURCE = "essay-grader-neis-page";
 const NEIS_EXTENSION_RESPONSE_SOURCE = "essay-grader-neis-extension";
+const NEIS_EXTENSION_MIN_VERSION = "1.0.3";
 
 function neisExtensionRequestId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -2709,9 +2710,19 @@ function sendNeisExtensionMessage(type, payload = {}, timeoutMs = 1200) {
 async function detectNeisExtension() {
   try {
     const response = await sendNeisExtensionMessage("NEIS_EXTENSION_PING", {}, 900);
-    return response.ready === true;
+    const version = String(response.extensionVersion || "0.0.0");
+    const current = version.split(".").map((part) => Number(part) || 0);
+    const minimum = NEIS_EXTENSION_MIN_VERSION.split(".").map((part) => Number(part) || 0);
+    let comparison = 0;
+    for (let index = 0; index < Math.max(current.length, minimum.length); index += 1) {
+      if ((current[index] || 0) === (minimum[index] || 0)) continue;
+      comparison = (current[index] || 0) > (minimum[index] || 0) ? 1 : -1;
+      break;
+    }
+    const compatible = comparison >= 0;
+    return { ready: response.ready === true && compatible, version };
   } catch {
-    return false;
+    return { ready: false, version: "" };
   }
 }
 
@@ -2950,10 +2961,17 @@ function openNeisTransferDialog(course, targetStudents) {
   }
   update();
   if (!dialog.open) dialog.showModal();
-  detectNeisExtension().then((ready) => {
+  detectNeisExtension().then((extension) => {
     if (dialog._neisContext?.course !== course) return;
+    const ready = extension.ready;
     dialog._neisExtensionReady = ready;
-    setNeisExtensionState(dialog, ready ? "ready" : "missing", ready ? "브라우저 확장 도우미 연결됨" : "브라우저 확장 도우미 설치 필요", ready ? "NEIS 단계 자동 입력을 사용할 수 있습니다." : "설치 안내를 열어 확장 도우미를 한 번 설치한 뒤 이 페이지를 새로고침해 주세요.");
+    const outdated = Boolean(extension.version) && !ready;
+    setNeisExtensionState(
+      dialog,
+      ready ? "ready" : "missing",
+      ready ? `브라우저 확장 도우미 ${extension.version} 연결됨` : outdated ? `확장 도우미 ${extension.version} 업데이트 필요` : "브라우저 확장 도우미 설치 필요",
+      ready ? "NEIS 단계 자동 입력을 사용할 수 있습니다." : outdated ? `설치 안내에서 ${NEIS_EXTENSION_MIN_VERSION} 이상을 내려받아 다시 로드한 뒤 이 페이지를 새로고침해 주세요.` : "설치 안내를 열어 확장 도우미를 한 번 설치한 뒤 이 페이지를 새로고침해 주세요.",
+    );
     dialog._updateNeisTransfer?.();
   });
 }
