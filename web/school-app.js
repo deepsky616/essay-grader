@@ -1445,16 +1445,36 @@ function rubricAiElements(dialog, form) {
 
 function alignGeneratedRubrics(result, requestedElements) {
   const generated = Array.isArray(result?.rubricCriteria) ? result.rubricCriteria : [];
-  return requestedElements.map((requested, index) => {
-    const item = generated.find((candidate) => String(candidate?.questionNumber || "").trim() === requested.questionNumber
-      && String(candidate?.evaluationElement || "").trim() === requested.evaluationElement) || generated[index];
-    if (!item) throw new Error(`${requested.evaluationElement}의 채점기준을 생성하지 못했습니다.`);
-    const levels = Array.isArray(item.scoreLevels) ? item.scoreLevels : [];
-    const expectedScores = requested.scoreValues;
-    const scoreLevels = expectedScores.map((score) => {
+  const usedIndexes = new Set();
+  const normalizedIdentity = (value) => String(value || "").trim().toLocaleLowerCase("ko-KR");
+  return requestedElements.map((requested, requestedIndex) => {
+    const isReservedForAnotherElement = (candidate, candidateIndex) => requestedElements.some((other, otherIndex) => otherIndex !== requestedIndex
+      && !usedIndexes.has(candidateIndex)
+      && normalizedIdentity(candidate?.questionNumber) === normalizedIdentity(other.questionNumber)
+      && normalizedIdentity(candidate?.evaluationElement) === normalizedIdentity(other.evaluationElement));
+    let generatedIndex = generated.findIndex((candidate, candidateIndex) => !usedIndexes.has(candidateIndex)
+      && normalizedIdentity(candidate?.questionNumber) === normalizedIdentity(requested.questionNumber)
+      && normalizedIdentity(candidate?.evaluationElement) === normalizedIdentity(requested.evaluationElement));
+    if (generatedIndex < 0) generatedIndex = generated.findIndex((candidate, candidateIndex) => !usedIndexes.has(candidateIndex)
+      && !isReservedForAnotherElement(candidate, candidateIndex)
+      && normalizedIdentity(candidate?.questionNumber) === normalizedIdentity(requested.questionNumber));
+    if (generatedIndex < 0 && generated[requestedIndex] && !usedIndexes.has(requestedIndex)
+      && !isReservedForAnotherElement(generated[requestedIndex], requestedIndex)) generatedIndex = requestedIndex;
+    if (generatedIndex < 0) generatedIndex = generated.findIndex((candidate, candidateIndex) => !usedIndexes.has(candidateIndex)
+      && !isReservedForAnotherElement(candidate, candidateIndex));
+    if (generatedIndex >= 0) usedIndexes.add(generatedIndex);
+    const item = generatedIndex >= 0 ? generated[generatedIndex] : null;
+    const levels = Array.isArray(item?.scoreLevels) ? item.scoreLevels : [];
+    const expectedScores = (Array.isArray(requested.scoreValues) && requested.scoreValues.length === RUBRIC_PERFORMANCE_BANDS.length)
+      ? requested.scoreValues
+      : performanceBandScores(requested.maxScore || 1);
+    const scoreLevels = expectedScores.map((score, bandIndex) => {
       const level = levels.find((candidate) => Math.abs(Number(candidate?.score) - score) < 0.001);
-      if (!level?.criterion?.trim()) throw new Error(`${requested.evaluationElement}의 ${score}점 기준이 누락되었습니다. 다시 생성해 주세요.`);
-      return { id: crypto.randomUUID(), score, criterion: String(level.criterion).trim() };
+      return {
+        id: crypto.randomUUID(),
+        score,
+        criterion: String(level?.criterion || "").trim() || RUBRIC_PERFORMANCE_BANDS[bandIndex].defaultCriterion,
+      };
     });
     return { id: crypto.randomUUID(), questionNumber: requested.questionNumber, evaluationElement: requested.evaluationElement, scoreLevels };
   });
@@ -1987,9 +2007,7 @@ function normalizeRubricCriteria(items, performanceThresholds = null) {
   }
   return Array.from(grouped.values()).map((group) => ({
     ...group,
-    scoreLevels: performanceThresholds
-      ? rubricPerformanceLevels(group.scoreLevels, performanceThresholds)
-      : group.scoreLevels.sort((a, b) => b.score - a.score),
+    scoreLevels: rubricPerformanceLevels(group.scoreLevels, performanceThresholds || DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS),
   }));
 }
 
@@ -3661,9 +3679,11 @@ function resultScoreSummary(result, design) {
   const rows = resultQuestionRows(result, design);
   const designMax = assessmentDesignTotalScore(design);
   const maxScore = designMax || Number(result?.maxScore || 0) || rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
-  const rowTotal = rows.reduce((sum, item) => sum + Number(item.score || 0), 0);
-  const total = result?.teacherTotal ?? result?.totalScore ?? rowTotal;
-  return { total: Number(total || 0), maxScore, rows };
+  const total = rows.reduce((sum, item, index) => {
+    const teacherScore = item.sourceIndex >= 0 ? result?.teacherScores?.[item.sourceIndex] : undefined;
+    return sum + Number(teacherScore ?? item.score ?? 0);
+  }, 0);
+  return { total: Math.round(total * 100) / 100, maxScore, rows };
 }
 
 function scoreChoicesForResultRow(item, design) {
@@ -3791,13 +3811,15 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
   const exampleScores = exampleQuestionScoreMap(design?.exampleAnswers);
   rows.forEach((item, index) => {
     const questionNumber = String(item.questionNumber || index + 1);
-    if (!groups.has(questionNumber)) groups.set(questionNumber, []);
-    groups.get(questionNumber).push({ item, index });
+    const groupKey = questionScoreGroupKey(questionNumber) || questionNumber;
+    if (!groups.has(groupKey)) groups.set(groupKey, { questionNumber: groupKey, entries: [] });
+    groups.get(groupKey).entries.push({ item, index });
   });
-  return Array.from(groups.entries()).map(([questionNumber, entries], groupIndex) => {
+  return Array.from(groups.values()).map(({ questionNumber, entries }, groupIndex) => {
     const subtotal = entries.reduce((sum, entry) => sum + Number(teacherScores[entry.index] ?? entry.item.score ?? 0), 0);
     const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
     const exampleMax = exampleScores.get(questionScoreGroupKey(questionNumber)) || submax;
+    const questionBand = achievementBandForScore(subtotal, exampleMax, design?.performanceThresholds);
     const subQuestionRows = exampleRows.map((item, exampleIndex) => ({ item, exampleIndex }))
       .filter(({ item }) => questionScoreGroupKey(item.questionNumber) === questionScoreGroupKey(questionNumber));
     const pointRows = subQuestionRows.flatMap(({ item, exampleIndex }) => item.pointResults?.length ? item.pointResults.map((point, pointIndex) => ({
@@ -3808,7 +3830,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       pointIndex,
     })) : [{ ...item, pointLabel: item.questionNumber, exampleIndex, pointIndex: -1 }]);
     return `<section class="question-score-group">
-      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 채점 점수 <b data-question-total="${groupIndex}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span></div></div>
+      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th>문제·배점 항목</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
@@ -3924,6 +3946,13 @@ async function openStudentResult(course, targetStudents, studentId) {
       const groupMax = Number(label.dataset.questionMax || 0)
         || groupInputs.reduce((sum, input) => sum + Number(input.max || 0), 0);
       label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
+      const questionBand = achievementBandForScore(groupTotal, groupMax, design.performanceThresholds);
+      const questionLevel = panel.querySelector(`[data-question-level="${groupIndex}"]`);
+      if (questionLevel) {
+        questionLevel.textContent = `합산 ${questionBand.label}`;
+        questionLevel.className = `performance-level-badge is-${questionBand.key}`;
+        questionLevel.title = `${questionBand.percentage}% · ${questionBand.range}`;
+      }
     });
     return { total, achievementBand };
   };

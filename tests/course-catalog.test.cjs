@@ -20,8 +20,12 @@ function loadQuestionScoreHelpers() {
   const bandsEnd = source.indexOf("\n\nconst app", bandsStart);
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
-  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
+  const alignStart = source.indexOf("function alignGeneratedRubrics");
+  const alignEnd = source.indexOf("async function generateRubricWithAi", alignStart);
+  const normalizeStart = source.indexOf("function normalizeRubricCriteria");
+  const normalizeEnd = source.indexOf("function rubricGroupMaxScore", normalizeStart);
+  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start && alignStart >= 0 && alignEnd > alignStart && normalizeStart >= 0 && normalizeEnd > normalizeStart, "question score helpers must exist");
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, alignGeneratedRubrics, normalizeRubricCriteria };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -172,6 +176,41 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
   assert.match(styles, /\.question-score-summary \{/);
   assert.match(styles, /\.rubric-derived-score \{/);
+});
+
+test("every requested evaluation element keeps four performance levels without AI extras", () => {
+  const { alignGeneratedRubrics, normalizeRubricCriteria } = loadQuestionScoreHelpers();
+  const requested = [
+    { questionNumber: "1", evaluationElement: "계산 과정", maxScore: 5, scoreValues: [5, 3.5, 2.5, 1.5] },
+    { questionNumber: "1", evaluationElement: "설명 근거", maxScore: 5, scoreValues: [5, 3.5, 2.5, 1.5] },
+  ];
+  const aligned = alignGeneratedRubrics({ rubricCriteria: [
+    { questionNumber: "1", evaluationElement: "계산 과정", scoreLevels: [{ score: 1.5, criterion: "기초적인 시도 또는 미응답" }] },
+    { questionNumber: "1", evaluationElement: "설명 근거", scoreLevels: [
+      { score: 5, criterion: "근거가 완전함" },
+      { score: 3.5, criterion: "근거가 대체로 맞음" },
+      { score: 2.5, criterion: "근거가 일부 있음" },
+      { score: 1.5, criterion: "근거가 없거나 미응답" },
+    ] },
+    { questionNumber: "2", evaluationElement: "AI가 임의로 추가한 요소", scoreLevels: [] },
+  ] }, requested);
+  assert.equal(aligned.length, 2);
+  assert.deepEqual(aligned.map((item) => item.evaluationElement), ["계산 과정", "설명 근거"]);
+  assert.ok(aligned.every((item) => item.scoreLevels.length === 4));
+  assert.match(aligned[0].scoreLevels[3].criterion, /미응답/);
+
+  const partial = alignGeneratedRubrics({ rubricCriteria: [
+    { questionNumber: "1", evaluationElement: "설명 근거", scoreLevels: [{ score: 5, criterion: "설명 근거 전용 만점 기준" }] },
+  ] }, requested);
+  assert.doesNotMatch(partial[0].scoreLevels[0].criterion, /설명 근거 전용/);
+  assert.match(partial[1].scoreLevels[0].criterion, /설명 근거 전용/);
+
+  const repaired = normalizeRubricCriteria([{ questionNumber: "3", evaluationElement: "표현", scoreLevels: [{ score: 0, criterion: "미응답" }] }]);
+  assert.equal(repaired.length, 1);
+  assert.equal(repaired[0].scoreLevels.length, 4);
+  assert.match(repaired[0].scoreLevels[3].criterion, /미응답/);
+  assert.match(source, /평가요소 합산 점수/);
+  assert.match(source, /data-question-level/);
 });
 
 test("assessment document AI input shows a visible five-stage progress card", () => {

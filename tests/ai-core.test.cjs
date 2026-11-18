@@ -915,6 +915,8 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
       const body = JSON.parse(options.body);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 1);
+      assert.match(body.contents[0].parts[0].text, /평가요소가 2개면 rubricCriteria도 정확히 2개/);
+      assert.match(body.contents[0].parts[0].text, /scoreLevels 4개/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
         rubricCriteria: [{ questionNumber: "1", evaluationElement: "도형 성질", scoreLevels: [{ score: 5, criterion: "조건 2개 충족" }, { score: 3, criterion: "조건 1개 충족" }] }],
         notes: [],
@@ -1022,6 +1024,8 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
       assert.match(prompt, /"label":"매우잘함","range":"80% 이상","score":10/);
       assert.match(prompt, /미응답 또는 근거 없음도 노력요함 기준 문장 안에 포함/);
       assert.match(prompt, /별도의 0점 수준은 만들지 마세요/);
+      assert.match(prompt, /rubricCriteria 배열은 정확히 1개만 작성/);
+      assert.match(prompt, /scoreLevels는 매우잘함·잘함·보통·노력요함 순서의 4개/);
       assert.match(prompt, /6학년|"grade":"6"/);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
