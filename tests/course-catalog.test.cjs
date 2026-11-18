@@ -21,7 +21,7 @@ function loadQuestionScoreHelpers() {
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -111,7 +111,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -122,6 +122,11 @@ test("example-answer points drive question totals and derived rubric scores", ()
     { questionNumber: "2", maxScore: 4 },
   ]).entries()), [["1", 5], ["2", 4]]);
   assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
+  assert.deepEqual(prepareExtractedExampleAnswers([
+    { questionNumber: "1-(1)", maxScore: 0 },
+    { questionNumber: "1-(2)", maxScore: 0 },
+    { questionNumber: "2", maxScore: 0 },
+  ], new Map([["1", 3], ["2", 2]])).map((item) => item.maxScore), [1.5, 1.5, 2]);
   assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3]);
   assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5]);
   const customThresholds = { excellent: 85, good: 65, average: 45, effort: 25 };
@@ -183,6 +188,13 @@ test("assessment document AI input shows a visible five-stage progress card", ()
   assert.match(styles, /\.document-analysis-progress \{[^}]*border:[^}]*background:/);
   assert.match(styles, /\.document-analysis-progress ol \{[^}]*grid-template-columns: repeat\(5/);
   assert.match(styles, /@keyframes document-progress-spin/);
+});
+
+test("easy math input is collapsible and opens by default only for math courses", () => {
+  assert.match(source, /<details class="example-math-disclosure" data-example-math-disclosure \$\{options\.mathOpen \? "open" : ""\}>/);
+  assert.match(source, /exampleEditorRow\(item, \{ mathOpen: course\.subject === "수학" \}\)/);
+  assert.match(source, /data-example-math-disclosure/);
+  assert.match(styles, /\.example-math-disclosure\[open\] summary/);
 });
 
 test("downloaded student roster template includes school name and leaves every data row blank", () => {

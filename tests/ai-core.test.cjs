@@ -39,6 +39,29 @@ test("formula commands are removed from the answer explanation", () => {
   assert.match(friendly, /1500\/5000 × 100 = 3\/10 × 100 = 30%/);
 });
 
+test("example-answer hierarchy normalizes 1. (1), (2) as 1-(1), 1-(2)", () => {
+  const normalized = AI.normalizeExampleAnswerQuestionNumbers([
+    { questionNumber: "1. (1)", answerText: "첫째 답" },
+    { questionNumber: "(2)", answerText: "둘째 답" },
+    { questionNumber: "2.", answerText: "둘째 문제 답" },
+  ]);
+  assert.deepEqual(normalized.map((item) => item.questionNumber), ["1-(1)", "1-(2)", "2"]);
+});
+
+test("math verification can add subquestions missed by the first document pass", () => {
+  const merged = AI.mergeVerifiedExampleAnswers([
+    { questionNumber: "1", maxScore: 3, answerText: "합쳐진 답" },
+    { questionNumber: "2", maxScore: 2, answerText: "둘째 문제 답" },
+  ], [
+    { questionNumber: "1. (1)", answerText: "첫째 하위 답", mathNotation: "" },
+    { questionNumber: "(2)", answerText: "둘째 하위 답", mathNotation: "" },
+    { questionNumber: "2.", answerText: "둘째 문제 검증 답", mathNotation: "" },
+  ]);
+  assert.deepEqual(merged.map((item) => item.questionNumber), ["1-(1)", "1-(2)", "2"]);
+  assert.deepEqual(merged.slice(0, 2).map((item) => item.maxScore), [0, 0]);
+  assert.equal(merged[2].answerText, "둘째 문제 검증 답");
+});
+
 function assertSchemaEnumsAreStrings(value, path = "responseSchema") {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value.enum)) {

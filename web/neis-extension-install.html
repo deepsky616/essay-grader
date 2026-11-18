@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NEIS 입력 도우미 설치 | AI 서·논술형 평가지원시스템</title>
+  <style>
+    :root { --ink:#182138; --blue:#3154d6; --line:#d9dfeb; --muted:#59647a; --paper:#f4f6fa; --green:#17623f; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:Pretendard,"Noto Sans KR","Malgun Gothic",sans-serif; font-size:17px; line-height:1.65; }
+    main { width:min(960px,calc(100% - 32px)); margin:34px auto 70px; }
+    .hero { padding:34px; border:2px solid var(--ink); border-radius:20px; background:white; box-shadow:8px 8px 0 var(--ink); }
+    .kicker { margin:0 0 8px; color:var(--blue); font-size:13px; font-weight:900; letter-spacing:.13em; }
+    h1 { margin:0; font-size:clamp(32px,5vw,52px); line-height:1.18; }
+    .lead { max-width:760px; margin:15px 0 0; color:var(--muted); }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:48px; padding:11px 18px; border:1px solid var(--ink); border-radius:10px; color:var(--ink); font-weight:900; text-decoration:none; }
+    .button.primary { border-color:var(--blue); background:var(--blue); color:white; }
+    .notice { margin-top:24px; padding:16px 18px; border-left:5px solid var(--green); background:#eaf8f0; color:#254d39; }
+    section { margin-top:24px; padding:28px; border:1px solid var(--line); border-radius:16px; background:white; }
+    h2 { margin:0 0 16px; font-size:25px; }
+    ol { display:grid; gap:13px; margin:0; padding-left:25px; }
+    li { padding-left:5px; }
+    code { padding:2px 6px; border-radius:5px; background:#eef1f7; font-family:inherit; font-weight:800; }
+    .browser-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .browser-grid article { padding:18px; border:1px solid var(--line); border-radius:12px; }
+    .browser-grid h3 { margin:0 0 10px; }
+    .checklist { display:grid; gap:8px; padding:0; list-style:none; }
+    .checklist li::before { content:"✓"; margin-right:9px; color:var(--green); font-weight:900; }
+    .warning { border-color:#e5c27c; background:#fffaf0; }
+    footer { margin-top:22px; color:var(--muted); font-size:14px; text-align:center; }
+    @media (max-width:700px) { .hero,section { padding:22px; } .browser-grid { grid-template-columns:1fr; } .actions { display:grid; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <p class="kicker">ONE-TIME BROWSER SETUP</p>
+      <h1>NEIS 입력 도우미 설치</h1>
+      <p class="lead">AI 서·논술형 평가지원시스템에서 확정한 학생별 성취수준을 현재 열린 NEIS 성취기준별 평가 화면의 <strong>단계 칸</strong>에 입력하는 로컬 확장 도우미입니다.</p>
+      <div class="actions"><a class="button primary" href="./neis-extension.zip" download>확장 도우미 ZIP 내려받기</a><a class="button" href="./">평가지원시스템으로 돌아가기</a></div>
+      <div class="notice"><strong>개인정보 보호</strong><br>학생 명단과 성취수준은 이 컴퓨터의 두 탭 사이에서만 전달됩니다. 외부 서버 저장·전송 기능이 없고 NEIS의 저장 버튼도 누르지 않습니다.</div>
+    </header>
+
+    <section>
+      <h2>1. ZIP 압축 풀기</h2>
+      <ol>
+        <li><strong>확장 도우미 ZIP 내려받기</strong>를 누릅니다.</li>
+        <li>다운로드한 <code>neis-extension.zip</code>을 마우스 오른쪽 버튼으로 누르고 <strong>압축 풀기</strong>를 선택합니다.</li>
+        <li>압축을 푼 폴더는 삭제하지 말고 교사용 컴퓨터의 안전한 위치에 보관합니다.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>2. 사용하는 브라우저에 설치</h2>
+      <div class="browser-grid">
+        <article><h3>Microsoft Edge</h3><ol><li>주소창에 <code>edge://extensions</code> 입력</li><li><strong>개발자 모드</strong> 켜기</li><li><strong>압축 풀린 확장 로드</strong> 선택</li><li>압축을 푼 폴더 선택</li></ol></article>
+        <article><h3>Google Chrome</h3><ol><li>주소창에 <code>chrome://extensions</code> 입력</li><li><strong>개발자 모드</strong> 켜기</li><li><strong>압축해제된 확장 프로그램을 로드합니다</strong> 선택</li><li>압축을 푼 폴더 선택</li></ol></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. 사용 전 체크</h2>
+      <ul class="checklist"><li>평가지원시스템 페이지를 새로고침했습니다.</li><li>NEIS 탭은 입력할 화면 하나만 열었습니다.</li><li>NEIS에서 학년·반·교과·영역·성취기준을 조회했습니다.</li><li>교사 확정 결과와 학생 수를 확인했습니다.</li></ul>
+    </section>
+
+    <section class="warning">
+      <h2>안전하게 동작하는 방식</h2>
+      <p>도우미는 먼저 모든 학생의 <strong>번호 + 이름 + 단계 선택값</strong>이 정확히 한 번씩 일치하는지 검사합니다. 한 명이라도 찾지 못하거나 입력 표가 여러 개이면 아무 값도 입력하지 않고 중단합니다. 성공 후에는 NEIS 화면을 교사가 직접 확인하고 저장해야 합니다.</p>
+      <p><strong>기관별 NEIS 화면 구조가 달라 자동 입력이 중단되면</strong> 평가지원시스템의 ‘번호·성취수준 복사’ 또는 ‘NEIS 확인용 Excel’을 사용해 주세요.</p>
+    </section>
+    <footer>AI 서·논술형 평가지원시스템 · NEIS 단계 입력 보조 기능</footer>
+  </main>
+</body>
+</html>

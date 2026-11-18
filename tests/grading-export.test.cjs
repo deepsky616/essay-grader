@@ -346,6 +346,9 @@ test("NEIS helper requires a clean review state and exports a local verification
   assert.match(schoolSource, /NEIS교과평가_입력확인_/);
   assert.match(schoolSource, /학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다/);
   assert.match(schoolSource, /NEIS 저장은 자동으로 누르지 않습니다/);
+  assert.match(schoolSource, /data-auto-fill-neis disabled>NEIS 단계 자동 입력/);
+  assert.match(schoolSource, /dialog\.querySelector\("\[data-auto-fill-neis\]"\)\.disabled = Boolean\(issueCount\)/);
+  assert.match(schoolSource, /NEIS에서 올바른 학급·영역·성취기준을 조회했는지 확인/);
 });
 
 test("problem scoring panel uses readable text and score button sizes", () => {

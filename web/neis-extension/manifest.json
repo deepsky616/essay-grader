@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AI 서·논술형 NEIS 입력 도우미",
+  "version": "1.0.0",
+  "description": "교사가 확인한 성취수준을 현재 열린 NEIS 성취기준별 평가 화면의 단계 칸에 안전하게 입력합니다.",
+  "permissions": [
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://deepsky616.github.io/essay-grader/*",
+    "https://*.neis.go.kr/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://deepsky616.github.io/essay-grader/*"
+      ],
+      "js": [
+        "webapp-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "AI 서·논술형 NEIS 입력 도우미"
+  }
+}

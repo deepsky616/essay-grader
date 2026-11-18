@@ -701,7 +701,7 @@ function designEditor(design, course) {
           <span>${design.exampleFile ? `저장됨: ${escapeHtml(design.exampleFile.name)}` : "수식·도형이 있는 원본도 그대로 보관합니다."}</span>
         </div>
         ${documentAnalysisProgressMarkup("example")}
-        <div data-example-rows>${exampleAnswers.map(exampleEditorRow).join("")}</div>
+        <div data-example-rows>${exampleAnswers.map((item) => exampleEditorRow(item, { mathOpen: course.subject === "수학" })).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
         <div class="editor-section-title"><div><span>4</span><strong>학생용 평가지 등록</strong><p>학생이 작성하기 전의 평가지 원본을 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다. 교사용 기준안·예시답안 페이지는 제외하세요.</p></div></div>
@@ -813,7 +813,7 @@ function rubricAiElementRow(item = {}, index = 0) {
   return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${RUBRIC_PERFORMANCE_BANDS.length}"><span class="rubric-ai-fixed-levels">4개 성취수준</span></label></div></article>`;
 }
 
-function exampleEditorRow(item) {
+function exampleEditorRow(item, options = {}) {
   const friendlyMath = toTeacherFriendlyMath(item.mathNotation || "");
   const friendlyAnswerText = toTeacherFriendlyMath(item.answerText || "");
   const friendlyVisualDescription = toTeacherFriendlyMath(item.visualDescription || "");
@@ -823,7 +823,7 @@ function exampleEditorRow(item) {
     <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1 또는 1-(1)" required></label><span class="example-total-score">총 <b data-example-point-total>${formatScore(maxScore)}</b>점</span></div><button type="button" data-remove-example>삭제</button></div>
     <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점으로 채점됩니다.</p></section>
     <label>답안에 대한 설명 <small>복잡한 수식 명령어는 자동으로 쉬운 표현으로 바뀝니다.</small><textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(friendlyAnswerText)}</textarea></label>
-    <div class="example-detail-grid"><div class="example-math-field"><div class="example-math-head"><strong>쉬운 수식 입력</strong><span>예: 180 ÷ 720 × 100 = 25%</span></div><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
+    <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
     <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
   </article>`;
 }
@@ -1050,6 +1050,29 @@ function allocateQuestionScore(totalScore, count) {
   return Array.from({ length: itemCount }, (_value, index) => (baseUnits + (index < remainder ? 1 : 0)) / 2);
 }
 
+function prepareExtractedExampleAnswers(items, ...scoreMaps) {
+  const normalized = typeof ChaejeomAI !== "undefined" && typeof ChaejeomAI.normalizeExampleAnswerQuestionNumbers === "function"
+    ? ChaejeomAI.normalizeExampleAnswerQuestionNumbers(items)
+    : (Array.isArray(items) ? items : []);
+  const prepared = normalized.map((item) => ({ ...item, maxScore: positiveDesignScore(item?.maxScore) || 0 }));
+  const groupedIndexes = new Map();
+  prepared.forEach((item, index) => {
+    const key = questionScoreGroupKey(item?.questionNumber);
+    if (!key) return;
+    if (!groupedIndexes.has(key)) groupedIndexes.set(key, []);
+    groupedIndexes.get(key).push(index);
+  });
+  for (const [key, indexes] of groupedIndexes) {
+    const targetScore = scoreMaps.map((scores) => Number(scores?.get?.(key) || 0)).find((score) => score > 0) || 0;
+    const unresolved = indexes.filter((index) => !prepared[index].maxScore);
+    if (!targetScore || !unresolved.length) continue;
+    const explicitTotal = indexes.reduce((sum, index) => sum + Number(prepared[index].maxScore || 0), 0);
+    const allocations = allocateQuestionScore(Math.max(0, targetScore - explicitTotal), unresolved.length);
+    unresolved.forEach((index, allocationIndex) => { prepared[index].maxScore = allocations[allocationIndex] || 0; });
+  }
+  return prepared;
+}
+
 function derivedBandScores(targetMaxScore, currentScores, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maxScore = Math.max(0, Number(targetMaxScore || 0));
   const source = (Array.isArray(currentScores) ? currentScores : []).map(Number).filter(Number.isFinite);
@@ -1254,7 +1277,7 @@ function handleDesignEditorClick(event, form, course) {
   const removeRubric = event.target.closest("[data-remove-rubric]");
   if (removeRubric) { if (form.querySelectorAll("[data-rubric-group]").length > 1) removeRubric.closest("[data-rubric-group]").remove(); syncQuestionScoreUI(form); return; }
   const addExample = event.target.closest("[data-add-example]");
-  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", pointItems: [{ id: crypto.randomUUID(), score: "", criterion: "" }], answerText: "", mathNotation: "", visualDescription: "" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
+  if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", pointItems: [{ id: crypto.randomUUID(), score: "", criterion: "" }], answerText: "", mathNotation: "", visualDescription: "" }, { mathOpen: course.subject === "수학" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
   if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); return; }
   const addExamplePoint = event.target.closest("[data-add-example-point]");
@@ -1614,8 +1637,8 @@ async function extractDesignDocument(form, kind, course) {
     if (kind === "design") {
       const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
       const rubrics = normalizeRubricCriteria(result.rubricCriteria || [], performanceThresholds);
-      const examples = Array.isArray(result.exampleAnswers) ? result.exampleAnswers : [];
-      if (!achievements.length || !rubrics.length || !examples.length) throw new Error("문서에서 성취기준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
+      const rawExamples = Array.isArray(result.exampleAnswers) ? result.exampleAnswers : [];
+      if (!achievements.length || !rubrics.length || !rawExamples.length) throw new Error("문서에서 성취기준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
       if (result.taskName) form.elements.taskName.value = String(result.taskName).trim();
       form.querySelector("[data-achievement-groups]").innerHTML = achievements.map((group, index) => achievementEditor({
         ...group,
@@ -1624,11 +1647,12 @@ async function extractDesignDocument(form, kind, course) {
       }, index, course)).join("");
       form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       const rubricScores = rubricQuestionMaxScoreMap(rubrics);
+      const examples = prepareExtractedExampleAnswers(rawExamples, rubricScores);
       form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({
         ...item,
         id: crypto.randomUUID(),
-        maxScore: positiveDesignScore(item.maxScore) || rubricScores.get(questionScoreGroupKey(item.questionNumber)) || "",
-      })).join("");
+        maxScore: positiveDesignScore(item.maxScore) || "",
+      }, { mathOpen: course.subject === "수학" })).join("");
       form._designSourceFile = file;
       refreshMathPreviews(form);
       syncQuestionScoreUI(form);
@@ -1638,18 +1662,16 @@ async function extractDesignDocument(form, kind, course) {
       form.querySelector("[data-rubric-groups]").innerHTML = items.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       syncQuestionScoreUI(form);
     } else {
-      const items = result.exampleAnswers || [];
-      if (!items.length) throw new Error("문서에서 예시답안을 찾지 못했습니다.");
+      const rawItems = result.exampleAnswers || [];
+      if (!rawItems.length) throw new Error("문서에서 예시답안을 찾지 못했습니다.");
       const currentScores = questionScoreMapFromForm(form);
       const rubricScores = rubricQuestionMaxScoreMap(Array.from(form.querySelectorAll("[data-rubric-group]")).map((group) => ({
         questionNumber: group.querySelector('[name="rubricQuestion"]')?.value.trim() || "",
         evaluationElement: group.querySelector('[name="rubricElement"]')?.value.trim() || "",
         scoreLevels: Array.from(group.querySelectorAll("[data-rubric-score]")).map((level) => ({ score: Number(level.querySelector('[name="rubricScore"]')?.value || 0), criterion: level.querySelector('[name="rubricCriterion"]')?.value.trim() || "" })),
       })));
-      form.querySelector("[data-example-rows]").innerHTML = items.map((item) => {
-        const questionNumber = questionScoreGroupKey(item.questionNumber);
-        return exampleEditorRow({ ...item, id: crypto.randomUUID(), maxScore: positiveDesignScore(item.maxScore) || currentScores.get(questionNumber) || rubricScores.get(questionNumber) || "" });
-      }).join("");
+      const items = prepareExtractedExampleAnswers(rawItems, currentScores, rubricScores);
+      form.querySelector("[data-example-rows]").innerHTML = items.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID(), maxScore: positiveDesignScore(item.maxScore) || "" }, { mathOpen: course.subject === "수학" })).join("");
       refreshMathPreviews(form);
       syncQuestionScoreUI(form);
     }
@@ -2329,6 +2351,74 @@ const NEIS_PERFORMANCE_LEVELS = Object.freeze([
   { key: "average", label: "보통" },
   { key: "effort", label: "노력요함" },
 ]);
+const NEIS_EXTENSION_PAGE_SOURCE = "essay-grader-neis-page";
+const NEIS_EXTENSION_RESPONSE_SOURCE = "essay-grader-neis-extension";
+
+function neisExtensionRequestId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `neis-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sendNeisExtensionMessage(type, payload = {}, timeoutMs = 1200) {
+  return new Promise((resolve, reject) => {
+    const requestId = neisExtensionRequestId();
+    const responseType = type === "NEIS_EXTENSION_PING" ? "NEIS_EXTENSION_PONG" : "NEIS_AUTO_FILL_RESULT";
+    let timer = 0;
+    const cleanup = () => {
+      clearTimeout(timer);
+      window.removeEventListener("message", receive);
+    };
+    const receive = (event) => {
+      const message = event.data;
+      if (event.source !== window || event.origin !== window.location.origin) return;
+      if (!message || message.source !== NEIS_EXTENSION_RESPONSE_SOURCE || message.version !== 1) return;
+      if (message.type !== responseType || message.requestId !== requestId) return;
+      cleanup();
+      resolve(message);
+    };
+    window.addEventListener("message", receive);
+    timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error(type === "NEIS_EXTENSION_PING" ? "확장 도우미를 찾지 못했습니다." : "NEIS 입력 도우미의 응답 시간이 초과되었습니다."));
+    }, timeoutMs);
+    window.postMessage({ source: NEIS_EXTENSION_PAGE_SOURCE, type, version: 1, requestId, payload }, window.location.origin);
+  });
+}
+
+async function detectNeisExtension() {
+  try {
+    const response = await sendNeisExtensionMessage("NEIS_EXTENSION_PING", {}, 900);
+    return response.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+function neisAutoFillPayload(records, course, design) {
+  return {
+    classLabel: records[0]?.classLabel || "-",
+    course: course.title || course.subject || "-",
+    assessment: design.taskName || "-",
+    records: records.map((record) => ({
+      number: String(record.student.number),
+      name: String(record.student.name),
+      level: record.level,
+    })),
+  };
+}
+
+async function requestNeisAutoFill(records, course, design) {
+  const response = await sendNeisExtensionMessage("NEIS_AUTO_FILL_REQUEST", neisAutoFillPayload(records, course, design), 30000);
+  return response.result || { ok: false, message: "NEIS 입력 결과를 확인하지 못했습니다." };
+}
+
+function setNeisExtensionState(dialog, state, title, detail) {
+  const panel = dialog.querySelector("[data-neis-extension-state]");
+  if (!panel) return;
+  panel.className = `neis-extension-state is-${state}`;
+  panel.querySelector("strong").textContent = title;
+  panel.querySelector("span").textContent = detail;
+}
 
 function neisClassKey(student) {
   return [student?.schoolName || "", student?.grade || "", student?.className || ""].join("|");
@@ -2380,12 +2470,13 @@ function renderNeisTransferDialog(course, targetStudents) {
   return `<dialog class="neis-transfer-dialog" data-neis-transfer-dialog>
     <div class="neis-transfer-shell">
       <header class="neis-transfer-head"><div><p class="section-kicker">NEIS TRANSFER CHECK</p><h2>NEIS 교과평가 입력 도우미</h2><p>교사 확정 총점을 성취수준별 배점 기준으로 계산해 NEIS의 학생 선택 일괄적용 순서로 정리합니다.</p></div><button type="button" data-close-neis-transfer aria-label="NEIS 입력 도우미 닫기">닫기 <span aria-hidden="true">×</span></button></header>
-      <div class="neis-transfer-privacy"><strong>학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다.</strong><p>NEIS는 외부 웹앱의 직접 입력을 허용하지 않으므로, 이 도구는 번호·이름·성취수준을 대조하고 NEIS의 공식 ‘성취기준별 평가 선택적용’ 기능으로 안전하게 일괄 반영하도록 돕습니다.</p></div>
+      <div class="neis-transfer-privacy"><strong>학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다.</strong><p>한 번 설치하는 브라우저 확장 도우미가 이 컴퓨터 안에서만 번호·이름을 대조한 뒤 NEIS의 ‘단계’ 칸만 입력합니다. 저장 버튼은 누르지 않으며 교사가 최종 확인합니다.</p></div>
       <div class="neis-transfer-toolbar"><label>입력할 학급<select data-neis-class>${classOptions.join("")}</select></label><div data-neis-ready-summary></div></div>
-      <ol class="neis-transfer-steps"><li><b>1</b><span>NEIS에서 학년도·학기·학년·반·교과·영역·성취기준을 선택하고 조회합니다.</span></li><li><b>2</b><span>아래 수준별 학생 번호를 확인해 NEIS 명단의 체크박스를 선택합니다.</span></li><li><b>3</b><span>NEIS 상단 ‘성취기준별 평가 선택적용’에서 같은 단계를 선택합니다.</span></li><li><b>4</b><span>학생별 단계와 평가결과를 다시 확인한 뒤 NEIS에서 저장합니다.</span></li></ol>
+      <div class="neis-extension-state is-checking" data-neis-extension-state aria-live="polite"><div><strong>브라우저 확장 도우미 확인 중</strong><span>설치 여부를 확인하고 있습니다.</span></div><a href="./neis-extension-install.html" target="_blank" rel="noopener">설치 안내</a></div>
+      <ol class="neis-transfer-steps"><li><b>1</b><span>NEIS에서 학년도·학기·학년·반·교과·영역·성취기준을 선택하고 조회합니다.</span></li><li><b>2</b><span>아래 학생별 단계와 교사 검토 상태를 확인합니다.</span></li><li><b>3</b><span>‘NEIS 단계 자동 입력’을 누르면 도우미가 번호·이름을 모두 대조한 뒤 단계만 입력합니다.</span></li><li><b>4</b><span>NEIS 화면의 단계와 평가결과를 다시 확인한 뒤 교사가 직접 저장합니다.</span></li></ol>
       <section class="neis-level-groups" data-neis-level-groups aria-label="성취수준별 학생 묶음"></section>
       <section class="neis-transfer-list"><div class="neis-transfer-list-head"><div><strong>학생별 입력값 최종 확인</strong><p>교사 검토 완료 결과만 NEIS 입력 자료로 사용할 수 있습니다.</p></div><span data-neis-list-count></span></div><div class="neis-transfer-table" data-neis-transfer-table></div></section>
-      <footer class="neis-transfer-actions"><p><strong>중요:</strong> NEIS 저장은 자동으로 누르지 않습니다. 반·성취기준과 학생별 단계를 교사가 최종 확인해 주세요.</p><div><button class="secondary-action" type="button" data-download-neis-transfer>NEIS 확인용 Excel</button><button class="primary-action" type="button" data-copy-neis-transfer>번호·성취수준 복사</button></div></footer>
+      <footer class="neis-transfer-actions"><p><strong>중요:</strong> NEIS 저장은 자동으로 누르지 않습니다. 반·성취기준과 학생별 단계를 교사가 최종 확인해 주세요.</p><div><button class="secondary-action" type="button" data-download-neis-transfer>NEIS 확인용 Excel</button><button class="secondary-action" type="button" data-copy-neis-transfer>번호·성취수준 복사</button><button class="primary-action neis-auto-fill-action" type="button" data-auto-fill-neis disabled>NEIS 단계 자동 입력</button></div></footer>
     </div>
   </dialog>`;
 }
@@ -2461,6 +2552,9 @@ function openNeisTransferDialog(course, targetStudents) {
   const records = neisTransferRecords(course, targetStudents);
   if (!dialog || !design || !records.length) { showToast("NEIS에 옮길 채점 결과가 없습니다."); return; }
   dialog._neisContext = { course, design, records };
+  dialog._neisExtensionReady = false;
+  dialog._neisExtensionRunning = false;
+  setNeisExtensionState(dialog, "checking", "브라우저 확장 도우미 확인 중", "설치 여부를 확인하고 있습니다.");
   const update = () => {
     const currentRecords = dialog._neisContext?.records || [];
     const selected = selectedNeisTransferRecords(dialog, currentRecords);
@@ -2477,6 +2571,7 @@ function openNeisTransferDialog(course, targetStudents) {
     dialog.querySelector("[data-neis-transfer-table]").innerHTML = `<div class="neis-transfer-row neis-transfer-row-head"><span>번호</span><span>이름</span><span>총점</span><span>NEIS 단계</span><span>검토 상태</span></div>${selected.map((record) => `<div class="neis-transfer-row ${record.ready ? "" : "has-issue"}"><span>${escapeHtml(record.student.number)}번</span><strong>${escapeHtml(record.student.name)}</strong><span>${record.totalScore == null ? "—" : `${formatScore(record.totalScore)} / ${formatScore(record.maxScore)}점`}</span><em class="performance-level-badge is-${record.levelKey}">${record.level}</em><b>${record.ready ? "교사 확정" : escapeHtml(record.issue)}</b></div>`).join("")}`;
     dialog.querySelector("[data-copy-neis-transfer]").disabled = Boolean(issueCount) || !selected.length;
     dialog.querySelector("[data-download-neis-transfer]").disabled = Boolean(issueCount) || !selected.length;
+    dialog.querySelector("[data-auto-fill-neis]").disabled = Boolean(issueCount) || !selected.length || !dialog._neisExtensionReady || dialog._neisExtensionRunning;
   };
   dialog._updateNeisTransfer = update;
   if (!dialog.dataset.bound) {
@@ -2501,9 +2596,38 @@ function openNeisTransferDialog(course, targetStudents) {
       downloadNeisTransferExcel(selected, context.course, context.design);
       showToast(`${selected.length}명의 NEIS 입력 확인용 Excel을 내려받았습니다.`);
     });
+    dialog.querySelector("[data-auto-fill-neis]").addEventListener("click", async () => {
+      const context = dialog._neisContext;
+      const selected = selectedNeisTransferRecords(dialog, context?.records || []);
+      if (!selected.length || selected.some((record) => !record.ready)) { showToast("교사 검토가 끝나지 않은 학생을 먼저 확인해 주세요."); return; }
+      if (!dialog._neisExtensionReady) { showToast("브라우저 확장 도우미를 설치한 뒤 이 페이지를 새로고침해 주세요."); return; }
+      const confirmed = window.confirm(`${selected[0].classLabel}\n${context.design.taskName || "평가"}\n${selected.length}명의 NEIS 단계 칸을 자동 입력합니다.\n\nNEIS에서 올바른 학급·영역·성취기준을 조회했는지 확인하셨나요?\n※ 저장은 자동으로 누르지 않습니다.`);
+      if (!confirmed) return;
+      dialog._neisExtensionRunning = true;
+      setNeisExtensionState(dialog, "running", "NEIS 명단과 단계 대조 중", `${selected.length}명의 번호·이름을 모두 확인한 뒤 한 번에 입력합니다.`);
+      dialog._updateNeisTransfer?.();
+      try {
+        const result = await requestNeisAutoFill(selected, context.course, context.design);
+        if (!result.ok) throw new Error(result.message || "NEIS 자동 입력을 완료하지 못했습니다.");
+        setNeisExtensionState(dialog, "success", "NEIS 단계 입력 완료", result.message || `${selected.length}명의 단계 입력을 마쳤습니다. NEIS에서 확인 후 저장해 주세요.`);
+        showToast(`${selected.length}명의 NEIS 단계 입력을 마쳤습니다. NEIS에서 확인 후 저장해 주세요.`);
+      } catch (error) {
+        setNeisExtensionState(dialog, "error", "NEIS 자동 입력 중단", error.message || "NEIS 자동 입력을 완료하지 못했습니다.");
+        showToast(error.message || "NEIS 자동 입력을 완료하지 못했습니다.");
+      } finally {
+        dialog._neisExtensionRunning = false;
+        dialog._updateNeisTransfer?.();
+      }
+    });
   }
   update();
   if (!dialog.open) dialog.showModal();
+  detectNeisExtension().then((ready) => {
+    if (dialog._neisContext?.course !== course) return;
+    dialog._neisExtensionReady = ready;
+    setNeisExtensionState(dialog, ready ? "ready" : "missing", ready ? "브라우저 확장 도우미 연결됨" : "브라우저 확장 도우미 설치 필요", ready ? "NEIS 단계 자동 입력을 사용할 수 있습니다." : "설치 안내를 열어 확장 도우미를 한 번 설치한 뒤 이 페이지를 새로고침해 주세요.");
+    dialog._updateNeisTransfer?.();
+  });
 }
 
 function selectedResultReportSections(dialog) {
