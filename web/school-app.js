@@ -864,7 +864,7 @@ function exampleEditorRow(item, options = {}) {
   const maxScore = pointItems.reduce((sum, point) => sum + positiveDesignScore(point.score), 0);
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
     <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1 또는 1-(1)" required></label><span class="example-total-score">총 <b data-example-point-total>${formatScore(maxScore)}</b>점</span></div><button type="button" data-remove-example>삭제</button></div>
-    <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점으로 채점됩니다.</p></section>
+    <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div class="example-point-auto-builder"><div><strong>부분점수 자동 구성</strong><span>총 배점과 개별 기준 수를 입력하면 0.5점 단위로 균등 배분합니다.</span></div><label>총 합산 배점 <b><input data-example-auto-total type="number" min="0.5" max="1000" step="0.5" value="${maxScore || ""}" placeholder="예: 6"><small>점</small></b></label><label>개별 기준 수 <b><input data-example-auto-count type="number" min="1" max="20" step="1" value="${pointItems.length}"><small>개</small></b></label><button type="button" data-build-example-points>균등 배점 만들기</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>예: 총 6점·기준 3개는 각 2점으로 생성되며 AI가 충족한 점수만 합산합니다. 배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점입니다.</p></section>
     <label>예시 답안 <small>풀이 과정과 정답을 교사가 바로 이해할 수 있는 문장으로 입력하세요.</small><textarea name="exampleText" rows="4" placeholder="예: 책가도에 사용된 물건과 각각의 상징적 의미를 알맞게 설명한다.">${escapeHtml(friendlyAnswerText)}</textarea></label>
     <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>예시 답안 설명 <small>표·그림·도형·그래프 등 글로 보완할 내용을 입력하세요.</small><textarea name="exampleVisual" rows="3" placeholder="예: 표의 물건과 의미가 각 행에 짝지어져 있으며, 그림의 주요 특징이 정확하다.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
     ${exampleFilePickerMarkup(item)}
@@ -888,10 +888,16 @@ function examplePointEditorRow(point, index) {
 
 function syncExamplePointTotals(form) {
   form.querySelectorAll("[data-example-row]").forEach((row) => {
-    const total = Array.from(row.querySelectorAll('[name="examplePointScore"]'))
+    const pointRows = Array.from(row.querySelectorAll("[data-example-point]"));
+    const total = pointRows
+      .map((point) => point.querySelector('[name="examplePointScore"]'))
       .reduce((sum, input) => sum + positiveDesignScore(input.value), 0);
     const target = row.querySelector("[data-example-point-total]");
     if (target) target.textContent = formatScore(total);
+    const totalInput = row.querySelector("[data-example-auto-total]");
+    if (totalInput && document.activeElement !== totalInput) totalInput.value = total ? formatScore(total) : "";
+    const countInput = row.querySelector("[data-example-auto-count]");
+    if (countInput && document.activeElement !== countInput) countInput.value = String(pointRows.length || 1);
   });
 }
 
@@ -1181,6 +1187,20 @@ function allocateQuestionScore(totalScore, count) {
   const baseUnits = Math.floor(totalUnits / itemCount);
   const remainder = totalUnits % itemCount;
   return Array.from({ length: itemCount }, (_value, index) => (baseUnits + (index < remainder ? 1 : 0)) / 2);
+}
+
+function buildEqualExamplePointItems(totalScore, count, existingItems = []) {
+  const total = Number(totalScore);
+  const itemCount = Number(count);
+  if (!Number.isFinite(total) || total <= 0 || Math.abs(total * 2 - Math.round(total * 2)) > 0.001) throw new Error("총 합산 배점은 0.5점 단위로 입력해 주세요.");
+  if (!Number.isInteger(itemCount) || itemCount < 1 || itemCount > 20) throw new Error("개별 기준 수는 1개부터 20개까지 입력해 주세요.");
+  if (itemCount > Math.round(total * 2)) throw new Error("각 기준에 최소 0.5점을 배정할 수 있도록 총 배점을 높이거나 기준 수를 줄여 주세요.");
+  const allocations = allocateQuestionScore(total, itemCount);
+  return allocations.map((score, index) => ({
+    id: existingItems[index]?.id || crypto.randomUUID(),
+    score,
+    criterion: String(existingItems[index]?.criterion || "").trim(),
+  }));
 }
 
 function prepareExtractedExampleAnswers(items, ...scoreMaps) {
@@ -1507,6 +1527,27 @@ function handleDesignEditorClick(event, form, course) {
     const list = card.querySelector("[data-example-points]");
     list.insertAdjacentHTML("beforeend", examplePointEditorRow({ id: crypto.randomUUID(), score: "", criterion: "" }, list.querySelectorAll("[data-example-point]").length));
     syncQuestionScoreUI(form);
+    return;
+  }
+  const buildExamplePoints = event.target.closest("[data-build-example-points]");
+  if (buildExamplePoints) {
+    const card = buildExamplePoints.closest("[data-example-row]");
+    const list = card.querySelector("[data-example-points]");
+    const existingItems = Array.from(list.querySelectorAll("[data-example-point]")).map((point) => ({
+      id: point.dataset.pointId || crypto.randomUUID(),
+      score: positiveDesignScore(point.querySelector('[name="examplePointScore"]')?.value),
+      criterion: point.querySelector('[name="examplePointCriterion"]')?.value || "",
+    }));
+    try {
+      const items = buildEqualExamplePointItems(card.querySelector("[data-example-auto-total]")?.value, card.querySelector("[data-example-auto-count]")?.value, existingItems);
+      list.innerHTML = items.map(examplePointEditorRow).join("");
+      syncQuestionScoreUI(form);
+      const scores = items.map((item) => formatScore(item.score));
+      const scoreSummary = new Set(scores).size === 1 ? `${items.length}개 기준 × ${scores[0]}점` : `기준별 ${scores.join("·")}점`;
+      showToast(`총 ${formatScore(items.reduce((sum, item) => sum + item.score, 0))}점을 ${scoreSummary}으로 구성했습니다. 각 점수 획득 기준을 작성해 주세요.`);
+    } catch (error) {
+      showToast(friendlyError(error));
+    }
     return;
   }
   const removeExamplePoint = event.target.closest("[data-remove-example-point]");
