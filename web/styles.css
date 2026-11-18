@@ -1046,6 +1046,10 @@ a { color: inherit; text-decoration: none; }
 .example-point-table tbody th { color: var(--blue); font-size: 16px; white-space: nowrap; }
 .example-point-table tbody th small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: normal; }
 .example-point-table tbody td { color: var(--ink); font-size: 14px; }
+.example-point-score-edit { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; white-space: nowrap; }
+.example-point-score-edit select { min-width: 78px; min-height: 40px; padding: 7px 28px 7px 10px; border: 2px solid var(--blue); border-radius: 9px; background: #fff; color: var(--ink); cursor: pointer; font-size: 16px; font-weight: 950; }
+.example-point-score-edit select:focus-visible { outline: 3px solid rgba(49,84,214,.24); outline-offset: 2px; }
+.example-point-score-edit strong { font-size: 15px; }
 .example-point-table tbody tr:last-child th, .example-point-table tbody tr:last-child td { border-bottom: 0; }
 .teacher-score-list .example-point-table p { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.5; }
 .example-point-table .confidence-badge { min-height: 24px; margin-top: 6px; padding: 3px 7px; font-size: 12px; }

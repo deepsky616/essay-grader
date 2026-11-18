@@ -14,6 +14,15 @@ function loadAchievementLevelForExport() {
   return new Function(`${schoolSource.slice(start, end)}; return achievementLevelForExport;`)();
 }
 
+function loadEditablePointHelpers() {
+  const start = schoolSource.indexOf("function pointScoreChoices");
+  const end = schoolSource.indexOf("function resultExampleAnswerRows", start);
+  assert.ok(start >= 0 && end > start, "editable point helpers must exist");
+  const formatScore = (value) => String(Number(value));
+  const questionScoreGroupKey = (value) => String(value || "").match(/^\d+/)?.[0] || String(value || "");
+  return new Function("formatScore", "questionScoreGroupKey", `${schoolSource.slice(start, end)}; return { pointScoreChoices, teacherPointEvidenceText, refreshExampleAnswerScore, automaticQuestionFeedback, automaticTeacherFeedback };`)(formatScore, questionScoreGroupKey);
+}
+
 const report = {
   generatedAt: "2026. 8. 28. 오전 9:00",
   semesterLabel: "2026학년도 2학기",
@@ -166,6 +175,43 @@ test("student question evidence shows example-answer point attainment", () => {
   assert.match(styles, /\.example-point-status\.is-partial/);
   assert.match(styles, /\.example-point-status\.is-none/);
   assert.match(styles, /\.example-point-table/);
+});
+
+test("teacher can edit point attainment and automatically refresh evidence and feedback", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  assert.match(schoolSource, /function pointScoreChoices\(maxScore, currentScore = 0\)/);
+  assert.match(schoolSource, /function teacherPointEvidenceText\(point, awardedScore\)/);
+  assert.match(schoolSource, /function automaticQuestionFeedback\(questionNumber, exampleRows\)/);
+  assert.match(schoolSource, /function automaticTeacherFeedback\(exampleRows\)/);
+  assert.match(schoolSource, /data-example-point-score/);
+  assert.match(schoolSource, /data-point-evidence/);
+  assert.match(schoolSource, /data-question-evidence/);
+  assert.match(schoolSource, /data-question-feedback/);
+  assert.match(schoolSource, /result\.teacherExampleAnswerResults = workingExampleRows\.map/);
+  assert.match(schoolSource, /resultExampleAnswerRows\(result, design, false\)/);
+  assert.match(schoolSource, /result\.teacherFeedbackManuallyEdited = feedbackManuallyEdited/);
+  assert.match(schoolSource, /teacherFeedbackManuallyEdited: manuallyEditedAchievementFeedbacks\.has\(index\)/);
+  assert.match(schoolSource, /feedbackInput\.addEventListener\("input", \(\) => \{ feedbackManuallyEdited = true; \}\)/);
+  assert.match(styles, /\.example-point-score-edit select/);
+});
+
+test("edited point helpers recalculate score, evidence, and feedback text", () => {
+  const helpers = loadEditablePointHelpers();
+  assert.deepEqual(helpers.pointScoreChoices(1, 0.5), [1, 0.5, 0]);
+  assert.match(helpers.teacherPointEvidenceText({ criterion: "분수 계산", maxScore: 1 }, 0.5), /일부 충족/);
+  const example = {
+    questionNumber: "1-(1)",
+    pointResults: [
+      { criterion: "계산", awardedScore: 1, maxScore: 1 },
+      { criterion: "근거", awardedScore: 0, maxScore: 1 },
+    ],
+  };
+  helpers.refreshExampleAnswerScore(example);
+  assert.equal(example.awardedScore, 1);
+  assert.equal(example.maxScore, 2);
+  assert.match(example.evidence, /1-\(1\) 항목 1 1 \/ 1점/);
+  assert.match(helpers.automaticQuestionFeedback("1", [example]), /일부 배점 항목/);
+  assert.match(helpers.automaticTeacherFeedback([example]), /1-\(1\) 1 \/ 2점/);
 });
 
 test("course grading uses adaptive workers and selectively rechecks handwritten fractions", () => {
