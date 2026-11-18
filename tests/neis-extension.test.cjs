@@ -14,13 +14,13 @@ const install = fs.readFileSync(path.join(root, "web", "neis-extension-install.h
 
 function loadPayloadValidator() {
   const start = background.indexOf("const ACHIEVEMENT_LEVELS");
-  const end = background.indexOf("function neisAssessmentFrameOperation", start);
+  const end = background.indexOf("async function neisAssessmentFrameOperation", start);
   assert.ok(start >= 0 && end > start);
   return new Function(`${background.slice(start, end)}; return validatePayload;`)();
 }
 
 function loadFrameOperation() {
-  const start = background.indexOf("function neisAssessmentFrameOperation");
+  const start = background.indexOf("async function neisAssessmentFrameOperation");
   const end = background.indexOf("function friendlyOperationError", start);
   assert.ok(start >= 0 && end > start);
   return new Function(`${background.slice(start, end)}; return neisAssessmentFrameOperation;`)();
@@ -61,7 +61,7 @@ test("NEIS helper preflights every frame before applying to exactly one frame", 
   assert.match(background, /sender\.tab\?\.url\?\.startsWith\(WEBAPP_URL_PREFIX\)/);
 });
 
-test("NEIS helper matches student names and levels despite display-only spacing", () => {
+test("NEIS helper matches student names and levels despite display-only spacing", async () => {
   const neisAssessmentFrameOperation = loadFrameOperation();
   const option = { textContent: "매우 잘함", disabled: false, value: "A", index: 0 };
   const select = {
@@ -83,7 +83,7 @@ test("NEIS helper matches student names and levels despite display-only spacing"
   };
   global.getComputedStyle = () => ({ display: "block", visibility: "visible" });
   try {
-    assert.deepEqual(neisAssessmentFrameOperation({
+    assert.deepEqual(await neisAssessmentFrameOperation({
       records: [{ number: "1", name: "강하늘", level: "매우잘함" }],
     }, false), {
       status: "ready",
@@ -91,6 +91,75 @@ test("NEIS helper matches student names and levels despite display-only spacing"
       matched: 1,
       missing: [],
     });
+  } finally {
+    global.document = previousDocument;
+    global.getComputedStyle = previousGetComputedStyle;
+  }
+});
+
+test("NEIS helper supports the custom eXBuilder6 grid combobox used by NEIS", async () => {
+  const neisAssessmentFrameOperation = loadFrameOperation();
+  let popupOpen = false;
+  const makeVisibleElement = (extra = {}) => ({
+    isConnected: true,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 220, height: 28 }),
+    focus: () => {},
+    ...extra,
+  });
+  const combo = makeVisibleElement({
+    textContent: "",
+    closest: () => null,
+    dispatchEvent(event) {
+      if (event.type === "click") popupOpen = true;
+      if (event.type === "keydown") popupOpen = false;
+      return true;
+    },
+  });
+  const levels = ["매우 잘함", "잘함", "보통", "노력 요함", "임의입력"];
+  const options = levels.map((textContent) => makeVisibleElement({
+    textContent,
+    dispatchEvent(event) {
+      if (event.type === "click") {
+        combo.textContent = textContent;
+        popupOpen = false;
+      }
+      return true;
+    },
+  }));
+  const row = makeVisibleElement({
+    innerText: "3   김 마 레",
+    querySelectorAll: (selector) => selector === '[role="combobox"]' ? [combo] : [],
+  });
+  const previousDocument = global.document;
+  const previousGetComputedStyle = global.getComputedStyle;
+  global.document = {
+    body: { innerText: "성취기준별 평가 단계 평가결과" },
+    activeElement: combo,
+    dispatchEvent: () => true,
+    querySelectorAll: (selector) => {
+      if (selector.includes('[role="listbox"]')) return popupOpen ? options : [];
+      return [row];
+    },
+  };
+  global.getComputedStyle = () => ({ display: "block", visibility: "visible" });
+  try {
+    const payload = { records: [{ number: "3", name: "김마레", level: "보통" }] };
+    assert.deepEqual(await neisAssessmentFrameOperation(payload, false), {
+      status: "ready",
+      method: "cpr",
+      matched: 1,
+      missing: [],
+    });
+    assert.equal(combo.textContent, "");
+    assert.deepEqual(await neisAssessmentFrameOperation(payload, true), {
+      status: "ok",
+      method: "cpr",
+      matched: 1,
+      updated: 1,
+      already: 0,
+      missing: [],
+    });
+    assert.equal(combo.textContent, "보통");
   } finally {
     global.document = previousDocument;
     global.getComputedStyle = previousGetComputedStyle;

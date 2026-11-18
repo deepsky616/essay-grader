@@ -35,7 +35,7 @@ function validatePayload(payload) {
   return { classLabel, course, assessment, records };
 }
 
-function neisAssessmentFrameOperation(payload, applyChanges) {
+async function neisAssessmentFrameOperation(payload, applyChanges) {
   const normalize = (value) => String(value ?? "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim();
   const compact = (value) => normalize(value).replace(/\s+/g, "");
   const sameName = (left, right) => compact(left).normalize("NFC") === compact(right).normalize("NFC");
@@ -45,6 +45,77 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+  };
+  const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const dispatchMouseSequence = (element) => {
+    if (!element || !element.isConnected) return false;
+    element.focus?.({ preventScroll: true });
+    const rect = element.getBoundingClientRect();
+    const eventOptions = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: rect.left + Math.max(1, rect.width / 2),
+      clientY: rect.top + Math.max(1, rect.height / 2),
+      button: 0,
+    };
+    const MouseEventConstructor = typeof MouseEvent === "function" ? MouseEvent : Event;
+    for (const [type, buttons] of [["mousedown", 1], ["mouseup", 0], ["click", 0]]) {
+      element.dispatchEvent(new MouseEventConstructor(type, { ...eventOptions, buttons }));
+    }
+    return true;
+  };
+  const visibleComboOptions = () => Array.from(document.querySelectorAll('[role="listbox"] [role="option"],.cl-combobox-list [data-role="option"]')).filter(visible);
+  const waitForComboOptions = async () => {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const options = visibleComboOptions();
+      if (options.length) return options;
+      await pause(20);
+    }
+    return [];
+  };
+  const closeCustomCombo = async (combo) => {
+    const KeyboardEventConstructor = typeof KeyboardEvent === "function" ? KeyboardEvent : Event;
+    for (const target of [combo, document.activeElement, document].filter((item, index, items) => item?.dispatchEvent && items.indexOf(item) === index)) {
+      target.dispatchEvent(new KeyboardEventConstructor("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+      target.dispatchEvent(new KeyboardEventConstructor("keyup", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    }
+    await pause(20);
+    if (visibleComboOptions().length) {
+      dispatchMouseSequence(combo);
+      await pause(20);
+    }
+  };
+  const openCustomCombo = async (combo) => {
+    const currentOptions = visibleComboOptions();
+    if (currentOptions.length) return currentOptions;
+    dispatchMouseSequence(combo);
+    let options = await waitForComboOptions();
+    if (options.length) return options;
+    const control = combo.closest?.(".cl-combobox");
+    if (control && control !== combo) {
+      dispatchMouseSequence(control);
+      options = await waitForComboOptions();
+    }
+    return options;
+  };
+  const customComboSupportsLevels = async (combo, levels) => {
+    const options = await openCustomCombo(combo);
+    const supported = levels.every((level) => options.some((option) => compact(option.textContent) === compact(level)));
+    await closeCustomCombo(combo);
+    return supported;
+  };
+  const setCustomComboLevel = async (combo, level) => {
+    if (compact(combo.textContent) === compact(level)) return "already";
+    const options = await openCustomCombo(combo);
+    const option = options.find((candidate) => compact(candidate.textContent) === compact(level));
+    if (!option) {
+      await closeCustomCombo(combo);
+      return "failed";
+    }
+    dispatchMouseSequence(option);
+    await pause(60);
+    return compact(combo.textContent) === compact(level) ? "updated" : "failed";
   };
   const pageText = normalize(document.body?.innerText || document.body?.textContent || "").slice(0, 50000);
   const pageReady = pageText.includes("성취기준별 평가") && pageText.includes("단계") && pageText.includes("평가결과");
@@ -61,7 +132,10 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
         if (!compact(text).normalize("NFC").includes(compact(record.name).normalize("NFC")) || !numberMatches(text, record.number)) continue;
         for (const select of Array.from(row.querySelectorAll("select")).filter(visible)) {
           const option = Array.from(select.options || []).find((candidate) => compact(candidate.textContent) === compact(record.level) && !candidate.disabled);
-          if (option) matches.push({ select, option, record });
+          if (option) matches.push({ kind: "select", select, option, record });
+        }
+        for (const combo of Array.from(row.querySelectorAll('[role="combobox"]')).filter(visible)) {
+          matches.push({ kind: "custom", combo, record });
         }
       }
       if (matches.length !== 1) missing.push(record.number);
@@ -167,10 +241,31 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
 
   const nativePlan = inspectNative();
   if (nativePlan?.status === "ready") {
+    const nativeSelectActions = nativePlan.actions.filter((action) => action.kind === "select");
+    const customComboActions = nativePlan.actions.filter((action) => action.kind === "custom");
+    if (nativeSelectActions.length && customComboActions.length) {
+      return { status: "ambiguous", method: "dom", matched: nativePlan.matched, missing: [] };
+    }
+    if (customComboActions.length) {
+      const allLevels = Array.from(new Set(payload.records.map((record) => record.level)));
+      if (!await customComboSupportsLevels(customComboActions[0].combo, allLevels)) {
+        return { status: "incomplete", method: "cpr", matched: 0, missing: payload.records.map((record) => record.number) };
+      }
+      if (!applyChanges) return { status: "ready", method: "cpr", matched: nativePlan.matched, missing: [] };
+      let updated = 0;
+      let already = 0;
+      for (const action of customComboActions) {
+        const outcome = await setCustomComboLevel(action.combo, action.record.level);
+        if (outcome === "already") already += 1;
+        else if (outcome === "updated") updated += 1;
+        else return { status: "failed", method: "cpr", matched: nativePlan.matched, updated, already, missing: [action.record.number] };
+      }
+      return { status: "ok", method: "cpr", matched: nativePlan.matched, updated, already, missing: [] };
+    }
     if (!applyChanges) return { status: "ready", method: "dom", matched: nativePlan.matched, missing: [] };
     let updated = 0;
     let already = 0;
-    for (const { select, option, record } of nativePlan.actions) {
+    for (const { select, option, record } of nativeSelectActions) {
       if (compact(select.options?.[select.selectedIndex]?.textContent) === compact(record.level)) {
         already += 1;
         continue;
