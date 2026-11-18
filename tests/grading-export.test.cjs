@@ -94,6 +94,8 @@ test("individual result sheet includes criteria, confirmed scores, feedback, and
   assert.match(html, /할인율 계산/);
   assert.match(html, /문제·배점 항목별 획득표/);
   assert.match(html, /할인 금액 계산/);
+  assert.match(html, /<strong>1 \/ 1<\/strong>/);
+  assert.doesNotMatch(html, /<strong>1 \/ 1점<\/strong>/);
   assert.match(html, /1-\(1\)/);
   assert.match(html, /1-\(2\)/);
   assert.match(html, /할인 금액을 정확히 계산함/);
@@ -167,6 +169,9 @@ test("student question evidence shows example-answer point attainment", () => {
   assert.match(schoolSource, /pointResults/);
   assert.match(schoolSource, /3 문제별 예시답안 기준/);
   assert.match(schoolSource, /획득 점수 \/ 배점/);
+  assert.match(schoolSource, />\$\{formatScore\(score\)\}<\/option>/);
+  assert.doesNotMatch(schoolSource, />\$\{formatScore\(score\)\}점<\/option>/);
+  assert.match(schoolSource, /<strong>\/ \$\{formatScore\(item\.maxScore\)\}<\/strong>/);
   assert.match(schoolSource, /채점 근거/);
   assert.match(schoolSource, /배점 전부 획득/);
   assert.match(schoolSource, /배점 일부 획득/);

@@ -82,7 +82,7 @@
       const awarded = missing ? null : Number(item.awardedScore || 0);
       const maximum = Number(item.maxScore || 0);
       const status = missing ? "세부 채점 없음" : awarded >= maximum - 0.001 ? "전부 획득" : awarded > 0 ? "일부 획득" : "미획득";
-      return `<tr><th>${escapeHtml(item.pointLabel || "-")}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><strong>${awarded == null ? "—" : formatScore(awarded)} / ${formatScore(maximum)}점</strong></td><td>${status}</td><td>${escapeHtml(item.evidence || "채점 근거 없음")}</td></tr>`;
+      return `<tr><th>${escapeHtml(item.pointLabel || "-")}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><strong>${awarded == null ? "—" : formatScore(awarded)} / ${formatScore(maximum)}</strong></td><td>${status}</td><td>${escapeHtml(item.evidence || "채점 근거 없음")}</td></tr>`;
     }).join("")}</tbody></table></div>`;
   }
 
