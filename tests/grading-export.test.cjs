@@ -282,6 +282,26 @@ test("teacher total shows and updates the threshold-based achievement level", ()
   assert.match(styles, /\.performance-level-badge\.is-effort/);
 });
 
+test("NEIS helper groups only teacher-confirmed results by the configured total-score level", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  assert.match(schoolSource, /data-open-neis-transfer[^>]*>NEIS 입력 도우미/);
+  assert.match(schoolSource, /function neisTransferRecords\(course, targetStudents\)/);
+  assert.match(schoolSource, /achievementBandForScore\(summary\.total, summary\.maxScore, design\.performanceThresholds\)/);
+  assert.match(schoolSource, /const ready = Boolean\(result\.teacherConfirmed\)/);
+  assert.match(schoolSource, /NEIS_PERFORMANCE_LEVELS = Object\.freeze/);
+  for (const level of ["매우잘함", "잘함", "보통", "노력요함"]) assert.match(schoolSource, new RegExp(`label: "${level}"`));
+  assert.match(styles, /\.neis-level-groups \{[^}]*grid-template-columns: repeat\(4/);
+});
+
+test("NEIS helper requires a clean review state and exports a local verification workbook", () => {
+  assert.match(schoolSource, /교사 검토가 끝나지 않은 학생을 먼저 확인해 주세요/);
+  assert.match(schoolSource, /data-copy-neis-transfer[^]*disabled = Boolean\(issueCount\)/);
+  assert.match(schoolSource, /function downloadNeisTransferExcel\(records, course, design\)/);
+  assert.match(schoolSource, /NEIS교과평가_입력확인_/);
+  assert.match(schoolSource, /학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다/);
+  assert.match(schoolSource, /NEIS 저장은 자동으로 누르지 않습니다/);
+});
+
 test("problem scoring panel uses readable text and score button sizes", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.question-score-group-head > strong \{ font-size: 18px; \}/);
@@ -310,5 +330,4 @@ test("grading confidence is shown as accessible white badges with distinct color
   assert.match(styles, /\.confidence-medium \{ color: #765800; \}/);
   assert.match(styles, /\.confidence-low \{ color: #a1262d; \}/);
 });
-
 

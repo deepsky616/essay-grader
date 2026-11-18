@@ -2225,11 +2225,12 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
-        <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
+        <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action neis-transfer-action" type="button" data-open-neis-transfer ${results.length ? "" : "disabled"}>NEIS 입력 도우미</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
       ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId), design)).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
     <div class="student-result-inline-slot" data-student-result-inline aria-live="polite"></div>
     ${results.length ? renderResultDistributionDialog(course, targetStudents, results) : ""}
+    ${results.length ? renderNeisTransferDialog(course, targetStudents) : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">← 과제물 관리</a><span>AI 결과는 교사가 검토한 뒤 확정해 주세요.</span></div>`;
 }
 
@@ -2320,6 +2321,189 @@ function renderResultDistributionDialog(course, targetStudents, results) {
       <div class="result-print-preview" data-result-report-preview></div>
     </div>
   </dialog>`;
+}
+
+const NEIS_PERFORMANCE_LEVELS = Object.freeze([
+  { key: "excellent", label: "매우잘함" },
+  { key: "good", label: "잘함" },
+  { key: "average", label: "보통" },
+  { key: "effort", label: "노력요함" },
+]);
+
+function neisClassKey(student) {
+  return [student?.schoolName || "", student?.grade || "", student?.className || ""].join("|");
+}
+
+function neisClassLabel(student) {
+  return `${student?.schoolName ? `${student.schoolName} · ` : ""}${student?.grade || "-"}학년 ${student?.className || "-"}반`;
+}
+
+function neisTransferRecords(course, targetStudents) {
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  if (!design) return [];
+  const resultMap = new Map((course.grading?.results || []).map((result) => [result.studentId, result]));
+  const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  const assignedStudents = (course.submission?.assignments || [])
+    .map((assignment) => studentMap.get(assignment.studentId))
+    .filter(Boolean)
+    .sort(studentSort);
+  return assignedStudents.map((student) => {
+    const result = resultMap.get(student.id);
+    if (!result) {
+      return {
+        student, classKey: neisClassKey(student), classLabel: neisClassLabel(student),
+        totalScore: null, maxScore: assessmentDesignTotalScore(design), percentage: null,
+        level: "검토 필요", levelKey: "pending", ready: false, issue: "채점 결과 없음",
+      };
+    }
+    const summary = resultScoreSummary(result, design);
+    const achievementBand = achievementBandForScore(summary.total, summary.maxScore, design.performanceThresholds);
+    const ready = Boolean(result.teacherConfirmed) && achievementBand.key !== "pending";
+    return {
+      student, result, classKey: neisClassKey(student), classLabel: neisClassLabel(student),
+      totalScore: summary.total, maxScore: summary.maxScore, percentage: achievementBand.percentage,
+      level: achievementBand.label, levelKey: achievementBand.key, ready,
+      issue: ready ? "" : result.teacherConfirmed ? "총 배점 확인 필요" : "교사 검토 미완료",
+    };
+  });
+}
+
+function renderNeisTransferDialog(course, targetStudents) {
+  const records = neisTransferRecords(course, targetStudents);
+  const classOptions = [];
+  const seenClasses = new Set();
+  records.forEach((record) => {
+    if (seenClasses.has(record.classKey)) return;
+    seenClasses.add(record.classKey);
+    classOptions.push(`<option value="${escapeHtml(record.classKey)}">${escapeHtml(record.classLabel)}</option>`);
+  });
+  return `<dialog class="neis-transfer-dialog" data-neis-transfer-dialog>
+    <div class="neis-transfer-shell">
+      <header class="neis-transfer-head"><div><p class="section-kicker">NEIS TRANSFER CHECK</p><h2>NEIS 교과평가 입력 도우미</h2><p>교사 확정 총점을 성취수준별 배점 기준으로 계산해 NEIS의 학생 선택 일괄적용 순서로 정리합니다.</p></div><button type="button" data-close-neis-transfer aria-label="NEIS 입력 도우미 닫기">닫기 <span aria-hidden="true">×</span></button></header>
+      <div class="neis-transfer-privacy"><strong>학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다.</strong><p>NEIS는 외부 웹앱의 직접 입력을 허용하지 않으므로, 이 도구는 번호·이름·성취수준을 대조하고 NEIS의 공식 ‘성취기준별 평가 선택적용’ 기능으로 안전하게 일괄 반영하도록 돕습니다.</p></div>
+      <div class="neis-transfer-toolbar"><label>입력할 학급<select data-neis-class>${classOptions.join("")}</select></label><div data-neis-ready-summary></div></div>
+      <ol class="neis-transfer-steps"><li><b>1</b><span>NEIS에서 학년도·학기·학년·반·교과·영역·성취기준을 선택하고 조회합니다.</span></li><li><b>2</b><span>아래 수준별 학생 번호를 확인해 NEIS 명단의 체크박스를 선택합니다.</span></li><li><b>3</b><span>NEIS 상단 ‘성취기준별 평가 선택적용’에서 같은 단계를 선택합니다.</span></li><li><b>4</b><span>학생별 단계와 평가결과를 다시 확인한 뒤 NEIS에서 저장합니다.</span></li></ol>
+      <section class="neis-level-groups" data-neis-level-groups aria-label="성취수준별 학생 묶음"></section>
+      <section class="neis-transfer-list"><div class="neis-transfer-list-head"><div><strong>학생별 입력값 최종 확인</strong><p>교사 검토 완료 결과만 NEIS 입력 자료로 사용할 수 있습니다.</p></div><span data-neis-list-count></span></div><div class="neis-transfer-table" data-neis-transfer-table></div></section>
+      <footer class="neis-transfer-actions"><p><strong>중요:</strong> NEIS 저장은 자동으로 누르지 않습니다. 반·성취기준과 학생별 단계를 교사가 최종 확인해 주세요.</p><div><button class="secondary-action" type="button" data-download-neis-transfer>NEIS 확인용 Excel</button><button class="primary-action" type="button" data-copy-neis-transfer>번호·성취수준 복사</button></div></footer>
+    </div>
+  </dialog>`;
+}
+
+function selectedNeisTransferRecords(dialog, records) {
+  const selectedClass = dialog.querySelector("[data-neis-class]")?.value || "";
+  return records.filter((record) => record.classKey === selectedClass);
+}
+
+function neisTransferClipboardText(records, course, design) {
+  const grouped = new Map(NEIS_PERFORMANCE_LEVELS.map((level) => [level.label, []]));
+  records.forEach((record) => {
+    if (grouped.has(record.level)) grouped.get(record.level).push(record);
+  });
+  const lines = [
+    "[NEIS 성취기준별 평가 입력 확인표]",
+    `수업: ${course.title || course.subject || "-"}`,
+    `평가: ${design.taskName || "-"}`,
+    `학급: ${records[0]?.classLabel || "-"}`,
+    "",
+  ];
+  NEIS_PERFORMANCE_LEVELS.forEach((level) => {
+    const students = grouped.get(level.label);
+    lines.push(`${level.label} (${students.length}명): ${students.length ? students.map((record) => `${record.student.number}번 ${record.student.name}`).join(", ") : "없음"}`);
+  });
+  lines.push("", "번호\t이름\t단계\t교사확정총점\t총배점\t비율");
+  records.forEach((record) => lines.push(`${record.student.number}\t${record.student.name}\t${record.level}\t${formatScore(record.totalScore)}\t${formatScore(record.maxScore)}\t${formatThresholdPercent(record.percentage)}%`));
+  return lines.join("\n");
+}
+
+async function copyNeisTransferText(records, course, design) {
+  const text = neisTransferClipboardText(records, course, design);
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.append(field);
+  field.select();
+  const copied = document.execCommand("copy");
+  field.remove();
+  if (!copied) throw new Error("클립보드에 복사하지 못했습니다.");
+}
+
+function downloadNeisTransferExcel(records, course, design) {
+  if (!window.XLSX || !records.length) { showToast("NEIS 확인용 Excel을 만들지 못했습니다."); return; }
+  const headers = ["학년", "반", "번호", "이름", "NEIS 단계", "교사 확정 총점", "총 배점", "비율(%)", "교사 검토"];
+  const rows = [
+    [`${records[0].classLabel} NEIS 교과평가 입력 확인표`],
+    [`수업: ${course.title || course.subject || "-"} · 평가: ${design.taskName || "-"}`],
+    [],
+    headers,
+    ...records.map((record) => [record.student.grade, record.student.className, record.student.number, safeExcelText(record.student.name), record.level, record.totalScore, record.maxScore, record.percentage, record.ready ? "확정" : record.issue]),
+  ];
+  const workbook = window.XLSX.utils.book_new();
+  const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } }];
+  worksheet["!cols"] = [{ wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 18 }];
+  worksheet["!autofilter"] = { ref: `A4:I${records.length + 4}` };
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, "NEIS 입력 확인");
+  workbook.Props = { Title: `${design.taskName} NEIS 입력 확인표`, Subject: `${course.semesterLabel} ${course.subject}`, Author: "AI 서·논술형 평가지원시스템" };
+  const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  window.XLSX.writeFile(workbook, `NEIS교과평가_입력확인_${dateStamp}.xlsx`, { compression: true });
+}
+
+function openNeisTransferDialog(course, targetStudents) {
+  const dialog = app.querySelector("[data-neis-transfer-dialog]");
+  const design = course.designs?.find((item) => item.id === course.submission?.designId);
+  const records = neisTransferRecords(course, targetStudents);
+  if (!dialog || !design || !records.length) { showToast("NEIS에 옮길 채점 결과가 없습니다."); return; }
+  dialog._neisContext = { course, design, records };
+  const update = () => {
+    const currentRecords = dialog._neisContext?.records || [];
+    const selected = selectedNeisTransferRecords(dialog, currentRecords);
+    const readyCount = selected.filter((record) => record.ready).length;
+    const issueCount = selected.length - readyCount;
+    const summary = dialog.querySelector("[data-neis-ready-summary]");
+    summary.className = `neis-ready-summary ${issueCount ? "has-issues" : "is-ready"}`;
+    summary.innerHTML = `<strong>${issueCount ? `${issueCount}명 확인 필요` : "NEIS 입력 준비 완료"}</strong><span>교사 확정 ${readyCount}명 / 전체 ${selected.length}명</span>`;
+    dialog.querySelector("[data-neis-list-count]").textContent = `${selected.length}명`;
+    dialog.querySelector("[data-neis-level-groups]").innerHTML = NEIS_PERFORMANCE_LEVELS.map((level) => {
+      const levelRecords = selected.filter((record) => record.ready && record.level === level.label);
+      return `<article class="neis-level-group is-${level.key}"><div><em class="performance-level-badge is-${level.key}">${level.label}</em><strong>${levelRecords.length}명</strong></div><p>${levelRecords.length ? levelRecords.map((record) => `<span>${escapeHtml(record.student.number)}번 ${escapeHtml(record.student.name)}</span>`).join("") : "해당 학생 없음"}</p></article>`;
+    }).join("");
+    dialog.querySelector("[data-neis-transfer-table]").innerHTML = `<div class="neis-transfer-row neis-transfer-row-head"><span>번호</span><span>이름</span><span>총점</span><span>NEIS 단계</span><span>검토 상태</span></div>${selected.map((record) => `<div class="neis-transfer-row ${record.ready ? "" : "has-issue"}"><span>${escapeHtml(record.student.number)}번</span><strong>${escapeHtml(record.student.name)}</strong><span>${record.totalScore == null ? "—" : `${formatScore(record.totalScore)} / ${formatScore(record.maxScore)}점`}</span><em class="performance-level-badge is-${record.levelKey}">${record.level}</em><b>${record.ready ? "교사 확정" : escapeHtml(record.issue)}</b></div>`).join("")}`;
+    dialog.querySelector("[data-copy-neis-transfer]").disabled = Boolean(issueCount) || !selected.length;
+    dialog.querySelector("[data-download-neis-transfer]").disabled = Boolean(issueCount) || !selected.length;
+  };
+  dialog._updateNeisTransfer = update;
+  if (!dialog.dataset.bound) {
+    dialog.dataset.bound = "true";
+    dialog.querySelector("[data-neis-class]").addEventListener("change", () => dialog._updateNeisTransfer?.());
+    dialog.querySelector("[data-close-neis-transfer]").addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-copy-neis-transfer]").addEventListener("click", async () => {
+      const context = dialog._neisContext;
+      const selected = selectedNeisTransferRecords(dialog, context?.records || []);
+      if (selected.some((record) => !record.ready)) { showToast("교사 검토가 끝나지 않은 학생을 먼저 확인해 주세요."); return; }
+      try {
+        await copyNeisTransferText(selected, context.course, context.design);
+        showToast(`${selected.length}명의 번호와 성취수준을 복사했습니다.`);
+      } catch (error) {
+        showToast(error.message || "NEIS 입력값을 복사하지 못했습니다.");
+      }
+    });
+    dialog.querySelector("[data-download-neis-transfer]").addEventListener("click", () => {
+      const context = dialog._neisContext;
+      const selected = selectedNeisTransferRecords(dialog, context?.records || []);
+      if (selected.some((record) => !record.ready)) { showToast("교사 검토가 끝나지 않은 학생을 먼저 확인해 주세요."); return; }
+      downloadNeisTransferExcel(selected, context.course, context.design);
+      showToast(`${selected.length}명의 NEIS 입력 확인용 Excel을 내려받았습니다.`);
+    });
+  }
+  update();
+  if (!dialog.open) dialog.showModal();
 }
 
 function selectedResultReportSections(dialog) {
@@ -2467,6 +2651,7 @@ function downloadGradingResultsExcel(course, targetStudents) {
 function bindGradingTab(course, targetStudents) {
   app.querySelector("[data-toggle-results]")?.addEventListener("click", () => { gradingResultsExpanded = !gradingResultsExpanded; renderCourse(course.id, "grading"); });
   app.querySelector("[data-download-grading-results]")?.addEventListener("click", () => downloadGradingResultsExcel(course, targetStudents));
+  app.querySelector("[data-open-neis-transfer]")?.addEventListener("click", () => openNeisTransferDialog(course, targetStudents));
   app.querySelector("[data-open-result-distribution]")?.addEventListener("click", () => openResultDistributionDialog(course, targetStudents));
   app.querySelector("[data-run-grading]")?.addEventListener("click", () => startCourseGrading(course, targetStudents));
   app.querySelector("[data-stop-grading]")?.addEventListener("click", () => stopCourseGrading(course.id));
@@ -3813,5 +3998,4 @@ function renderNotFound() {
 function renderFatal(error) {
   app.innerHTML = `<div class="page-shell"><div class="course-empty"><span>!</span><h2>화면을 불러오지 못했습니다.</h2><p>${escapeHtml(friendlyError(error))}</p><button class="primary-action" type="button" onclick="location.reload()">다시 불러오기</button></div></div>`;
 }
-
 
