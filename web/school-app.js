@@ -630,7 +630,7 @@ function designFilePickerMarkup({ label, inputName, accept, savedFile, emptyText
   return `<div class="document-auto-row" data-design-file-picker data-saved-file-name="${escapeHtml(savedName)}" data-empty-file-text="${escapeHtml(emptyText)}">
     <label>${escapeHtml(label)}<input name="${escapeHtml(inputName)}" data-design-file-input type="file" accept="${escapeHtml(accept)}"></label>
     ${action}
-    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : escapeHtml(emptyText)}</span><input name="${escapeHtml(removeName)}" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file ${savedName ? "" : "disabled"}>${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}</button></div>
+    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : escapeHtml(emptyText)}</span><input name="${escapeHtml(removeName)}" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file aria-label="${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}" title="${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}" ${savedName ? "" : "hidden"}><span data-clear-file-action>삭제</span><b aria-hidden="true">×</b></button></div>
   </div>`;
 }
 
@@ -638,7 +638,7 @@ function exampleFilePickerMarkup(item) {
   const savedName = String(item?.file?.name || "");
   return `<div class="example-file-field" data-design-file-picker data-saved-file-name="${escapeHtml(savedName)}" data-empty-file-text="선택 사항">
     <label>이 문제의 PDF·사진<input name="exampleItemFile" data-design-file-input type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
-    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : "선택 사항"}</span><input name="removeExampleItemFile" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file ${savedName ? "" : "disabled"}>${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}</button></div>
+    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : "선택 사항"}</span><input name="removeExampleItemFile" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file aria-label="${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}" title="${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}" ${savedName ? "" : "hidden"}><span data-clear-file-action>삭제</span><b aria-hidden="true">×</b></button></div>
   </div>`;
 }
 
@@ -1182,13 +1182,17 @@ function syncDesignFilePicker(picker) {
   const removal = picker.querySelector("[data-remove-saved-file]");
   const status = picker.querySelector("[data-design-file-status]");
   const button = picker.querySelector("[data-clear-design-file]");
+  const buttonLabel = button?.querySelector("[data-clear-file-action]");
   if (!input || !status || !button) return;
   const presentation = designFilePickerState(input.files?.[0]?.name || "", picker.dataset.savedFileName || "", Boolean(removal?.checked), picker.dataset.emptyFileText || "선택된 파일 없음");
   const statusBox = status.closest(".design-file-status");
   if (statusBox) statusBox.dataset.fileState = presentation.state;
   status.textContent = presentation.message;
-  button.textContent = presentation.action;
+  if (buttonLabel) buttonLabel.textContent = presentation.action === "삭제 취소" ? "삭제 취소" : "삭제";
+  button.setAttribute("aria-label", presentation.action);
+  button.title = presentation.action;
   button.disabled = presentation.disabled;
+  button.hidden = presentation.disabled;
 }
 
 function bindDesignTab(course) {

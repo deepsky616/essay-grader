@@ -251,10 +251,15 @@ test("assessment design files can clear a new selection or remove and restore a 
   assert.deepEqual(designFilePickerState("", "", false, "선택 없음"), { state: "empty", message: "선택 없음", action: "선택 파일 삭제", disabled: true });
   for (const field of ["removeDesignDocument", "removeRubricDocument", "removeExampleDocument", "removeBlankDocument", "removeExampleItemFile"]) assert.match(source, new RegExp(field));
   assert.match(source, /data-clear-design-file/);
+  assert.match(source, /data-clear-file-action>삭제/);
+  assert.match(source, /button\.hidden = presentation\.disabled/);
   assert.match(source, /input\.value = ""/);
   assert.match(source, /form\._designSourceFile = event\.target\.files\?\.\[0\] \|\| null/);
   assert.match(source, /저장된 파일을 삭제하도록 표시했습니다/);
   assert.match(styles, /\.design-file-status\[data-file-state="removed"\]/);
+  assert.match(styles, /\.design-file-status \{[^}]*grid-column: 1;[^}]*width: fit-content;/);
+  assert.match(styles, /\.design-file-status \[data-clear-design-file\] \{[^}]*border-radius: 999px;[^}]*background: #ffe7e1;/);
+  assert.match(styles, /\.design-file-status \[data-clear-design-file\]\[hidden\] \{ display: none; \}/);
 });
 
 test("downloaded student roster template includes school name and leaves every data row blank", () => {
