@@ -688,6 +688,8 @@ a { color: inherit; text-decoration: none; }
 .design-name-field { display: grid; gap: 7px; padding: 20px 24px; color: var(--muted); font-size: 14px; font-weight: 900; }
 .design-name-field input { min-height: 43px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; }
 .design-editor-section { padding: 22px 24px; border-top: 1px solid var(--line); }
+.achievement-threshold-placement { padding: 22px 24px 9px; border-top: 1px solid var(--line); background: linear-gradient(180deg,rgba(233,239,255,.32),rgba(255,255,255,0)); }
+.achievement-threshold-placement .performance-threshold-editor { margin-bottom: 0; }
 .editor-section-title { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 14px; }
 .editor-section-title > div { display: grid; grid-template-columns: 28px auto; gap: 3px 10px; align-items: center; }
 .editor-section-title > div > span { grid-row: 1 / 3; display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: var(--lime); font-size: 14px; font-weight: 950; }
@@ -741,7 +743,13 @@ a { color: inherit; text-decoration: none; }
 .curriculum-picker select, .achievement-input-grid input, .achievement-input-grid textarea, .level-editor-row input, .level-editor-row textarea, .rubric-group-fields input, .rubric-score-row input, .rubric-score-row textarea, .example-editor-card input, .example-editor-card textarea, .document-auto-row input { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: white; outline: 0; font-size: 14px; }
 .curriculum-picker select:focus, .achievement-input-grid input:focus, .achievement-input-grid textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(49,84,214,.1); }
 .level-editor-list { display: grid; gap: 7px; margin-top: 10px; }
-.level-editor-row { display: grid; grid-template-columns: 100px minmax(0,1fr) 40px; gap: 8px; align-items: center; }
+.achievement-level-guide { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(185,234,210,.24); }
+.achievement-level-guide strong { color: #27634c; font-size: 14px; }
+.achievement-level-guide span { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: right; }
+.level-editor-row { display: grid; grid-template-columns: 165px minmax(0,1fr); gap: 8px; align-items: center; }
+.achievement-level-band { display: grid; gap: 4px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: white; }
+.achievement-level-band strong { color: var(--blue); font-size: 14px; }
+.achievement-level-band span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .mini-add { margin-top: 9px; border-style: dashed; }
 .document-auto-row { display: grid; grid-template-columns: minmax(220px,1fr) auto; gap: 8px 10px; align-items: end; margin: 13px 0; padding: 12px; border-radius: 10px; background: rgba(242,217,167,.25); }
 .document-auto-row span { align-self: center; color: var(--muted); font-size: 13px; line-height: 1.5; }
@@ -1111,6 +1119,9 @@ a { color: inherit; text-decoration: none; }
 .student-achievement-feedback > strong { display: block; padding: 13px 12px; background: rgba(185,234,210,.2); font-size: 16px; }
 .student-achievement-feedback label { display: grid; gap: 9px; padding: 13px 12px; border-top: 1px solid var(--line); }
 .student-achievement-feedback span { color: var(--blue); font-size: 16px; font-weight: 900; }
+.student-achievement-feedback .achievement-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.student-achievement-feedback .achievement-result-heading > b { margin-right: auto; color: var(--blue); }
+.student-achievement-feedback .achievement-result-heading > small { color: var(--muted); font-size: 14px; font-weight: 800; }
 .student-achievement-feedback textarea { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; color: var(--ink); font: inherit; font-size: 16px; line-height: 1.7; }
 .student-achievement-feedback textarea:focus { border-color: var(--blue); outline: 3px solid rgba(44,80,190,.14); }
 .student-achievement-feedback small { color: var(--muted); font-size: 15px; font-weight: 500; line-height: 1.6; }
@@ -1324,7 +1335,9 @@ a { color: inherit; text-decoration: none; }
   .grading-progress-dial { width: 96px; }
   .grading-active-task-grid { grid-template-columns: 1fr; }
   .curriculum-context { align-items: flex-start; flex-direction: column; }
-  .level-editor-row { grid-template-columns: 75px minmax(0,1fr) 36px; }
+  .achievement-level-guide { align-items: flex-start; flex-direction: column; }
+  .achievement-level-guide span { text-align: left; }
+  .level-editor-row { grid-template-columns: 125px minmax(0,1fr); }
   .student-review-actions, .detail-ai-actions, .score-bulk-actions { grid-template-columns: 1fr; }
   .grading-prerequisite, .grading-result-actions { align-items: stretch; flex-direction: column; }
   .teacher-score-list article { grid-template-columns: 1fr; }

@@ -1260,6 +1260,7 @@ ${JSON.stringify(targets)}
       grade: metadata.grade || "",
       totalScore: Number(metadata.totalScore || 0),
       achievementGroups: Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [],
+      performanceThresholds: metadata.performanceThresholds || { excellent: 80, good: 60, average: 40, effort: 20 },
       rubricCriteria: normalizeRubricForPrompt(metadata.rubricCriteria),
       exampleAnswers: (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item, index) => ({
         ...promptExamples[index],
@@ -1328,7 +1329,7 @@ ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
 9. 각 평가요소의 기준 설명은 scoreLevels를 참고합니다. 다만 exampleAnswers에 pointItems가 있는 문제의 최종 점수는 10번의 배점 항목 합계가 우선하며, 그 합계가 scoreLevels의 대표 점수 사이에 있어도 그대로 questionResults에 사용합니다. totalScore는 이번 questionResults에 포함된 점수의 합계여야 합니다.
 10. exampleAnswerResults에는 3 문제별 예시답안의 세부 문제 번호를 합치지 말고 각각 정확히 한 번씩 포함합니다. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 개수와 순서로 넣고 pointItemId와 criterion을 그대로 복사하세요. 각 배점 항목은 기준을 충족하면 설정된 maxScore 전부, 충족하지 못하면 반드시 0점만 부여하는 독립적인 가산 항목입니다. 특히 pointItems가 1개인 문제는 답이 틀리거나 기준을 충족하지 못하면 awardedScore가 반드시 0점입니다. exampleAnswerResults.awardedScore는 pointResults.awardedScore의 합계이며, 같은 상위 문제(예: 1-(1), 1-(2)는 문제 1)의 합계는 questionResults의 같은 상위 문제 점수 합계와 정확히 같아야 합니다. 학생 답안에서 확인한 근거를 각 pointResults.evidence에 구체적으로 작성하세요.${safeMetadata.precisionReview ? " 선별 정밀 재검토에서는 precisionCriterionIds와 같은 상위 문제에 속한 exampleAnswers만 반환하세요." : " 모든 exampleAnswers를 입력 순서대로 반환하세요."}
 11. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
-12. 성취기준 세트마다 답안 근거를 찾아, 그 세트에 정의된 성취수준 이름 중 하나를 선택하고 개별 피드백을 작성합니다.
+12. 성취기준 세트마다 itemRange에 연결된 questionResults 평가요소의 score와 maxScore를 각각 모두 합산하고, 합산 비율에 performanceThresholds를 적용하여 매우잘함·잘함·보통·노력요함 중 하나를 선택합니다. 답안 근거와 개별 피드백도 함께 작성합니다.
 13. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 답안 본문에 사람이름으로 보이는 글자가 있더라도 신원으로 추정하거나 응답에 옮겨 적지 마세요.
 14. achievementResults에는 입력된 모든 성취기준 세트를 빠짐없이 한 번씩 포함하고 achievementStandardId를 그대로 복사합니다.
 15. preReadings는 원본과 필기 강조본을 먼저 비교해 만든 독립 판독 결과입니다. 채점 근거로 참고하되 원본·빈 답안지·필기 강조본을 다시 확인하고, 서로 다르면 낮은 confidence와 교사 검토 사유를 남기세요.
@@ -1389,7 +1390,7 @@ ${JSON.stringify(safeMetadata)}
 4. 무응답 또는 판독 불가도 항목을 생략하지 말고 0점 또는 정의된 최저점과 낮은 confidence로 기록합니다.
 5. exampleAnswerResults는 아래 exampleAnswers의 각 세부 문항을 같은 개수와 순서로 작성하고 exampleAnswerId와 questionNumber를 그대로 복사합니다.
 6. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 순서로 작성합니다. 각 항목은 기준 충족 시 설정 배점 전부, 미충족 시 0점만 부여합니다. 배점 항목이 1개이고 답이 틀리면 0점입니다. 세부 문항 awardedScore는 pointResults 합계이며, 같은 상위 문제의 합계는 questionResults의 같은 상위 문제 점수 합계와 일치해야 합니다.
-7. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다.
+7. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다. 각 수준은 itemRange에 해당하는 rubricCriteria의 questionResults 점수를 모두 합산한 비율로 결정합니다.
 8. totalScore는 questionResults의 score 합계입니다.
 
 rubricCriteria(JSON):
@@ -1400,6 +1401,9 @@ ${JSON.stringify(exampleAnswers)}
 
 achievementGroups(JSON):
 ${JSON.stringify(achievementGroups)}
+
+performanceThresholds(JSON):
+${JSON.stringify(metadata.performanceThresholds || { excellent: 80, good: 60, average: 40, effort: 20 })}
 
 반드시 지정된 JSON 스키마로만 응답하세요.`;
   }

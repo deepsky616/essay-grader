@@ -23,9 +23,10 @@ const COURSE_SUBJECTS_BY_GRADE = Object.freeze({
   "6": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "실과", "체육", "음악", "미술", "영어"]),
 });
 const ACHIEVEMENT_LEVEL_EXAMPLES = {
-  "상": "예: 기준을 정확히 이해하고 조건에 맞게 수행할 수 있다.",
-  "중": "예: 기준을 이해하고 기본 조건에 맞게 수행할 수 있다.",
-  "하": "예: 기준의 일부를 알고 수행을 시도한다.",
+  "매우잘함": "예: 성취기준을 충분히 이해하고 조건에 맞게 정확하고 완전하게 수행한다.",
+  "잘함": "예: 성취기준을 대체로 이해하고 수행하나 일부 보완이 필요하다.",
+  "보통": "예: 성취기준을 부분적으로 이해하고 핵심 내용을 일부 수행한다.",
+  "노력요함": "예: 성취기준과 관련된 기초적인 시도를 하거나 추가적인 도움이 필요하다.",
 };
 const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS = Object.freeze({ excellent: 80, good: 60, average: 40, effort: 20 });
 const RUBRIC_PERFORMANCE_BANDS = Object.freeze([
@@ -653,12 +654,39 @@ function documentAnalysisProgressMarkup(kind) {
   </div>`;
 }
 
-function defaultAchievementLevels() {
-  return [
-    { id: crypto.randomUUID(), label: "상", description: "" },
-    { id: crypto.randomUUID(), label: "중", description: "" },
-    { id: crypto.randomUUID(), label: "하", description: "" },
-  ];
+function achievementLevelBandKey(label) {
+  const compact = String(label || "").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+  if (["매우잘함", "매우우수", "최상", "상", "a"].includes(compact)) return "excellent";
+  if (["잘함", "우수"].includes(compact)) return "good";
+  if (["보통", "중", "b"].includes(compact)) return "average";
+  if (["노력요함", "노력필요", "하", "c", "d"].includes(compact)) return "effort";
+  return "";
+}
+
+function normalizeAchievementLevels(levels, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  const source = (Array.isArray(levels) ? levels : []).map((level) => ({
+    ...level,
+    label: String(level?.label || "").trim(),
+    description: String(level?.description || "").trim(),
+  }));
+  const usedIndexes = new Set();
+  const definitions = performanceBandDefinitions(thresholds);
+  return definitions.map((band, bandIndex) => {
+    let sourceIndex = source.findIndex((level, index) => !usedIndexes.has(index) && achievementLevelBandKey(level.label) === band.key);
+    if (sourceIndex < 0 && source.length >= RUBRIC_PERFORMANCE_BANDS.length && source[bandIndex] && !usedIndexes.has(bandIndex)) sourceIndex = bandIndex;
+    if (sourceIndex >= 0) usedIndexes.add(sourceIndex);
+    const matched = sourceIndex >= 0 ? source[sourceIndex] : null;
+    return {
+      id: matched?.id || crypto.randomUUID(),
+      label: band.label,
+      description: matched?.description || band.defaultCriterion.replace(/평가요소/g, "성취기준"),
+      range: band.range,
+    };
+  });
+}
+
+function defaultAchievementLevels(thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  return normalizeAchievementLevels([], thresholds);
 }
 
 function designEditor(design, course) {
@@ -682,16 +710,19 @@ function designEditor(design, course) {
         ${documentAnalysisProgressMarkup("design")}
       </section>
 
+      <div class="achievement-threshold-placement">
+        ${performanceThresholdEditor(performanceThresholds)}
+      </div>
+
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>1</span><strong>성취기준 입력</strong><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과의 2022 개정 교육과정을 영역별로 선택하면 A·B·C가 상·중·하로 자동 입력됩니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
+        <div class="editor-section-title"><div><span>1</span><strong>성취수준 입력</strong><p>성취기준을 선택하고 문항 범위를 연결하세요. 각 범위의 평가요소 점수 합계에 위 성취수준별 배점 기준을 적용해 최종 수준을 결정합니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
         ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취기준 선택 가능</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 성취기준 자료를 찾지 못했습니다.</span></div>`}
-        <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course)).join("")}</div>
+        <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course, performanceThresholds)).join("")}</div>
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>아래 성취수준별 최소 비율을 수정하면 대표 배점과 AI 채점기준이 자동으로 다시 계산됩니다. 미응답 또는 근거 없음도 별도 배점 없이 노력요함 기준에 포함됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 매우잘함·잘함·보통·노력요함 네 수준을 작성합니다. 위 배점 비율에 따라 대표점수가 자동 계산됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
-        ${performanceThresholdEditor(performanceThresholds)}
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
           <button type="button" data-open-rubric-ai>채점기준 AI 생성</button>
@@ -747,22 +778,24 @@ function curriculumStandardOptions(course, domain, selectedCode = "") {
   return `<option value="">${domain ? "성취기준을 선택하세요" : "영역을 먼저 선택하세요"}</option>${standards.map((standard) => `<option value="${escapeHtml(standard.code)}" ${standard.code === selectedCode ? "selected" : ""}>[${escapeHtml(standard.code)}] ${escapeHtml(standard.statement)}</option>`).join("")}`;
 }
 
-function achievementEditor(group, index, course) {
+function achievementEditor(group, index, course, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const selection = curriculumSelection(group, course);
+  const definitions = performanceBandDefinitions(thresholds);
+  const levels = normalizeAchievementLevels(group.levels, thresholds);
   return `<article class="achievement-editor-card" data-achievement-group data-group-id="${escapeHtml(group.id || "")}" data-standard-code="${escapeHtml(selection.code)}">
     <div class="achievement-editor-head"><strong>성취기준 ${index + 1}</strong><button type="button" data-remove-achievement>삭제</button></div>
     <div class="curriculum-picker"><label>교과 영역<select name="achievementDomain">${curriculumDomainOptions(course, selection.domain)}</select></label><label>성취기준 선택<select name="achievementCode" ${selection.domain ? "" : "disabled"}>${curriculumStandardOptions(course, selection.domain, selection.code)}</select></label></div>
     <div class="achievement-input-grid"><label>문항 범위<input name="achievementRange" value="${escapeHtml(group.itemRange || "")}" placeholder="예: 1~3번" required></label><label>성취기준 내용 <small>선택 후 필요한 경우 교사가 직접 수정할 수 있습니다.</small><textarea name="achievementStandard" rows="3" placeholder="직접 입력하거나 위 목록에서 선택하세요." required>${escapeHtml(group.standard || "")}</textarea></label></div>
-    <div class="level-editor-list" data-levels>${(group.levels?.length ? group.levels : defaultAchievementLevels()).map(levelEditor).join("")}</div>
-    <button class="mini-add" type="button" data-add-level>＋ 성취수준 추가</button>
+    <div class="achievement-level-guide"><strong>평가요소 합산으로 결정되는 성취수준</strong><span>문항 범위에 연결된 모든 평가요소의 획득점수 ÷ 총 배점으로 자동 산정됩니다.</span></div>
+    <div class="level-editor-list" data-levels>${levels.map((level, levelIndex) => levelEditor(level, levelIndex, definitions)).join("")}</div>
   </article>`;
 }
 
-function levelEditor(level) {
-  const legacyExamples = Object.values(ACHIEVEMENT_LEVEL_EXAMPLES).map((value) => value.replace(/^예:\s*/, ""));
-  const savedDescription = legacyExamples.includes(String(level.description || "").trim()) ? "" : level.description || "";
-  const placeholder = ACHIEVEMENT_LEVEL_EXAMPLES[level.label] || "예: 이 수준에서 학생이 보여야 할 수행을 입력하세요.";
-  return `<div class="level-editor-row" data-level data-level-id="${escapeHtml(level.id || "")}"><input name="levelLabel" value="${escapeHtml(level.label || "")}" placeholder="수준 이름" required><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea><button type="button" data-remove-level>삭제</button></div>`;
+function levelEditor(level, index = 0, bandDefinitions = performanceBandDefinitions()) {
+  const band = bandDefinitions[index] || bandDefinitions.at(-1);
+  const savedDescription = level.description || "";
+  const placeholder = ACHIEVEMENT_LEVEL_EXAMPLES[band.label] || "예: 이 수준에서 학생이 보여야 할 수행을 입력하세요.";
+  return `<div class="level-editor-row" data-level data-achievement-level data-level-id="${escapeHtml(level.id || "")}"><div class="achievement-level-band"><strong data-achievement-band-label>${escapeHtml(band.label)}</strong><span data-achievement-band-range>${escapeHtml(band.range)}</span></div><input name="levelLabel" type="hidden" value="${escapeHtml(band.label)}"><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea></div>`;
 }
 
 function performanceThresholdEditor(value) {
@@ -982,12 +1015,25 @@ function syncPerformanceThresholdUI(form) {
   if (summary) summary.textContent = valid
     ? `${definitions.map((band) => `${band.label}: ${band.range}`).join(" · ")} · 미응답 또는 근거 없음도 노력요함에 포함`
     : "배점 기준은 100 ≥ 매우잘함 > 잘함 > 보통 > 노력요함 > 0 순서로 입력해 주세요.";
-  form.querySelectorAll("[data-rubric-score]").forEach((row, index) => {
-    const band = definitions[index] || definitions.at(-1);
-    const label = row.querySelector("[data-rubric-band-label]");
-    const range = row.querySelector("[data-rubric-band-range]");
-    if (label) label.textContent = band.label;
-    if (range) range.textContent = band.range;
+  form.querySelectorAll("[data-achievement-group]").forEach((group) => {
+    group.querySelectorAll("[data-achievement-level]").forEach((row, index) => {
+      const band = definitions[index] || definitions.at(-1);
+      const label = row.querySelector("[data-achievement-band-label]");
+      const range = row.querySelector("[data-achievement-band-range]");
+      const storedLabel = row.querySelector('[name="levelLabel"]');
+      if (label) label.textContent = band.label;
+      if (range) range.textContent = band.range;
+      if (storedLabel) storedLabel.value = band.label;
+    });
+  });
+  form.querySelectorAll("[data-rubric-group]").forEach((group) => {
+    group.querySelectorAll("[data-rubric-score]").forEach((row, index) => {
+      const band = definitions[index] || definitions.at(-1);
+      const label = row.querySelector("[data-rubric-band-label]");
+      const range = row.querySelector("[data-rubric-band-range]");
+      if (label) label.textContent = band.label;
+      if (range) range.textContent = band.range;
+    });
   });
   return active;
 }
@@ -1314,13 +1360,13 @@ function handleDesignEditorClick(event, form, course) {
   const runRubricAi = event.target.closest("[data-run-rubric-ai]");
   if (runRubricAi) { generateRubricWithAi(form, course); return; }
   const addAchievement = event.target.closest("[data-add-achievement]");
-  if (addAchievement) { form.querySelector("[data-achievement-groups]").insertAdjacentHTML("beforeend", achievementEditor({ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels() }, form.querySelectorAll("[data-achievement-group]").length, course)); return; }
+  if (addAchievement) {
+    const thresholds = syncPerformanceThresholdUI(form);
+    form.querySelector("[data-achievement-groups]").insertAdjacentHTML("beforeend", achievementEditor({ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels(thresholds) }, form.querySelectorAll("[data-achievement-group]").length, course, thresholds));
+    return;
+  }
   const removeAchievement = event.target.closest("[data-remove-achievement]");
   if (removeAchievement) { if (form.querySelectorAll("[data-achievement-group]").length > 1) removeAchievement.closest("[data-achievement-group]").remove(); return; }
-  const addLevel = event.target.closest("[data-add-level]");
-  if (addLevel) { addLevel.closest("[data-achievement-group]").querySelector("[data-levels]").insertAdjacentHTML("beforeend", levelEditor({ id: crypto.randomUUID(), label: "", description: "" })); return; }
-  const removeLevel = event.target.closest("[data-remove-level]");
-  if (removeLevel) { const list = removeLevel.closest("[data-levels]"); if (list.querySelectorAll("[data-level]").length > 1) removeLevel.closest("[data-level]").remove(); return; }
   const addRubric = event.target.closest("[data-add-rubric]");
   if (addRubric) {
     const list = form.querySelector("[data-rubric-groups]");
@@ -1399,8 +1445,15 @@ function handleAchievementCurriculumChange(event, form, course) {
   if (!standard) { setDesignStatus(form, "선택한 성취기준 자료를 찾지 못했습니다. 다시 선택해 주세요.", true); return; }
   group.dataset.standardCode = standard.code;
   group.querySelector('[name="achievementStandard"]').value = `[${standard.code}] ${standard.statement}`;
-  group.querySelector("[data-levels]").innerHTML = ["상", "중", "하"].map((label) => levelEditor({ id: crypto.randomUUID(), label, description: standard.levels[label] || "" })).join("");
-  setDesignStatus(form, `[${standard.code}] 성취기준과 상·중·하 성취수준을 자동 입력했습니다.`);
+  const thresholds = syncPerformanceThresholdUI(form);
+  const definitions = performanceBandDefinitions(thresholds);
+  const levels = normalizeAchievementLevels([
+    { id: crypto.randomUUID(), label: "상", description: standard.levels["상"] || "" },
+    { id: crypto.randomUUID(), label: "중", description: standard.levels["중"] || "" },
+    { id: crypto.randomUUID(), label: "하", description: standard.levels["하"] || "" },
+  ], thresholds);
+  group.querySelector("[data-levels]").innerHTML = levels.map((level, index) => levelEditor(level, index, definitions)).join("");
+  setDesignStatus(form, `[${standard.code}] 성취기준과 네 성취수준을 자동 입력했습니다.`);
 }
 
 function clearChangedCurriculumSelection(textarea, course) {
@@ -1719,7 +1772,7 @@ async function extractDesignDocument(form, kind, course) {
         ...group,
         id: crypto.randomUUID(),
         levels: (group.levels || []).map((level) => ({ ...level, id: crypto.randomUUID() })),
-      }, index, course)).join("");
+      }, index, course, performanceThresholds)).join("");
       form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       const rubricScores = rubricQuestionMaxScoreMap(rubrics);
       const examples = prepareExtractedExampleAnswers(rawExamples, rubricScores);
@@ -2390,7 +2443,7 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
     totalScore,
     maxScore: summary.maxScore,
     performanceLevel: performanceLevel.label,
-    achievementResults: result.achievementResults || [],
+    achievementResults: derivedAchievementResults(design, result),
     feedback: result.teacherFeedback || result.summary || "",
     reviewStatus: result.teacherConfirmed ? "교사 검토 완료" : "교사 검토 전",
     generatedAt: formatDateTime(result.teacherReviewedAt || result.regradedAt || course.grading?.finishedAt || new Date().toISOString()),
@@ -2795,8 +2848,8 @@ function safeExcelText(value) {
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
-function achievementLevelForExport(result, group, index) {
-  const achievementResults = Array.isArray(result?.achievementResults) ? result.achievementResults : [];
+function achievementLevelForExport(result, group, index, design = null) {
+  const achievementResults = design ? derivedAchievementResults(design, result) : Array.isArray(result?.achievementResults) ? result.achievementResults : [];
   const matched = achievementResults.find((item) => group?.id && item?.achievementStandardId === group.id)
     || achievementResults.find((item) => group?.itemRange && item?.itemRange === group.itemRange)
     || achievementResults[index];
@@ -2824,7 +2877,7 @@ function downloadGradingResultsExcel(course, targetStudents) {
       return [student.grade, student.className, student.number, safeExcelText(student.name), null, ...rubricCriteria.map(() => ""), ...achievementGroups.map(() => error ? "채점 실패" : "채점 결과 없음"), safeExcelText(error?.message || "")];
     }
     const report = buildStudentReportViewModel(course, design, student, result, 0, assignedStudents.length);
-    return [student.grade, student.className, student.number, safeExcelText(student.name), report.totalScore, ...report.scoreRows.map((item) => Number(item.score || 0)), ...achievementGroups.map((group, index) => safeExcelText(achievementLevelForExport(result, group, index))), safeExcelText(report.feedback)];
+    return [student.grade, student.className, student.number, safeExcelText(student.name), report.totalScore, ...report.scoreRows.map((item) => Number(item.score || 0)), ...achievementGroups.map((group, index) => safeExcelText(achievementLevelForExport(result, group, index, design))), safeExcelText(report.feedback)];
   });
   const classLabels = [...new Set(assignedStudents.map((student) => `${student.grade}-${student.className}반`))];
   const rows = window.ChaejeomExport.buildWorkbookRows({
@@ -3237,7 +3290,11 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     subject: course.subject,
     grade: course.grade,
     totalScore: maxScore,
-    achievementGroups: design.achievementGroups,
+    achievementGroups: (design.achievementGroups || []).map((group) => ({
+      ...group,
+      levels: normalizeAchievementLevels(group.levels, design.performanceThresholds),
+    })),
+    performanceThresholds: normalizePerformanceThresholds(design.performanceThresholds),
     rubricCriteria: design.rubricCriteria,
     exampleAnswers: design.exampleAnswers,
     recognitionWarnings,
@@ -3344,6 +3401,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
       result.reviewReasons = [...new Set([...(result.reviewReasons || []), `자동 정밀 재검토를 완료하지 못했습니다. (${friendlyError(error)})`])];
     }
   }
+  result.achievementResults = derivedAchievementResults(design, result);
   return {
     ...result,
     studentId: student.id,
@@ -3690,6 +3748,75 @@ function resultScoreSummary(result, design) {
   return { total: Math.round(total * 100) / 100, maxScore, rows };
 }
 
+function achievementRangeQuestionKeys(itemRange, availableKeys = []) {
+  const source = String(itemRange || "").trim().replace(/[‐‑‒–—−]/g, "-");
+  const available = [...new Set((Array.isArray(availableKeys) ? availableKeys : []).map((key) => questionScoreGroupKey(key)).filter(Boolean))];
+  const explicitRange = source.match(/(\d+)\s*(?:~|～|-)\s*(\d+)/);
+  let requested = [];
+  if (explicitRange) {
+    const start = Number(explicitRange[1]);
+    const end = Number(explicitRange[2]);
+    const lower = Math.min(start, end);
+    const upper = Math.max(start, end);
+    requested = Array.from({ length: upper - lower + 1 }, (_value, index) => String(lower + index));
+  } else {
+    const withoutSubquestionNumbers = source.replace(/\(\s*\d+\s*\)/g, "");
+    requested = [...new Set((withoutSubquestionNumbers.match(/\d+/g) || []).map(String))];
+  }
+  if (!requested.length) return available;
+  return requested;
+}
+
+function achievementPerformanceSummaries(design, rows, scores) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const scoreValues = Array.isArray(scores) ? scores : [];
+  const availableKeys = normalizedRows.map((row) => questionScoreGroupKey(row?.questionNumber)).filter(Boolean);
+  const thresholds = normalizePerformanceThresholds(design?.performanceThresholds);
+  return (Array.isArray(design?.achievementGroups) ? design.achievementGroups : []).map((group, index) => {
+    const questionKeys = achievementRangeQuestionKeys(group?.itemRange, availableKeys);
+    const keySet = new Set(questionKeys);
+    const linked = normalizedRows.map((row, rowIndex) => ({ row, rowIndex }))
+      .filter(({ row }) => keySet.has(questionScoreGroupKey(row?.questionNumber)));
+    const score = Math.round(linked.reduce((sum, item) => sum + Number(scoreValues[item.rowIndex] ?? item.row?.score ?? 0), 0) * 100) / 100;
+    const maxScore = Math.round(linked.reduce((sum, item) => sum + Number(item.row?.maxScore || 0), 0) * 100) / 100;
+    const band = achievementBandForScore(score, maxScore, thresholds);
+    return { group, index, questionKeys, score, maxScore, band };
+  });
+}
+
+function derivedAchievementResults(design, result, alignedScores = null) {
+  const rows = resultQuestionRows(result, design);
+  const scores = Array.isArray(alignedScores)
+    ? alignedScores.map(Number)
+    : rows.map((row, index) => teacherScoreForRow(result || {}, row, index));
+  const storedResults = Array.isArray(result?.achievementResults) ? result.achievementResults : [];
+  return achievementPerformanceSummaries(design, rows, scores).map((summary) => {
+    const group = summary.group || {};
+    const stored = storedResults.find((item) => group.id && item?.achievementStandardId === group.id)
+      || storedResults.find((item) => group.itemRange && item?.itemRange === group.itemRange)
+      || storedResults[summary.index]
+      || {};
+    const scoreEvidence = summary.maxScore > 0
+      ? `평가요소 합산 ${formatScore(summary.score)} / ${formatScore(summary.maxScore)}점 · ${summary.band.percentage}% · ${summary.band.range}`
+      : "연결된 평가요소 배점을 확인해 주세요.";
+    return {
+      ...stored,
+      achievementStandardId: group.id || stored.achievementStandardId || `achievement-${summary.index + 1}`,
+      itemRange: group.itemRange || stored.itemRange || "",
+      standard: group.standard || stored.standard || "",
+      achievementLevel: summary.band.label,
+      achievementLevelKey: summary.band.key,
+      score: summary.score,
+      maxScore: summary.maxScore,
+      percentage: summary.band.percentage,
+      range: summary.band.range,
+      evidence: scoreEvidence,
+      feedback: stored.feedback || "",
+      confidence: stored.confidence || "high",
+    };
+  });
+}
+
 function scoreChoicesForResultRow(item, design) {
   const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || [], normalizePerformanceThresholds(design?.performanceThresholds));
   const rubric = rubricCriteria.find((candidate) => item?.criterionId && candidate.id === item.criterionId)
@@ -3882,6 +4009,7 @@ async function openStudentResult(course, targetStudents, studentId) {
       : Number(item.score || 0);
     return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
   });
+  const initialAchievementResults = derivedAchievementResults(design, result, teacherScores);
   const workingExampleRows = resultExampleAnswerRows(result, design);
   const initialExampleRows = resultExampleAnswerRows(result, design, false);
   const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
@@ -3905,7 +4033,7 @@ async function openStudentResult(course, targetStudents, studentId) {
           ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview && !result.teacherConfirmed ? `<div class="teacher-review-alert" data-teacher-review-alert><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>배점 항목의 획득점수를 바꾸면 피드백도 자동으로 갱신됩니다. 직접 입력한 뒤에는 교사가 쓴 문장을 덮어쓰지 않습니다.</small></label>
-          ${result.achievementResults?.length ? `<div class="student-achievement-feedback"><strong>성취기준별 피드백</strong>${result.achievementResults.map((item, index) => `<label><span>${escapeHtml(item.itemRange)} · ${escapeHtml(item.achievementLevel)}</span><textarea data-achievement-feedback="${index}" rows="3" aria-label="${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)} 피드백">${escapeHtml(item.feedback || "")}</textarea><small>AI가 작성한 내용을 교사가 직접 수정할 수 있습니다.</small></label>`).join("")}</div>` : ""}
+          ${initialAchievementResults.length ? `<div class="student-achievement-feedback"><strong>성취기준별 평가요소 합산 결과</strong>${initialAchievementResults.map((item, index) => `<label data-achievement-result="${index}"><span class="achievement-result-heading"><b>${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)}</b><em class="performance-level-badge is-${escapeHtml(item.achievementLevelKey)}" data-achievement-result-level>${escapeHtml(item.achievementLevel)}</em><small data-achievement-result-score>${formatScore(item.score)} / ${formatScore(item.maxScore)}점 · ${item.percentage}%</small></span><textarea data-achievement-feedback="${index}" rows="3" aria-label="${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)} 피드백">${escapeHtml(item.feedback || "")}</textarea><small>연결된 평가요소 점수 합계로 수준을 자동 결정하며, 피드백 문장은 교사가 수정할 수 있습니다.</small></label>`).join("")}</div>` : ""}
           <div class="detail-ai-actions"><button class="secondary-action" type="button" data-regrade-student>AI 채점 재실행</button></div>
         </section>
       </div>
@@ -3923,7 +4051,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   const achievementFeedbackInputs = Array.from(panel.querySelectorAll("[data-achievement-feedback]"));
   const questionGroupKeys = [...new Set(questionRows.map((item, index) => questionScoreGroupKey(item.questionNumber || index + 1)))];
   let feedbackManuallyEdited = Boolean(result.teacherFeedbackManuallyEdited);
-  const manuallyEditedAchievementFeedbacks = new Set((result.achievementResults || [])
+  const manuallyEditedAchievementFeedbacks = new Set(initialAchievementResults
     .map((item, index) => item.teacherFeedbackManuallyEdited ? index : -1)
     .filter((index) => index >= 0));
   feedbackInput.addEventListener("input", () => { feedbackManuallyEdited = true; });
@@ -3958,7 +4086,19 @@ async function openStudentResult(course, targetStudents, studentId) {
         questionLevel.title = `${questionBand.percentage}% · ${questionBand.range}`;
       }
     });
-    return { total, achievementBand };
+    const achievementResults = derivedAchievementResults(design, result, scoreInputs.map((input) => Number(input.value || 0)));
+    achievementResults.forEach((item, index) => {
+      const resultBox = panel.querySelector(`[data-achievement-result="${index}"]`);
+      const level = resultBox?.querySelector("[data-achievement-result-level]");
+      const score = resultBox?.querySelector("[data-achievement-result-score]");
+      if (level) {
+        level.textContent = item.achievementLevel;
+        level.className = `performance-level-badge is-${item.achievementLevelKey}`;
+        level.title = `${item.percentage}% · ${item.range}`;
+      }
+      if (score) score.textContent = `${formatScore(item.score)} / ${formatScore(item.maxScore)}점 · ${item.percentage}%`;
+    });
+    return { total, achievementBand, achievementResults };
   };
   const pointTarget = (exampleIndex, pointIndex) => {
     const exampleRow = workingExampleRows[exampleIndex];
@@ -3989,11 +4129,12 @@ async function openStudentResult(course, targetStudents, studentId) {
   };
   const syncAutomaticFeedback = () => {
     const automaticFeedback = automaticTeacherFeedback(workingExampleRows);
-    const { achievementBand } = updateTotal();
+    const { achievementResults } = updateTotal();
     if (!feedbackManuallyEdited && automaticFeedback) feedbackInput.value = automaticFeedback;
     achievementFeedbackInputs.forEach((input, index) => {
       if (!manuallyEditedAchievementFeedbacks.has(index) && automaticFeedback) {
-        input.value = `${achievementBand.label} 수준입니다. 교사가 수정한 배점 결과를 반영했습니다.\n${automaticFeedback}`;
+        const level = achievementResults[index]?.achievementLevel || "산정 전";
+        input.value = `${level} 수준입니다. 연결된 평가요소의 합산 배점 결과를 반영했습니다.\n${automaticFeedback}`;
       }
     });
   };
@@ -4102,7 +4243,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.maxScore = summary.maxScore;
     result.teacherFeedback = feedbackInput.value.trim();
     result.teacherFeedbackManuallyEdited = feedbackManuallyEdited;
-    result.achievementResults = (result.achievementResults || []).map((item, index) => ({
+    result.achievementResults = derivedAchievementResults(design, result, result.teacherScores).map((item, index) => ({
       ...item,
       feedback: panel.querySelector(`[data-achievement-feedback="${index}"]`)?.value.trim() ?? item.feedback,
       teacherFeedbackManuallyEdited: manuallyEditedAchievementFeedbacks.has(index),

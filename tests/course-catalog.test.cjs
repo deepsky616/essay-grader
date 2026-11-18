@@ -18,14 +18,18 @@ function loadSubjectCatalog() {
 function loadQuestionScoreHelpers() {
   const bandsStart = source.indexOf("const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS");
   const bandsEnd = source.indexOf("\n\nconst app", bandsStart);
+  const achievementLevelsStart = source.indexOf("function achievementLevelBandKey");
+  const achievementLevelsEnd = source.indexOf("function designEditor", achievementLevelsStart);
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   const alignStart = source.indexOf("function alignGeneratedRubrics");
   const alignEnd = source.indexOf("async function generateRubricWithAi", alignStart);
   const normalizeStart = source.indexOf("function normalizeRubricCriteria");
   const normalizeEnd = source.indexOf("function rubricGroupMaxScore", normalizeStart);
-  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start && alignStart >= 0 && alignEnd > alignStart && normalizeStart >= 0 && normalizeEnd > normalizeStart, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, alignGeneratedRubrics, normalizeRubricCriteria };`)();
+  const achievementScoresStart = source.indexOf("function achievementRangeQuestionKeys");
+  const achievementScoresEnd = source.indexOf("function derivedAchievementResults", achievementScoresStart);
+  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && achievementLevelsStart >= 0 && achievementLevelsEnd > achievementLevelsStart && start >= 0 && end > start && alignStart >= 0 && alignEnd > alignStart && normalizeStart >= 0 && normalizeEnd > normalizeStart && achievementScoresStart >= 0 && achievementScoresEnd > achievementScoresStart, "question score helpers must exist");
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(achievementLevelsStart, achievementLevelsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}\n${source.slice(achievementScoresStart, achievementScoresEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, alignGeneratedRubrics, normalizeRubricCriteria, normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -98,7 +102,12 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /name="achievementDomain"/);
   assert.match(source, /name="achievementCode"/);
   assert.match(source, /CurriculumStandards\?\.find/);
-  assert.match(source, /\["상", "중", "하"\]\.map/);
+  assert.match(source, /<strong>성취수준 입력<\/strong>/);
+  assert.doesNotMatch(source, /<strong>성취기준 입력<\/strong>/);
+  assert.match(source, /normalizeAchievementLevels/);
+  assert.match(source, /data-achievement-band-range/);
+  assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>성취수준 입력<\/strong>[\s\S]*?<strong>문제별 채점기준 입력<\/strong>/);
+  assert.match(source, /성취기준과 네 성취수준을 자동 입력/);
   assert.match(source, /data-open-rubric-ai>채점기준 AI 생성/);
   assert.match(source, /name="rubricAiBandCount"/);
   assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
@@ -170,12 +179,46 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /name: "performanceEffortMin"/);
   assert.match(source, /4개 성취수준/);
   assert.doesNotMatch(source, /key: "effortZero"/);
-  assert.match(source, /미응답 또는 근거 없음도 별도 배점 없이 노력요함 기준에 포함/);
+  assert.match(source, /미응답 또는 근거 없음도 노력요함에 포함/);
   assert.match(source, /performanceThresholds,/);
   assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
   assert.match(styles, /\.question-score-summary \{/);
   assert.match(styles, /\.rubric-derived-score \{/);
+});
+
+test("achievement levels aggregate every linked evaluation element using the shared thresholds", () => {
+  const { normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries } = loadQuestionScoreHelpers();
+  const legacy = normalizeAchievementLevels([
+    { id: "high", label: "상", description: "정확히 해결함" },
+    { id: "middle", label: "중", description: "부분적으로 해결함" },
+    { id: "low", label: "하", description: "도움을 받아 시도함" },
+  ]);
+  assert.deepEqual(legacy.map((level) => level.label), ["매우잘함", "잘함", "보통", "노력요함"]);
+  assert.equal(legacy[0].description, "정확히 해결함");
+  assert.equal(legacy[2].description, "부분적으로 해결함");
+  assert.equal(legacy[3].description, "도움을 받아 시도함");
+  assert.deepEqual(achievementRangeQuestionKeys("1~2번", ["1", "2", "3"]), ["1", "2"]);
+  assert.deepEqual(achievementRangeQuestionKeys("1-(1), 1-(2)", ["1", "2"]), ["1"]);
+
+  const summaries = achievementPerformanceSummaries({
+    performanceThresholds: { excellent: 80, good: 60, average: 40, effort: 20 },
+    achievementGroups: [
+      { id: "a1", itemRange: "1~2번", standard: "계산하고 설명한다" },
+      { id: "a2", itemRange: "3번", standard: "근거를 제시한다" },
+    ],
+  }, [
+    { questionNumber: "1", maxScore: 5 },
+    { questionNumber: "1", maxScore: 5 },
+    { questionNumber: "2", maxScore: 10 },
+    { questionNumber: "3", maxScore: 10 },
+  ], [4, 3, 9, 5]);
+  assert.deepEqual(summaries.map((item) => ({ score: item.score, maxScore: item.maxScore, level: item.band.label })), [
+    { score: 16, maxScore: 20, level: "매우잘함" },
+    { score: 5, maxScore: 10, level: "보통" },
+  ]);
+  assert.match(source, /form\.querySelectorAll\("\[data-rubric-group\]"\)\.forEach\(\(group\) => \{[\s\S]*?group\.querySelectorAll\("\[data-rubric-score\]"\)\.forEach/);
+  assert.match(source, /derivedAchievementResults\(design, result/);
 });
 
 test("every requested evaluation element keeps four performance levels without AI extras", () => {

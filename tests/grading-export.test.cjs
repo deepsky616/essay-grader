@@ -155,7 +155,8 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.match(source, /data-regrade-student>AI 채점 재실행/);
   assert.match(source, /resultStatus\.textContent = "검토 완료"/);
   assert.match(source, /textarea data-achievement-feedback=/);
-  assert.match(source, /result\.achievementResults = \(result\.achievementResults \|\| \[\]\)\.map/);
+  assert.match(source, /result\.achievementResults = derivedAchievementResults\(design, result, result\.teacherScores\)\.map/);
+  assert.match(source, /성취기준별 평가요소 합산 결과/);
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
 
