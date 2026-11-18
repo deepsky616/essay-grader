@@ -23,6 +23,14 @@ function loadEditablePointHelpers() {
   return new Function("formatScore", "questionScoreGroupKey", `${schoolSource.slice(start, end)}; return { pointScoreChoices, teacherPointEvidenceText, refreshExampleAnswerScore, automaticQuestionFeedback, automaticTeacherFeedback };`)(formatScore, questionScoreGroupKey);
 }
 
+function loadGradingOrderHelpers() {
+  const start = schoolSource.indexOf("function gradingResultStudentSort");
+  const end = schoolSource.indexOf("function teacherScoreForRow", start);
+  assert.ok(start >= 0 && end > start, "grading order helpers must exist");
+  const numericSort = (a, b) => String(a).localeCompare(String(b), "ko-KR", { numeric: true });
+  return new Function("numericSort", `${schoolSource.slice(start, end)}; return { gradingResultStudentSort, orderedGradingResultEntries, orderedGradingResults };`)(numericSort);
+}
+
 const report = {
   generatedAt: "2026. 8. 28. 오전 9:00",
   semesterLabel: "2026학년도 2학기",
@@ -107,6 +115,27 @@ test("individual result sheet includes criteria, confirmed scores, feedback, and
   assert.match(html, /계산 과정을 차근차근 잘 설명했습니다/);
   assert.match(html, /&lt;학생&gt;/);
   assert.doesNotMatch(html, /<strong><학생><\/strong>/);
+});
+
+test("AI grading result lists always use student number order", () => {
+  const { orderedGradingResultEntries, orderedGradingResults } = loadGradingOrderHelpers();
+  const students = [
+    { id: "s10", grade: "6", className: "1", number: "10", name: "십번" },
+    { id: "s2", grade: "6", className: "1", number: "2", name: "이번" },
+    { id: "s1", grade: "6", className: "2", number: "1", name: "일번" },
+    { id: "empty", grade: "6", className: "1", number: "", name: "번호없음" },
+  ];
+  const studentMap = new Map(students.map((student) => [student.id, student]));
+  const entries = orderedGradingResultEntries(
+    [{ studentId: "s10" }, { studentId: "s2" }, { studentId: "empty" }],
+    [{ studentId: "s1", message: "실패" }],
+    studentMap,
+  );
+  assert.deepEqual(entries.map((entry) => entry.studentId), ["s1", "s2", "s10", "empty"]);
+  const ordered = orderedGradingResults({ grading: { results: [{ studentId: "s10" }, { studentId: "s2" }, { studentId: "s1" }] } }, students);
+  assert.deepEqual(ordered.map((result) => result.studentId), ["s1", "s2", "s10"]);
+  assert.match(schoolSource, /const resultEntries = orderedGradingResultEntries\(results, errors, studentMap\)/);
+  assert.match(schoolSource, /resultEntries\.map\(\(entry\) => entry\.kind === "result"/);
 });
 
 test("all-student print document places each student on a new printed sheet", () => {

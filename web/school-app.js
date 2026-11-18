@@ -2449,6 +2449,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const results = grading.results || [];
   const errors = grading.errors || [];
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
+  const resultEntries = orderedGradingResultEntries(results, errors, studentMap);
   const isActivelyRunning = activeGradingRun?.courseId === course.id && !activeGradingRun.controller.signal.aborted;
   const displayStatus = grading.status === "running" && !isActivelyRunning ? "stopped" : grading.status || "idle";
   const statusLabel = ({ running: "채점 진행 중", stopped: "채점 멈춤", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[displayStatus] || "채점 전";
@@ -2507,7 +2508,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
         <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action neis-transfer-action" type="button" data-open-neis-transfer ${results.length ? "" : "disabled"}>NEIS 입력 도우미</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
-      ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${results.map((result) => gradingResultRow(result, studentMap.get(result.studentId), design)).join("")}${errors.map((error) => gradingErrorRow(error, studentMap.get(error.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
+      ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${resultEntries.map((entry) => entry.kind === "result" ? gradingResultRow(entry.item, studentMap.get(entry.studentId), design) : gradingErrorRow(entry.item, studentMap.get(entry.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
     <div class="student-result-inline-slot" data-student-result-inline aria-live="polite"></div>
     ${results.length ? renderResultDistributionDialog(course, targetStudents, results) : ""}
     ${results.length ? renderNeisTransferDialog(course, targetStudents) : ""}
@@ -2529,11 +2530,32 @@ function gradingErrorRow(error, student) {
   return `<div class="grading-result-row is-error"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="failure-label">실패</em><span>—</span><small>${escapeHtml(error.message)}</small></div>`;
 }
 
+function gradingResultStudentSort(a, b) {
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  const leftNumber = String(a.number ?? "").trim();
+  const rightNumber = String(b.number ?? "").trim();
+  if (Boolean(leftNumber) !== Boolean(rightNumber)) return leftNumber ? -1 : 1;
+  return numericSort(leftNumber, rightNumber)
+    || numericSort(a.grade || "", b.grade || "")
+    || numericSort(a.className || "", b.className || "")
+    || numericSort(a.schoolName || "", b.schoolName || "")
+    || numericSort(a.name || "", b.name || "")
+    || numericSort(a.id || "", b.id || "");
+}
+
+function orderedGradingResultEntries(results, errors, studentMap) {
+  return [
+    ...(results || []).map((item) => ({ kind: "result", item, studentId: item.studentId })),
+    ...(errors || []).map((item) => ({ kind: "error", item, studentId: item.studentId })),
+  ].sort((left, right) => gradingResultStudentSort(studentMap.get(left.studentId), studentMap.get(right.studentId))
+    || numericSort(left.studentId || "", right.studentId || ""));
+}
+
 function orderedGradingResults(course, targetStudents) {
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   return (course.grading?.results || [])
     .filter((result) => studentMap.has(result.studentId))
-    .sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
+    .sort((a, b) => gradingResultStudentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
 }
 
 function teacherScoreForRow(result, row, index) {
@@ -2583,7 +2605,7 @@ function buildStudentReportViewModel(course, design, student, result, index, tot
 
 function renderResultDistributionDialog(course, targetStudents, results) {
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
-  const ordered = [...results].filter((result) => studentMap.has(result.studentId)).sort((a, b) => studentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
+  const ordered = [...results].filter((result) => studentMap.has(result.studentId)).sort((a, b) => gradingResultStudentSort(studentMap.get(a.studentId), studentMap.get(b.studentId)));
   return `<dialog class="result-distribution-dialog" data-result-distribution-dialog>
     <div class="result-distribution-shell">
       <div class="result-distribution-head"><div><p class="section-kicker">RESULT SHEETS</p><h2>결과지 출력·배부</h2><p>학생별 결과지를 확인한 뒤 한 명만 출력하거나 전체 학생을 연속 출력할 수 있습니다.</p></div><button class="result-distribution-close" type="button" data-close-result-distribution aria-label="결과지 출력·배부 창 닫기">닫기 <span aria-hidden="true">×</span></button></div>
@@ -4129,10 +4151,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   const assignment = course.submission?.assignments?.find((item) => item.studentId === studentId);
   const design = course.designs?.find((item) => item.id === course.submission?.designId);
   if (!result || !student || !assignment || !design) { slot.innerHTML = ""; return; }
-  const orderedResults = [...course.grading.results].sort((a, b) => studentSort(
-    targetStudents.find((item) => item.id === a.studentId),
-    targetStudents.find((item) => item.id === b.studentId),
-  ));
+  const orderedResults = orderedGradingResults(course, targetStudents);
   const currentIndex = orderedResults.findIndex((item) => item.studentId === studentId);
   const answerFile = await splitStudentPdf(course.submission.sourceFile.blob, assignment.pageNumbers, currentIndex);
   const previewUrl = URL.createObjectURL(answerFile);
