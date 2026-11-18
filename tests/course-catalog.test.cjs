@@ -21,7 +21,7 @@ function loadQuestionScoreHelpers() {
   const start = source.indexOf("function positiveDesignScore");
   const end = source.indexOf("function bindDesignTab", start);
   assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && start >= 0 && end > start, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(start, end)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -195,6 +195,27 @@ test("easy math input is collapsible and opens by default only for math courses"
   assert.match(source, /exampleEditorRow\(item, \{ mathOpen: course\.subject === "수학" \}\)/);
   assert.match(source, /data-example-math-disclosure/);
   assert.match(styles, /\.example-math-disclosure\[open\] summary/);
+});
+
+test("example-answer fields use teacher-friendly labels and inclusive guidance", () => {
+  assert.match(source, /<label>예시 답안 <small>풀이 과정과 정답을 교사가 바로 이해할 수 있는 문장으로 입력하세요/);
+  assert.match(source, /<label>예시 답안 설명 <small>표·그림·도형·그래프 등 글로 보완할 내용을 입력하세요/);
+  assert.doesNotMatch(source, /<label>답안에 대한 설명/);
+  assert.doesNotMatch(source, /<label>도형·그래프 설명/);
+});
+
+test("assessment design files can clear a new selection or remove and restore a saved file", () => {
+  const { designFilePickerState } = loadQuestionScoreHelpers();
+  assert.deepEqual(designFilePickerState("새파일.pdf", "기존파일.pdf", false, "선택 없음"), { state: "selected", message: "선택됨: 새파일.pdf", action: "선택 파일 삭제", disabled: false });
+  assert.deepEqual(designFilePickerState("", "기존파일.pdf", false, "선택 없음"), { state: "saved", message: "저장됨: 기존파일.pdf", action: "저장 파일 삭제", disabled: false });
+  assert.deepEqual(designFilePickerState("", "기존파일.pdf", true, "선택 없음"), { state: "removed", message: "삭제 예정: 기존파일.pdf · 평가 설계 저장 시 반영", action: "삭제 취소", disabled: false });
+  assert.deepEqual(designFilePickerState("", "", false, "선택 없음"), { state: "empty", message: "선택 없음", action: "선택 파일 삭제", disabled: true });
+  for (const field of ["removeDesignDocument", "removeRubricDocument", "removeExampleDocument", "removeBlankDocument", "removeExampleItemFile"]) assert.match(source, new RegExp(field));
+  assert.match(source, /data-clear-design-file/);
+  assert.match(source, /input\.value = ""/);
+  assert.match(source, /form\._designSourceFile = event\.target\.files\?\.\[0\] \|\| null/);
+  assert.match(source, /저장된 파일을 삭제하도록 표시했습니다/);
+  assert.match(styles, /\.design-file-status\[data-file-state="removed"\]/);
 });
 
 test("downloaded student roster template includes school name and leaves every data row blank", () => {

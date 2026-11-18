@@ -625,6 +625,23 @@ function createEmptyDesign() {
   };
 }
 
+function designFilePickerMarkup({ label, inputName, accept, savedFile, emptyText, removeName, action = "" }) {
+  const savedName = String(savedFile?.name || "");
+  return `<div class="document-auto-row" data-design-file-picker data-saved-file-name="${escapeHtml(savedName)}" data-empty-file-text="${escapeHtml(emptyText)}">
+    <label>${escapeHtml(label)}<input name="${escapeHtml(inputName)}" data-design-file-input type="file" accept="${escapeHtml(accept)}"></label>
+    ${action}
+    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : escapeHtml(emptyText)}</span><input name="${escapeHtml(removeName)}" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file ${savedName ? "" : "disabled"}>${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}</button></div>
+  </div>`;
+}
+
+function exampleFilePickerMarkup(item) {
+  const savedName = String(item?.file?.name || "");
+  return `<div class="example-file-field" data-design-file-picker data-saved-file-name="${escapeHtml(savedName)}" data-empty-file-text="선택 사항">
+    <label>이 문제의 PDF·사진<input name="exampleItemFile" data-design-file-input type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
+    <div class="design-file-status" data-file-state="${savedName ? "saved" : "empty"}"><span data-design-file-status>${savedName ? `저장됨: ${escapeHtml(savedName)}` : "선택 사항"}</span><input name="removeExampleItemFile" data-remove-saved-file type="checkbox" hidden><button type="button" data-clear-design-file ${savedName ? "" : "disabled"}>${savedName ? "저장 파일 삭제" : "선택 파일 삭제"}</button></div>
+  </div>`;
+}
+
 function documentAnalysisProgressMarkup(kind) {
   const steps = kind === "rubric"
     ? ["파일 확인", "표 구조 준비", "AI 채점기준 분석", "응답 항목 검증", "화면에 입력"]
@@ -661,11 +678,7 @@ function designEditor(design, course) {
 
       <section class="design-editor-section">
         <div class="editor-section-title"><div><span>AI</span><strong>평가기준안 한 번에 자동 입력</strong><p>성취기준·성취수준·문제별 채점기준·예시답안이 포함된 PDF 또는 사진을 올리면 아래 1~3을 함께 작성합니다.</p></div></div>
-        <div class="document-auto-row">
-          <label>평가기준안 PDF·사진<input name="designDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
-          <button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>
-          <span>${design.sourceFile ? `저장됨: ${escapeHtml(design.sourceFile.name)}` : "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요."}</span>
-        </div>
+        ${designFilePickerMarkup({ label: "평가기준안 PDF·사진", inputName: "designDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.sourceFile, emptyText: "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요.", removeName: "removeDesignDocument", action: '<button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("design")}
       </section>
 
@@ -683,11 +696,7 @@ function designEditor(design, course) {
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
           <button type="button" data-open-rubric-ai>채점기준 AI 생성</button>
         </div>
-        <div class="document-auto-row">
-          <label>채점기준표 PDF·사진<input name="rubricDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
-          <button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>
-          <span>${design.rubricFile ? `저장됨: ${escapeHtml(design.rubricFile.name)}` : "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다."}</span>
-        </div>
+        ${designFilePickerMarkup({ label: "채점기준표 PDF·사진", inputName: "rubricDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.rubricFile, emptyText: "표 전체가 담긴 파일을 한 번에 올릴 수 있습니다.", removeName: "removeRubricDocument", action: '<button type="button" data-extract-document="rubric">AI로 채점기준 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("rubric")}
         <div class="rubric-group-list" data-rubric-groups>${rubricCriteria.map((item, index) => rubricEditorGroup(item, index, performanceThresholds)).join("")}</div>
         ${rubricAiDialog(rubricAiSeeds, course)}
@@ -695,21 +704,13 @@ function designEditor(design, course) {
 
       <section class="design-editor-section">
         <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>한 문제 안에 계산식·정답처럼 여러 배점 항목을 추가할 수 있습니다. AI는 충족한 항목의 점수만 더하며, 배점 항목이 1개이면 틀린 답은 0점으로 채점합니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
-        <div class="document-auto-row">
-          <label>예시답안 PDF·사진<input name="exampleDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
-          <button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>
-          <span>${design.exampleFile ? `저장됨: ${escapeHtml(design.exampleFile.name)}` : "수식·도형이 있는 원본도 그대로 보관합니다."}</span>
-        </div>
+        ${designFilePickerMarkup({ label: "예시답안 PDF·사진", inputName: "exampleDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.exampleFile, emptyText: "수식·도형이 있는 원본도 그대로 보관합니다.", removeName: "removeExampleDocument", action: '<button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("example")}
         <div data-example-rows>${exampleAnswers.map((item) => exampleEditorRow(item, { mathOpen: course.subject === "수학" })).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
         <div class="editor-section-title"><div><span>4</span><strong>학생용 평가지 등록</strong><p>학생이 작성하기 전의 평가지 원본을 등록하면 인쇄 내용과 손글씨를 페이지별로 비교합니다. 교사용 기준안·예시답안 페이지는 제외하세요.</p></div></div>
-        <div class="document-auto-row">
-          <label>학생용 평가지 PDF<input name="blankDocument" type="file" accept="application/pdf"></label>
-          <span>${design.blankFile ? `저장됨: ${escapeHtml(design.blankFile.name)}` : "학생에게 배부한 작성 전 평가지만 PDF로 등록해 주세요."}</span>
-        </div>
-        ${design.blankFile ? `<label class="remove-saved-file"><input name="removeBlankDocument" type="checkbox"> 저장된 학생용 평가지 제거</label>` : ""}
+        ${designFilePickerMarkup({ label: "학생용 평가지 PDF", inputName: "blankDocument", accept: "application/pdf", savedFile: design.blankFile, emptyText: "학생에게 배부한 작성 전 평가지만 PDF로 등록해 주세요.", removeName: "removeBlankDocument" })}
         <p class="blank-answer-help">학생 1명의 작성 답안 페이지 수와 학생용 평가지 페이지 수가 같아야 합니다. 교사용 기준안·정답 페이지는 넣지 않으며, 학생용 평가지 자체는 학생 답안 페이지 분할 수에 포함되지 않습니다.</p>
       </section>
       <p class="design-form-status" data-design-status role="status">자동 입력 결과는 반드시 원본과 대조해 주세요.</p>
@@ -822,9 +823,9 @@ function exampleEditorRow(item, options = {}) {
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}">
     <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1 또는 1-(1)" required></label><span class="example-total-score">총 <b data-example-point-total>${formatScore(maxScore)}</b>점</span></div><button type="button" data-remove-example>삭제</button></div>
     <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점으로 채점됩니다.</p></section>
-    <label>답안에 대한 설명 <small>복잡한 수식 명령어는 자동으로 쉬운 표현으로 바뀝니다.</small><textarea name="exampleText" rows="4" placeholder="풀이 과정과 정답을 입력하세요.">${escapeHtml(friendlyAnswerText)}</textarea></label>
-    <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>도형·그래프 설명<textarea name="exampleVisual" rows="2" placeholder="점, 선, 각, 길이와 관계를 설명하세요.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
-    <label class="example-file-field">이 문제의 PDF·사진<input name="exampleItemFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"><span>${item.file ? `저장됨: ${escapeHtml(item.file.name)}` : "선택 사항"}</span></label>
+    <label>예시 답안 <small>풀이 과정과 정답을 교사가 바로 이해할 수 있는 문장으로 입력하세요.</small><textarea name="exampleText" rows="4" placeholder="예: 책가도에 사용된 물건과 각각의 상징적 의미를 알맞게 설명한다.">${escapeHtml(friendlyAnswerText)}</textarea></label>
+    <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>예시 답안 설명 <small>표·그림·도형·그래프 등 글로 보완할 내용을 입력하세요.</small><textarea name="exampleVisual" rows="3" placeholder="예: 표의 물건과 의미가 각 행에 짝지어져 있으며, 그림의 주요 특징이 정확하다.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
+    ${exampleFilePickerMarkup(item)}
   </article>`;
 }
 
@@ -1168,6 +1169,28 @@ function syncRubricAiScoreSummaries(form) {
   });
 }
 
+function designFilePickerState(selectedName, savedName, removed, emptyText) {
+  if (selectedName) return { state: "selected", message: `선택됨: ${selectedName}`, action: "선택 파일 삭제", disabled: false };
+  if (savedName && removed) return { state: "removed", message: `삭제 예정: ${savedName} · 평가 설계 저장 시 반영`, action: "삭제 취소", disabled: false };
+  if (savedName) return { state: "saved", message: `저장됨: ${savedName}`, action: "저장 파일 삭제", disabled: false };
+  return { state: "empty", message: emptyText, action: "선택 파일 삭제", disabled: true };
+}
+
+function syncDesignFilePicker(picker) {
+  if (!picker) return;
+  const input = picker.querySelector("[data-design-file-input]");
+  const removal = picker.querySelector("[data-remove-saved-file]");
+  const status = picker.querySelector("[data-design-file-status]");
+  const button = picker.querySelector("[data-clear-design-file]");
+  if (!input || !status || !button) return;
+  const presentation = designFilePickerState(input.files?.[0]?.name || "", picker.dataset.savedFileName || "", Boolean(removal?.checked), picker.dataset.emptyFileText || "선택된 파일 없음");
+  const statusBox = status.closest(".design-file-status");
+  if (statusBox) statusBox.dataset.fileState = presentation.state;
+  status.textContent = presentation.message;
+  button.textContent = presentation.action;
+  button.disabled = presentation.disabled;
+}
+
 function bindDesignTab(course) {
   app.querySelector("[data-add-design]")?.addEventListener("click", () => { editingDesignId = "new"; renderCourse(course.id, "designs"); });
   app.querySelectorAll("[data-edit-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = button.dataset.editDesign; renderCourse(course.id, "designs"); }));
@@ -1186,9 +1209,19 @@ function bindDesignTab(course) {
   if (!form) return;
   refreshMathPreviews(form);
   syncQuestionScoreUI(form);
+  form.querySelectorAll("[data-design-file-picker]").forEach(syncDesignFilePicker);
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
   form.addEventListener("click", (event) => handleDesignEditorClick(event, form, course));
-  form.addEventListener("change", (event) => handleAchievementCurriculumChange(event, form, course));
+  form.addEventListener("change", (event) => {
+    handleAchievementCurriculumChange(event, form, course);
+    if (event.target.matches("[data-design-file-input]")) {
+      const picker = event.target.closest("[data-design-file-picker]");
+      const removal = picker?.querySelector("[data-remove-saved-file]");
+      if (event.target.files?.length && removal) removal.checked = false;
+      if (event.target.name === "designDocument") form._designSourceFile = event.target.files?.[0] || null;
+      syncDesignFilePicker(picker);
+    }
+  });
   form.addEventListener("input", (event) => {
     if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
     if (event.target.matches('[name="achievementStandard"]')) clearChangedCurriculumSelection(event.target, course);
@@ -1218,6 +1251,24 @@ function bindDesignTab(course) {
 }
 
 function handleDesignEditorClick(event, form, course) {
+  const clearDesignFile = event.target.closest("[data-clear-design-file]");
+  if (clearDesignFile) {
+    const picker = clearDesignFile.closest("[data-design-file-picker]");
+    const input = picker?.querySelector("[data-design-file-input]");
+    const removal = picker?.querySelector("[data-remove-saved-file]");
+    if (!picker || !input) return;
+    if (input.files?.length) {
+      input.value = "";
+      if (input.name === "designDocument") form._designSourceFile = null;
+      showToast("선택한 파일을 삭제했습니다.");
+    } else if (picker.dataset.savedFileName && removal) {
+      removal.checked = !removal.checked;
+      if (input.name === "designDocument" && removal.checked) form._designSourceFile = null;
+      showToast(removal.checked ? "저장된 파일을 삭제하도록 표시했습니다. 평가 설계 저장을 눌러 완료해 주세요." : "저장된 파일 삭제를 취소했습니다.");
+    }
+    syncDesignFilePicker(picker);
+    return;
+  }
   const resetPerformanceThresholds = event.target.closest("[data-reset-performance-thresholds]");
   if (resetPerformanceThresholds) {
     form.elements.performanceExcellentMin.value = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS.excellent;
@@ -1850,7 +1901,9 @@ function collectDesignForm(form, existing) {
   const existingExamples = new Map((existing?.exampleAnswers || []).map((item) => [item.id, item]));
   const exampleAnswers = Array.from(form.querySelectorAll("[data-example-row]")).map((row) => {
     const id = row.dataset.rowId || crypto.randomUUID();
-    const file = row.querySelector('[name="exampleItemFile"]').files?.[0] || existingExamples.get(id)?.file || null;
+    const file = row.querySelector('[name="removeExampleItemFile"]')?.checked
+      ? null
+      : row.querySelector('[name="exampleItemFile"]').files?.[0] || existingExamples.get(id)?.file || null;
     if (file) validateDocumentFile(file);
     const pointItems = Array.from(row.querySelectorAll("[data-example-point]")).map((point) => ({
       id: point.dataset.pointId || crypto.randomUUID(),
@@ -1883,9 +1936,9 @@ function collectDesignForm(form, existing) {
   if (unscoredRubricQuestions.length) throw new Error(`문제 ${unscoredRubricQuestions.join(", ")}의 배점을 3번 예시답안에서 입력해 주세요.`);
   const mismatchedQuestions = Array.from(exampleScores.entries()).filter(([questionNumber, score]) => Math.abs((rubricQuestionScores.get(questionNumber) || 0) - score) > 0.001);
   if (mismatchedQuestions.length) throw new Error(`문제 ${mismatchedQuestions.map(([question]) => question).join(", ")}의 채점기준 만점 합계가 예시답안 배점과 다릅니다. 문제 번호와 평가요소를 확인해 주세요.`);
-  const rubricFile = form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
-  const exampleFile = form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
-  const sourceFile = form._designSourceFile || existing?.sourceFile || null;
+  const rubricFile = form.elements.removeRubricDocument?.checked ? null : form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
+  const exampleFile = form.elements.removeExampleDocument?.checked ? null : form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
+  const sourceFile = form.elements.removeDesignDocument?.checked ? null : form._designSourceFile || existing?.sourceFile || null;
   const blankFile = form.elements.removeBlankDocument?.checked
     ? null
     : form.elements.blankDocument.files?.[0] || existing?.blankFile || null;
