@@ -679,7 +679,11 @@ function normalizeAchievementLevels(levels, thresholds = DEFAULT_RUBRIC_PERFORMA
     return {
       id: matched?.id || crypto.randomUUID(),
       label: band.label,
-      description: matched?.description || band.defaultCriterion.replace(/평가요소/g, "성취기준"),
+      description: matched?.description || band.defaultCriterion
+        .replace(/평가요소를/g, "성취기준을")
+        .replace(/평가요소와/g, "성취기준과")
+        .replace(/평가요소가/g, "성취기준이")
+        .replace(/평가요소/g, "성취기준"),
       range: band.range,
     };
   });

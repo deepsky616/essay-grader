@@ -198,6 +198,10 @@ test("achievement levels aggregate every linked evaluation element using the sha
   assert.equal(legacy[0].description, "정확히 해결함");
   assert.equal(legacy[2].description, "부분적으로 해결함");
   assert.equal(legacy[3].description, "도움을 받아 시도함");
+  const defaults = normalizeAchievementLevels([]);
+  assert.match(defaults[0].description, /성취기준을 충분히 충족/);
+  assert.match(defaults[3].description, /성취기준과 관련된 기초적인 시도/);
+  assert.doesNotMatch(defaults.map((level) => level.description).join(" "), /성취기준(?:를|와)/);
   assert.deepEqual(achievementRangeQuestionKeys("1~2번", ["1", "2", "3"]), ["1", "2"]);
   assert.deepEqual(achievementRangeQuestionKeys("1-(1), 1-(2)", ["1", "2"]), ["1"]);
 
