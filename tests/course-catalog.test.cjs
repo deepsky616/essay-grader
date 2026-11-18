@@ -201,6 +201,8 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /data-remove-performance-level/);
   assert.match(source, /MIN_PERFORMANCE_LEVELS = 2/);
   assert.match(source, /MAX_PERFORMANCE_LEVELS = 6/);
+  assert.match(source, /data-rubric-lowest-level-guide/);
+  assert.match(source, /guide\.textContent = `미응답 또는 근거 없음도 별도 행 없이 \$\{definitions\.at\(-1\)\?\.label/);
   assert.doesNotMatch(source, /key: "effortZero"/);
   assert.match(source, /미응답 또는 근거 없음도 \$\{definitions\.at\(-1\)\?\.label/);
   assert.match(source, /performanceThresholds,/);

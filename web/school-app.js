@@ -826,7 +826,7 @@ function rubricEditorGroup(item, index, thresholds = DEFAULT_RUBRIC_PERFORMANCE_
   return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
     <div class="rubric-group-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>평가요소 삭제</button></div>
     <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
-    <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span>미응답 또는 근거 없음도 별도 행 없이 ${escapeHtml(bandDefinitions.at(-1)?.label || "마지막 성취수준")} 기준에 포함됩니다.</span></div>
+    <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span data-rubric-lowest-level-guide>미응답 또는 근거 없음도 별도 행 없이 ${escapeHtml(bandDefinitions.at(-1)?.label || "마지막 성취수준")} 기준에 포함됩니다.</span></div>
     <div class="rubric-score-head"><span>성취수준 · 비율 · 대표점수</span><span>해당 수준의 채점기준</span></div>
     <div class="rubric-score-list" data-rubric-scores>${item.scoreLevels.map((level, levelIndex) => rubricScoreRow(level, levelIndex, bandDefinitions)).join("")}</div>
   </article>`;
@@ -1065,6 +1065,9 @@ function syncPerformanceThresholdUI(form) {
   if (summary) summary.textContent = valid
     ? `${definitions.map((band) => `${band.label}: ${band.range}`).join(" · ")} · 미응답 또는 근거 없음도 ${definitions.at(-1)?.label || "마지막 수준"}에 포함`
     : `성취수준 이름은 중복 없이 입력하고, 최소 비율은 위에서 아래로 점점 작아지게 입력해 주세요. (${MIN_PERFORMANCE_LEVELS}~${MAX_PERFORMANCE_LEVELS}개)`;
+  form.querySelectorAll("[data-rubric-lowest-level-guide]").forEach((guide) => {
+    guide.textContent = `미응답 또는 근거 없음도 별도 행 없이 ${definitions.at(-1)?.label || "마지막 성취수준"} 기준에 포함됩니다.`;
+  });
   form.querySelectorAll("[data-achievement-group]").forEach((group) => {
     group.querySelectorAll("[data-achievement-level]").forEach((row, index) => {
       const band = definitions[index] || definitions.at(-1);
