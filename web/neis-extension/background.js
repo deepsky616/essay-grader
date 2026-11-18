@@ -231,6 +231,91 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
     return { status: "ready", method: "nexacro", dataset, actions, matched: actions.length, missing: [] };
   };
 
+  const inspectCprGrid = () => {
+    const platform = globalThis.cpr?.core?.Platform?.INSTANCE;
+    if (!platform || typeof platform.getAllRunningAppInstances !== "function") return null;
+    const appId = "edu/sw/els/scr/es/els_scres00_m00";
+    const instances = Array.from(platform.getAllRunningAppInstances() || [])
+      .filter((instance) => normalize(instance?.id).startsWith(`${appId}$`));
+    if (instances.length !== 1) return instances.length > 1
+      ? { status: "ambiguous", method: "cpr-model", matched: 0, missing: payload.records.map((record) => record.number) }
+      : null;
+    const instance = instances[0];
+    const students = instance.lookup?.("dsMain");
+    const levels = instance.lookup?.("dsEvlCn");
+    const grid = instance.lookup?.("grdMain");
+    if (!students || !levels || typeof students.getRowCount !== "function" || typeof students.getValue !== "function" || typeof students.setValue !== "function" || typeof levels.getRowCount !== "function" || typeof levels.getValue !== "function") {
+      return { status: "unsupported", method: "cpr-model", matched: 0, missing: payload.records.map((record) => record.number) };
+    }
+    const studentCount = Math.min(Number(students.getRowCount()) || 0, 500);
+    const levelCount = Math.min(Number(levels.getRowCount()) || 0, 500);
+    const actions = [];
+    const missing = [];
+    const missingDetails = [];
+    for (const record of payload.records) {
+      const rows = [];
+      for (let row = 0; row < studentCount; row += 1) {
+        const name = students.getValue(row, "stuFlnm");
+        const number = students.getValue(row, "stdntInfo") ?? students.getValue(row, "clsNo");
+        if (sameName(name, record.name) && numberMatches(number, record.number)) rows.push(row);
+      }
+      if (rows.length !== 1) {
+        missing.push(record.number);
+        missingDetails.push({ number: record.number, reason: rows.length ? "duplicate-student" : "student" });
+        continue;
+      }
+      const row = rows[0];
+      const standardSequence = normalize(students.getValue(row, "sccesCtrSn"));
+      const options = [];
+      for (let optionRow = 0; optionRow < levelCount; optionRow += 1) {
+        const optionSequence = normalize(levels.getValue(optionRow, "sccesCtrSn"));
+        const optionName = levels.getValue(optionRow, "evlCtrNm");
+        if ((!standardSequence || optionSequence === standardSequence) && compact(optionName) === compact(record.level)) options.push(optionRow);
+      }
+      if (options.length !== 1) {
+        missing.push(record.number);
+        missingDetails.push({ number: record.number, reason: options.length ? "duplicate-level" : "level" });
+        continue;
+      }
+      const optionRow = options[0];
+      actions.push({
+        row,
+        record,
+        code: levels.getValue(optionRow, "evlCtrCd"),
+        name: levels.getValue(optionRow, "evlCtrNm"),
+        content: levels.getValue(optionRow, "evlCtrCn"),
+      });
+    }
+    if (missing.length || actions.length !== payload.records.length) {
+      return { status: "incomplete", method: "cpr-model", students, grid, actions, matched: actions.length, missing, missingDetails };
+    }
+    return { status: "ready", method: "cpr-model", students, grid, actions, matched: actions.length, missing: [], missingDetails: [] };
+  };
+
+  const cprPlan = inspectCprGrid();
+  if (cprPlan?.status === "ready") {
+    if (!applyChanges) return { status: "ready", method: "cpr-model", matched: cprPlan.matched, missing: [] };
+    let updated = 0;
+    let already = 0;
+    for (const action of cprPlan.actions) {
+      const currentCode = cprPlan.students.getValue(action.row, "evlCtrCd");
+      if (String(currentCode ?? "") === String(action.code ?? "")) {
+        already += 1;
+        continue;
+      }
+      cprPlan.students.setValue(action.row, "evlCtrCd", action.code);
+      cprPlan.students.setValue(action.row, "evlCtrNm", action.name);
+      cprPlan.students.setValue(action.row, "evlCtrCn", action.content);
+      if (String(cprPlan.students.getValue(action.row, "evlCtrCd") ?? "") !== String(action.code ?? "")) {
+        return { status: "failed", method: "cpr-model", matched: cprPlan.matched, updated, already, missing: [action.record.number] };
+      }
+      updated += 1;
+    }
+    cprPlan.grid?.redraw?.();
+    return { status: "ok", method: "cpr-model", matched: cprPlan.matched, updated, already, missing: [] };
+  }
+  if (cprPlan?.status === "ambiguous" || cprPlan?.status === "unsupported" || cprPlan?.status === "incomplete") return cprPlan;
+
   const nativePlan = inspectNative();
   if (nativePlan?.status === "ready") {
     const nativeSelectActions = nativePlan.actions.filter((action) => action.kind === "select");
@@ -324,6 +409,15 @@ function friendlyOperationError(result) {
   const missing = Array.isArray(result?.missing) && result.missing.length ? ` 확인하지 못한 번호: ${result.missing.join(", ")}번.` : "";
   if (result?.status === "not-on-page") return "NEIS에서 성취기준별 평가 화면을 조회한 뒤 다시 실행해 주세요.";
   if (result?.status === "ambiguous") return "입력 대상 표가 둘 이상입니다. NEIS에서 입력할 성취기준 표 하나만 보이게 한 뒤 다시 실행해 주세요.";
+  if (result?.status === "incomplete" && result?.method === "cpr-model") {
+    const studentNumbers = (result.missingDetails || []).filter((item) => item.reason.includes("student")).map((item) => item.number);
+    const levelNumbers = (result.missingDetails || []).filter((item) => item.reason.includes("level")).map((item) => item.number);
+    const details = [
+      studentNumbers.length ? `학생 번호·이름 불일치: ${studentNumbers.join(", ")}번` : "",
+      levelNumbers.length ? `NEIS 단계 코드 불일치: ${levelNumbers.join(", ")}번` : "",
+    ].filter(Boolean).join(" / ");
+    return `NEIS 내부 학생 자료와 단계 코드를 대조하지 못했습니다.${details ? ` ${details}.` : missing}`;
+  }
   if (result?.status === "incomplete") return `학생 번호·이름 또는 단계 선택값을 모두 대조하지 못했습니다.${missing}`;
   return `NEIS 단계 값을 안전하게 입력하지 못했습니다.${missing}`;
 }

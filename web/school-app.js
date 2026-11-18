@@ -2674,7 +2674,7 @@ const NEIS_PERFORMANCE_LEVELS = Object.freeze([
 ]);
 const NEIS_EXTENSION_PAGE_SOURCE = "essay-grader-neis-page";
 const NEIS_EXTENSION_RESPONSE_SOURCE = "essay-grader-neis-extension";
-const NEIS_EXTENSION_MIN_VERSION = "1.0.3";
+const NEIS_EXTENSION_MIN_VERSION = "1.0.4";
 
 function neisExtensionRequestId() {
   if (crypto.randomUUID) return crypto.randomUUID();

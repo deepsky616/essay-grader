@@ -169,6 +169,54 @@ test("NEIS helper supports the custom eXBuilder6 grid combobox used by NEIS", as
   }
 });
 
+test("NEIS helper writes through the live eXBuilder6 data model without opening comboboxes", async () => {
+  const neisAssessmentFrameOperation = loadFrameOperation();
+  const studentRows = [
+    { stdntInfo: "1", stuFlnm: "강 로 아", sccesCtrSn: "A", evlCtrCd: "", evlCtrNm: "", evlCtrCn: "" },
+    { stdntInfo: "2", stuFlnm: "고서은", sccesCtrSn: "A", evlCtrCd: "", evlCtrNm: "", evlCtrCn: "" },
+  ];
+  const levelRows = [
+    { sccesCtrSn: "A", evlCtrCd: "1 ", evlCtrNm: "매우 잘함", evlCtrCn: "기준을 충족함" },
+    { sccesCtrSn: "A", evlCtrCd: "2 ", evlCtrNm: "잘함", evlCtrCn: "대체로 충족함" },
+    { sccesCtrSn: "A", evlCtrCd: "3 ", evlCtrNm: "보통", evlCtrCn: "일부 충족함" },
+    { sccesCtrSn: "A", evlCtrCd: "4 ", evlCtrNm: "노력 요함", evlCtrCn: "노력이 필요함" },
+  ];
+  const dataSet = (rows) => ({
+    getRowCount: () => rows.length,
+    getValue: (row, column) => rows[row]?.[column],
+    setValue: (row, column, value) => { rows[row][column] = value; return true; },
+  });
+  let redrawn = false;
+  const lookups = { dsMain: dataSet(studentRows), dsEvlCn: dataSet(levelRows), grdMain: { redraw: () => { redrawn = true; } } };
+  const previousCpr = global.cpr;
+  const previousDocument = global.document;
+  global.cpr = { core: { Platform: { INSTANCE: { getAllRunningAppInstances: () => [{
+    id: "edu/sw/els/scr/es/els_scres00_m00$1",
+    lookup: (id) => lookups[id],
+  }] } } } };
+  global.document = { body: { innerText: "성취기준별 평가 단계 평가결과" }, querySelectorAll: () => [] };
+  try {
+    const payload = { records: [
+      { number: "1", name: "강로아", level: "잘함" },
+      { number: "2", name: "고서은", level: "노력요함" },
+    ] };
+    assert.deepEqual(await neisAssessmentFrameOperation(payload, false), {
+      status: "ready", method: "cpr-model", matched: 2, missing: [],
+    });
+    assert.deepEqual(await neisAssessmentFrameOperation(payload, true), {
+      status: "ok", method: "cpr-model", matched: 2, updated: 2, already: 0, missing: [],
+    });
+    assert.equal(studentRows[0].evlCtrCd, "2 ");
+    assert.equal(studentRows[0].evlCtrNm, "잘함");
+    assert.equal(studentRows[0].evlCtrCn, "대체로 충족함");
+    assert.equal(studentRows[1].evlCtrCd, "4 ");
+    assert.equal(redrawn, true);
+  } finally {
+    global.cpr = previousCpr;
+    global.document = previousDocument;
+  }
+});
+
 test("NEIS Nexacro matching ignores display spacing but still requires the full name", () => {
   assert.match(background, /sameName\(nameText, record\.name\)/);
   assert.match(background, /compact\(left\)\.normalize\("NFC"\) === compact\(right\)\.normalize\("NFC"\)/);
@@ -184,7 +232,7 @@ test("NEIS helper never sends data to a server or presses the NEIS save button",
 
 test("the grading web app detects the extension and keeps copy and Excel fallbacks", () => {
   assert.match(school, /function detectNeisExtension\(\)/);
-  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.0\.3"/);
+  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.0\.4"/);
   assert.match(school, /확장 도우미 \$\{extension\.version\} 업데이트 필요/);
   assert.match(school, /NEIS_AUTO_FILL_REQUEST/);
   assert.match(school, /data-auto-fill-neis disabled>NEIS 단계 자동 입력/);

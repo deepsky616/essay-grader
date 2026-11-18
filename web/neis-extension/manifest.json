@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI 서·논술형 NEIS 입력 도우미",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "교사가 확인한 성취수준을 현재 열린 NEIS 성취기준별 평가 화면의 단계 칸에 안전하게 입력합니다.",
   "permissions": [
     "scripting",
