@@ -107,7 +107,7 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /normalizeAchievementLevels/);
   assert.match(source, /data-achievement-band-range/);
   assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>성취수준 입력<\/strong>[\s\S]*?<strong>문제별 채점기준 입력<\/strong>/);
-  assert.match(source, /성취기준과 네 성취수준을 자동 입력/);
+  assert.match(source, /성취기준과 \$\{levels\.length\}개 성취수준을 자동 입력/);
   assert.match(source, /data-open-rubric-ai>채점기준 AI 생성/);
   assert.match(source, /name="rubricAiBandCount"/);
   assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
@@ -124,7 +124,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, normalizeRubricCriteria } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -153,6 +153,28 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.equal(achievementBandForScore(0, 10).label, "노력요함");
   assert.equal(achievementBandForScore(8.4, 10, customThresholds).label, "잘함");
   assert.equal(achievementBandForScore(0, 0).label, "산정 전");
+  const dynamicLevels = { levels: [
+    { id: "l1", label: "탁월", minimum: 90 },
+    { id: "l2", label: "우수", minimum: 80 },
+    { id: "l3", label: "충실", minimum: 60 },
+    { id: "l4", label: "기초", minimum: 40 },
+    { id: "l5", label: "지원필요", minimum: 30 },
+  ] };
+  assert.equal(performanceThresholdsAreValid(dynamicLevels), true);
+  assert.equal(performanceThresholdsAreValid({ levels: [{ label: "중복", minimum: 80 }, { label: "중복", minimum: 40 }] }), false);
+  assert.deepEqual(performanceBandDefinitions(dynamicLevels).map((band) => band.label), ["탁월", "우수", "충실", "기초", "지원필요"]);
+  assert.deepEqual(performanceBandScores(10, dynamicLevels), [10, 8.5, 7, 5, 3.5]);
+  assert.equal(achievementBandForScore(7.2, 10, dynamicLevels).label, "충실");
+  assert.equal(rubricPerformanceLevels([], dynamicLevels).length, 5);
+  const savedDynamicRubric = normalizeRubricCriteria([{ questionNumber: "1", evaluationElement: "설명", scoreLevels: [
+    { id: "score-1", bandId: "l1", score: 10, criterion: "탁월 기준" },
+    { id: "score-2", bandId: "l2", score: 8.5, criterion: "우수 기준" },
+    { id: "score-3", bandId: "l3", score: 7, criterion: "충실 기준" },
+    { id: "score-4", bandId: "l4", score: 5, criterion: "기초 기준" },
+    { id: "score-5", bandId: "l5", score: 3.5, criterion: "지원 기준" },
+  ] }], dynamicLevels);
+  assert.deepEqual(savedDynamicRubric[0].scoreLevels.map((level) => level.bandId), ["l1", "l2", "l3", "l4", "l5"]);
+  assert.deepEqual(savedDynamicRubric[0].scoreLevels.map((level) => level.criterion), ["탁월 기준", "우수 기준", "충실 기준", "기초 기준", "지원 기준"]);
   assert.deepEqual(rubricPerformanceLevels([
     { id: "high", score: 10, criterion: "완전한 수행" },
     { id: "middle", score: 5, criterion: "부분 수행" },
@@ -173,18 +195,20 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /name="rubricScore" type="hidden"/);
   assert.match(source, /data-question-score-summary/);
   assert.match(source, /문제별 배점 총합/);
-  assert.match(source, /name: "performanceExcellentMin"/);
-  assert.match(source, /name: "performanceGoodMin"/);
-  assert.match(source, /name: "performanceAverageMin"/);
-  assert.match(source, /name: "performanceEffortMin"/);
-  assert.match(source, /4개 성취수준/);
+  assert.match(source, /name="performanceLevelLabel"/);
+  assert.match(source, /name="performanceLevelMin"/);
+  assert.match(source, /data-add-performance-level>＋ 성취수준 추가/);
+  assert.match(source, /data-remove-performance-level/);
+  assert.match(source, /MIN_PERFORMANCE_LEVELS = 2/);
+  assert.match(source, /MAX_PERFORMANCE_LEVELS = 6/);
   assert.doesNotMatch(source, /key: "effortZero"/);
-  assert.match(source, /미응답 또는 근거 없음도 노력요함에 포함/);
+  assert.match(source, /미응답 또는 근거 없음도 \$\{definitions\.at\(-1\)\?\.label/);
   assert.match(source, /performanceThresholds,/);
   assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
   assert.match(source, /문제 배점보다 평가요소 수가 많습니다/);
   assert.match(styles, /\.question-score-summary \{/);
   assert.match(styles, /\.rubric-derived-score \{/);
+  assert.match(styles, /\.performance-threshold-grid article \{/);
 });
 
 test("achievement levels aggregate every linked evaluation element using the shared thresholds", () => {
@@ -202,6 +226,13 @@ test("achievement levels aggregate every linked evaluation element using the sha
   assert.match(defaults[0].description, /성취기준을 충분히 충족/);
   assert.match(defaults[3].description, /성취기준과 관련된 기초적인 시도/);
   assert.doesNotMatch(defaults.map((level) => level.description).join(" "), /성취기준(?:를|와)/);
+  const customLevels = normalizeAchievementLevels([], { levels: [
+    { id: "custom-1", label: "탁월", minimum: 90 },
+    { id: "custom-2", label: "충실", minimum: 60 },
+    { id: "custom-3", label: "지원필요", minimum: 30 },
+  ] });
+  assert.deepEqual(customLevels.map((level) => level.label), ["탁월", "충실", "지원필요"]);
+  assert.deepEqual(customLevels.map((level) => level.bandId), ["custom-1", "custom-2", "custom-3"]);
   assert.deepEqual(achievementRangeQuestionKeys("1~2번", ["1", "2", "3"]), ["1", "2"]);
   assert.deepEqual(achievementRangeQuestionKeys("1-(1), 1-(2)", ["1", "2"]), ["1"]);
 

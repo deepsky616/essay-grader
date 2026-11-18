@@ -916,7 +916,7 @@ test("extractEvaluationDocument preserves grouped score levels in structured out
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       assert.equal(body.contents[0].parts.filter((part) => part.inlineData).length, 1);
       assert.match(body.contents[0].parts[0].text, /평가요소가 2개면 rubricCriteria도 정확히 2개/);
-      assert.match(body.contents[0].parts[0].text, /scoreLevels 4개/);
+      assert.match(body.contents[0].parts[0].text, /scoreLevels로 모두 묶으세요/);
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
         rubricCriteria: [{ questionNumber: "1", evaluationElement: "도형 성질", scoreLevels: [{ score: 5, criterion: "조건 2개 충족" }, { score: 3, criterion: "조건 1개 충족" }] }],
         notes: [],
@@ -1006,26 +1006,27 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
     elements: [{
       questionNumber: "1",
       evaluationElement: "계산 과정의 타당성",
-      bandCount: 4,
+      bandCount: 5,
       maxScore: 10,
-      scoreValues: [10, 7, 5, 3],
+      scoreValues: [10, 8, 6, 4, 2],
       performanceBands: [
-        { label: "매우잘함", range: "80% 이상", score: 10 },
-        { label: "잘함", range: "60% 이상 80% 미만", score: 7 },
-        { label: "보통", range: "40% 이상 60% 미만", score: 5 },
-        { label: "노력요함", range: "20% 이상 40% 미만", score: 3 },
+        { label: "탁월", range: "90% 이상", score: 10 },
+        { label: "우수", range: "75% 이상 90% 미만", score: 8 },
+        { label: "충실", range: "55% 이상 75% 미만", score: 6 },
+        { label: "기초", range: "35% 이상 55% 미만", score: 4 },
+        { label: "지원필요", range: "20% 이상 35% 미만", score: 2 },
       ],
     }],
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       const prompt = body.contents[0].parts[0].text;
-      assert.match(prompt, /"scoreValues":\[10,7,5,3\]/);
+      assert.match(prompt, /"scoreValues":\[10,8,6,4,2\]/);
       assert.match(prompt, /"maxScore":10/);
-      assert.match(prompt, /"label":"매우잘함","range":"80% 이상","score":10/);
-      assert.match(prompt, /미응답 또는 근거 없음도 노력요함 기준 문장 안에 포함/);
+      assert.match(prompt, /"label":"탁월","range":"90% 이상","score":10/);
+      assert.match(prompt, /미응답 또는 근거 없음도 마지막 성취수준 기준 문장 안에 포함/);
       assert.match(prompt, /별도의 0점 수준은 만들지 마세요/);
       assert.match(prompt, /rubricCriteria 배열은 정확히 1개만 작성/);
-      assert.match(prompt, /scoreLevels는 매우잘함·잘함·보통·노력요함 순서의 4개/);
+      assert.match(prompt, /scoreLevels는 입력된 performanceBands와 같은 개수·순서·점수/);
       assert.match(prompt, /6학년|"grade":"6"/);
       assert.equal(body.generationConfig.responseSchema.properties.rubricCriteria.type, "array");
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
@@ -1034,17 +1035,18 @@ test("generateRubricCriteria requests the exact teacher-selected band scores", a
           evaluationElement: "계산 과정의 타당성",
           scoreLevels: [
             { score: 10, criterion: "계산 과정과 설명이 모두 타당하다." },
-            { score: 7, criterion: "핵심 계산은 타당하나 설명 일부가 부족하다." },
-            { score: 5, criterion: "계산 또는 설명의 일부만 타당하다." },
-            { score: 3, criterion: "기초적인 시도, 미응답 또는 근거 없음에 해당한다." },
+            { score: 8, criterion: "핵심 계산과 설명이 대체로 타당하다." },
+            { score: 6, criterion: "계산 또는 설명의 핵심이 확인된다." },
+            { score: 4, criterion: "일부 계산이나 설명만 확인된다." },
+            { score: 2, criterion: "기초적인 시도, 미응답 또는 근거 없음에 해당한다." },
           ],
         }],
         notes: [],
       }) }] } }] }), { status: 200 });
     },
   });
-  assert.deepEqual(result.requestedElements[0].scoreValues, [10, 7, 5, 3]);
-  assert.equal(result.rubricCriteria[0].scoreLevels.length, 4);
+  assert.deepEqual(result.requestedElements[0].scoreValues, [10, 8, 6, 4, 2]);
+  assert.equal(result.rubricCriteria[0].scoreLevels.length, 5);
 });
 
 

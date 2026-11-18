@@ -713,12 +713,14 @@ a { color: inherit; text-decoration: none; }
 .performance-threshold-head strong { color: var(--ink); font-size: 15px; }
 .performance-threshold-head span { color: var(--muted); font-size: 13px; }
 .performance-threshold-head button { flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 12px; font-weight: 900; }
-.performance-threshold-grid { display: grid; grid-template-columns: repeat(4,minmax(130px,1fr)); gap: 9px; }
-.performance-threshold-grid label { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: white; }
-.performance-threshold-grid label > strong { font-size: 13px; }
-.performance-threshold-grid label > span { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; align-items: center; }
+.performance-threshold-actions { display: flex !important; align-items: center; grid-auto-flow: column; gap: 7px !important; }
+.performance-threshold-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 9px; }
+.performance-threshold-grid article { position: relative; display: grid; grid-template-columns: minmax(0,1fr) 112px; gap: 8px; padding: 10px 46px 10px 10px; border: 1px solid var(--line); border-radius: 9px; background: white; }
+.performance-threshold-grid article > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 850; }
+.performance-threshold-grid article > label > b { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px; align-items: center; }
+.performance-threshold-grid article > label em { color: var(--muted); font-size: 12px; font-style: normal; white-space: nowrap; }
+.performance-threshold-grid article > button { position: absolute; top: 10px; right: 9px; padding: 5px 6px; border: 0; background: transparent; color: #8b2e20; cursor: pointer; font-size: 12px; font-weight: 900; }
 .performance-threshold-grid input { width: 100%; min-height: 38px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; font-weight: 900; }
-.performance-threshold-grid b { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .performance-threshold-editor > p { margin: 10px 0 0; color: var(--blue); font-size: 12px; font-weight: 800; line-height: 1.6; }
 .performance-threshold-editor.is-warning { border-color: rgba(139,46,32,.42); background: rgba(255,232,226,.55); }
 .performance-threshold-editor.is-warning > p { color: #8b2e20; }
@@ -1298,7 +1300,10 @@ a { color: inherit; text-decoration: none; }
   .design-file-status { align-items: center; }
   .rubric-group-fields { grid-template-columns: 1fr; }
   .performance-threshold-head { align-items: flex-start; flex-direction: column; }
-  .performance-threshold-grid { grid-template-columns: 1fr 1fr; }
+  .performance-threshold-actions { width: 100%; grid-auto-flow: row; }
+  .performance-threshold-actions button { flex: 1 1 auto; }
+  .performance-threshold-grid { grid-template-columns: 1fr; }
+  .performance-threshold-grid article { grid-template-columns: minmax(0,1fr) 105px; }
   .rubric-performance-guide { align-items: flex-start; flex-direction: column; }
   .rubric-score-head, .rubric-score-row { grid-template-columns: 1fr; }
   .document-auto-row span { align-self: auto; }
