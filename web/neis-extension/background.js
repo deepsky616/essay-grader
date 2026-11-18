@@ -38,6 +38,7 @@ function validatePayload(payload) {
 function neisAssessmentFrameOperation(payload, applyChanges) {
   const normalize = (value) => String(value ?? "").replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim();
   const compact = (value) => normalize(value).replace(/\s+/g, "");
+  const sameName = (left, right) => compact(left).normalize("NFC") === compact(right).normalize("NFC");
   const numberMatches = (text, number) => new RegExp(`(^|[^0-9])${String(Number(number))}([^0-9]|$)`).test(normalize(text));
   const visible = (element) => {
     if (!element || !element.isConnected) return false;
@@ -57,7 +58,7 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
       const matches = [];
       for (const row of rows) {
         const text = normalize(row.innerText || row.textContent || "");
-        if (!text.includes(record.name) || !numberMatches(text, record.number)) continue;
+        if (!compact(text).normalize("NFC").includes(compact(record.name).normalize("NFC")) || !numberMatches(text, record.number)) continue;
         for (const select of Array.from(row.querySelectorAll("select")).filter(visible)) {
           const option = Array.from(select.options || []).find((candidate) => compact(candidate.textContent) === compact(record.level) && !candidate.disabled);
           if (option) matches.push({ select, option, record });
@@ -128,7 +129,7 @@ function neisAssessmentFrameOperation(payload, applyChanges) {
       for (let row = 0; row < rowCount; row += 1) {
         const numberText = normalize(dataset.getColumn(row, numberCell.column));
         const nameText = normalize(dataset.getColumn(row, nameCell.column));
-        if (nameText === record.name && numberMatches(numberText, record.number)) matchingRows.push(row);
+        if (sameName(nameText, record.name) && numberMatches(numberText, record.number)) matchingRows.push(row);
       }
       if (matchingRows.length !== 1) {
         missing.push(record.number);

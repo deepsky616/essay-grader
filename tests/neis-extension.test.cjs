@@ -19,6 +19,13 @@ function loadPayloadValidator() {
   return new Function(`${background.slice(start, end)}; return validatePayload;`)();
 }
 
+function loadFrameOperation() {
+  const start = background.indexOf("function neisAssessmentFrameOperation");
+  const end = background.indexOf("function friendlyOperationError", start);
+  assert.ok(start >= 0 && end > start);
+  return new Function(`${background.slice(start, end)}; return neisAssessmentFrameOperation;`)();
+}
+
 test("NEIS helper extension has only the minimum web-app and NEIS permissions", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.permissions, ["scripting", "tabs"]);
@@ -52,6 +59,47 @@ test("NEIS helper preflights every frame before applying to exactly one frame", 
   assert.match(background, /target: \{ tabId: tab\.id, frameIds: \[frameId\] \}/);
   assert.match(background, /args: \[payload, true\]/);
   assert.match(background, /sender\.tab\?\.url\?\.startsWith\(WEBAPP_URL_PREFIX\)/);
+});
+
+test("NEIS helper matches student names and levels despite display-only spacing", () => {
+  const neisAssessmentFrameOperation = loadFrameOperation();
+  const option = { textContent: "매우 잘함", disabled: false, value: "A", index: 0 };
+  const select = {
+    isConnected: true,
+    options: [option, { textContent: "임의입력", disabled: false, value: "E", index: 1 }],
+    getBoundingClientRect: () => ({ width: 220, height: 28 }),
+  };
+  const row = {
+    isConnected: true,
+    innerText: "1   강 하 늘   매우 잘함",
+    getBoundingClientRect: () => ({ width: 1000, height: 36 }),
+    querySelectorAll: (selector) => selector === "select" ? [select] : [],
+  };
+  const previousDocument = global.document;
+  const previousGetComputedStyle = global.getComputedStyle;
+  global.document = {
+    body: { innerText: "성취기준별 평가 단계 평가결과" },
+    querySelectorAll: () => [row],
+  };
+  global.getComputedStyle = () => ({ display: "block", visibility: "visible" });
+  try {
+    assert.deepEqual(neisAssessmentFrameOperation({
+      records: [{ number: "1", name: "강하늘", level: "매우잘함" }],
+    }, false), {
+      status: "ready",
+      method: "dom",
+      matched: 1,
+      missing: [],
+    });
+  } finally {
+    global.document = previousDocument;
+    global.getComputedStyle = previousGetComputedStyle;
+  }
+});
+
+test("NEIS Nexacro matching ignores display spacing but still requires the full name", () => {
+  assert.match(background, /sameName\(nameText, record\.name\)/);
+  assert.match(background, /compact\(left\)\.normalize\("NFC"\) === compact\(right\)\.normalize\("NFC"\)/);
 });
 
 test("NEIS helper never sends data to a server or presses the NEIS save button", () => {
