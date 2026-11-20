@@ -1647,6 +1647,7 @@ ${JSON.stringify(targets)}
       fractionVerification: Boolean(metadata.fractionVerification),
       fractionCriterionIds: textList(metadata.fractionCriterionIds),
       blankComparisonRequired: Boolean(metadata.requireBlankComparison),
+      alignedReferencePages: (Array.isArray(metadata.alignedReferencePages) ? metadata.alignedReferencePages : []).map(positiveInteger).filter(Boolean),
       identityRedacted: Boolean(metadata.identityRedacted),
       student: metadata.student ? {
         id: metadata.student.id || "",
@@ -1685,6 +1686,7 @@ ${JSON.stringify(targets)}
 1. 평가 정보의 rubricCriteria와 첨부 채점기준표에서 문항별 배점과 부분점수 조건을 먼저 확인합니다. 둘이 충돌하면 교사 검토 사유에 기록합니다.
 2. 평가 정보의 exampleAnswers와 첨부 예시답안은 정답 형태와 풀이 방향을 이해하는 참고자료로만 사용하고, 표현이 다르다는 이유만으로 감점하지 않습니다. 입력된 수식과 도형 설명을 실제 첨부 그림과 함께 확인합니다.
 3. 빈 답안지와 학생 답안은 같은 페이지끼리 비교합니다. 빈 답안지에 이미 인쇄된 문장·격자·선·도형·기호는 학생이 쓴 답으로 간주하지 마세요.
+${safeMetadata.alignedReferencePages.length ? "3-1. ‘위치 보정 빈 평가지’는 alignedReferencePages에 표시된 같은 쪽의 인쇄 위치를 학생 스캔에 맞춘 보조 자료입니다. 문제 문구는 원본 빈 평가지에서 확인하고, 어느 부분이 학생 필기인지는 같은 위치의 보정 사본과 원본 학생 답안을 함께 비교하세요." : ""}
 4. 학생 답안(${answerFileName || "학생 답안"})에 새로 더해진 연필·볼펜 필기, 계산식, 선택 표시, 선, 도형과 지운 흔적만 평가합니다. 상단 신원 영역이 삭제되고 평면화된 부분은 채점에서 무시합니다.
 5. 각 평가요소의 answerReading에는 학생이 실제로 쓴 핵심 답·식·그림을 먼저 객관적으로 옮겨 적으세요. 보이지 않으면 ‘판독 불가’, 쓰지 않았으면 ‘무응답’으로 기록하고 내용을 만들지 마세요.
 5-1. 표 답안은 인쇄된 열 머리글을 확인한 뒤, 학생이 쓴 모든 행을 tableRows에 위에서 아래로, 각 셀은 왼쪽에서 오른쪽으로 전사합니다. 셀 내용을 다른 행·열로 이동하거나 의미가 비슷한 단어끼리 재조합하지 마세요. 표가 아니면 tableRows는 빈 배열입니다.
@@ -2590,7 +2592,7 @@ ${JSON.stringify(roster)}
   }
 
   function roleLabel(role) {
-    return ({ rubric: "채점 기준표", example: "예시 답안", blank: "빈 답안지", studentAnswer: "학생 답안 원본", enhancedAnswer: "학생 필기 강조본", fractionAnswer: "학생 분수 원본색·고대비 확대본" })[role] || role;
+    return ({ rubric: "채점 기준표", example: "예시 답안", blank: "빈 답안지", alignedBlank: "위치 보정 빈 평가지", studentAnswer: "학생 답안 원본", enhancedAnswer: "학생 필기 강조본", fractionAnswer: "학생 분수 원본색·고대비 확대본" })[role] || role;
   }
 
   function normalizeRosterForPrompt(roster) {

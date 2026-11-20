@@ -3781,6 +3781,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   let retainedEnhancementFiles = [];
   let fractionVerificationCompleted = false;
   let precisionPassCompleted = false;
+  let alignedReferencePageCount = 0;
   const initialPrecisionCriterionIds = needsPrecisionReview(result, baseMetadata)
     ? ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata)
     : [];
@@ -3833,9 +3834,14 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
         return true;
       });
       if (retainedEnhancementFiles.length < candidateEnhancements.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 분수·필기 확대 이미지는 제외했습니다.");
+      const maxReferenceBytes = ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - retainedBytes - (256 * 1024);
+      onStage?.("빈 평가지와 학생 답안의 인쇄 위치 대조 중");
+      const alignedReference = await tryAlignBlankReference(resolvedBlankFile, studentFile, { signal, maxBytes: maxReferenceBytes });
+      alignedReferencePageCount = alignedReference?.pageNumbers.length || 0;
       const precisionFiles = [
         ...firstPassFiles,
         ...retainedEnhancementFiles,
+        ...(alignedReference ? [{ role: "alignedBlank", file: alignedReference.file }] : []),
       ];
       const targetIdSet = new Set(precisionCriterionIds);
       const preliminaryReadings = preliminaryReadingsFromResult(result);
@@ -3850,6 +3856,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           precisionCriterionIds,
           fractionVerification: fractionFiles.length > 0,
           fractionCriterionIds,
+          alignedReferencePages: alignedReference?.pageNumbers,
           preReadings: preliminaryReadings.filter((item) => targetIdSet.has(item.criterionId)),
           recognitionWarnings,
         },
@@ -3880,6 +3887,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     teacherFeedback: result.summary,
     recognitionEnhanced: retainedEnhancementFiles.length > 0,
     recognitionPassCompleted: precisionPassCompleted,
+    alignedReferencePageCount,
     precisionTargetCount: precisionCriterionIds.length,
     fractionVerificationCompleted,
     fractionTargetCount: fractionCriterionIds.length,
@@ -4157,6 +4165,135 @@ async function prepareFractionAnswerImages(pdfFile, { signal, maxBytes = 8 * 102
     return files;
   } finally {
     await loadingTask.destroy();
+  }
+}
+
+const blankAlignmentTemplates = new WeakMap();
+
+async function renderAlignmentRaster(page, width, height) {
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: width / base.width });
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  try {
+    const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+    await page.render({
+      canvasContext: context,
+      viewport,
+      transform: [1, 0, 0, height / viewport.height, 0, 0],
+      background: "#ffffff",
+    }).promise;
+    return context.getImageData(0, 0, width, height);
+  } finally {
+    canvas.width = 1;
+    canvas.height = 1;
+    page.cleanup();
+  }
+}
+
+async function loadBlankAlignmentTemplates(blankFile) {
+  const align = window.ChaejeomPageAlignment;
+  let cached = blankAlignmentTemplates.get(blankFile);
+  if (!cached) {
+    cached = (async () => {
+      const loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(await blankFile.arrayBuffer()), isEvalSupported: false });
+      try {
+        const document = await loadingTask.promise;
+        const pages = [];
+        for (let number = 1; number <= document.numPages; number += 1) {
+          const page = await document.getPage(number);
+          const { width, height } = page.getViewport({ scale: 1 });
+          const analysisHeight = Math.round(height * align.ANALYSIS_WIDTH / width);
+          if (page.rotate || analysisHeight < 250 || analysisHeight > 1000) {
+            page.cleanup();
+            pages.push(null);
+            continue;
+          }
+          const raster = await renderAlignmentRaster(page, align.ANALYSIS_WIDTH, analysisHeight);
+          const template = align.prepareTemplate(raster);
+          pages.push(template ? { template, width, height } : null);
+        }
+        return pages;
+      } finally {
+        await loadingTask.destroy();
+      }
+    })();
+    blankAlignmentTemplates.set(blankFile, cached);
+  }
+  try {
+    return await cached;
+  } catch (error) {
+    blankAlignmentTemplates.delete(blankFile);
+    throw error;
+  }
+}
+
+async function alignBlankReference(blankFile, studentFile, { signal, maxBytes }) {
+  const align = window.ChaejeomPageAlignment;
+  if (!align || !window.pdfjsLib?.getDocument || !PDFLib.concatTransformationMatrix || maxBytes < 1024) return null;
+  const templates = await loadBlankAlignmentTemplates(blankFile);
+  if (!templates.some(Boolean)) return null;
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  const scanTask = window.pdfjsLib.getDocument({ data: new Uint8Array(await studentFile.arrayBuffer()), isEvalSupported: false });
+  const matches = new Map();
+  try {
+    const scan = await scanTask.promise;
+    if (templates.length !== scan.numPages) return null;
+    for (const [index, reference] of templates.entries()) {
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+      if (!reference) continue;
+      const page = await scan.getPage(index + 1);
+      const { width, height } = page.getViewport({ scale: 1 });
+      if (Math.abs((width / height) / (reference.width / reference.height) - 1) > 0.03) {
+        page.cleanup();
+        continue;
+      }
+      const { template } = reference;
+      const result = align.estimate(template, await renderAlignmentRaster(page, template.width, template.height));
+      if (result && result.maxShift >= 1) matches.set(index, { result, reference, scanSize: { width, height } });
+    }
+  } finally {
+    await scanTask.destroy();
+  }
+  if (!matches.size) return null;
+
+  const source = await PDFLib.PDFDocument.load(await blankFile.arrayBuffer(), { updateMetadata: false });
+  if (source.getPageCount() !== templates.length) return null;
+  const aligned = await PDFLib.PDFDocument.create();
+  const correctedPages = [];
+  for (const [index, page] of source.getPages().entries()) {
+    if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+    const match = matches.get(index);
+    const box = page.getCropBox();
+    if (!match || page.getRotation().angle !== 0 || Math.abs(box.width - match.reference.width) > 1 || Math.abs(box.height - match.reference.height) > 1) {
+      const [copy] = await aligned.copyPages(source, [index]);
+      aligned.addPage(copy);
+      continue;
+    }
+    const matrix = align.pdfMatrix(match.result, box, match.scanSize);
+    const embedded = await aligned.embedPage(page, {
+      left: box.x, bottom: box.y, right: box.x + box.width, top: box.y + box.height,
+    });
+    const output = aligned.addPage([match.scanSize.width, match.scanSize.height]);
+    output.pushOperators(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(...matrix));
+    output.drawPage(embedded, { x: 0, y: 0 });
+    output.pushOperators(PDFLib.popGraphicsState());
+    correctedPages.push(index + 1);
+  }
+  if (!correctedPages.length) return null;
+  const bytes = await aligned.save({ useObjectStreams: true, addDefaultPage: false, updateFieldAppearances: false });
+  if (bytes.byteLength > maxBytes) return null;
+  const file = new File([bytes], "aligned-blank-reference.pdf", { type: "application/pdf" });
+  return { file, pageNumbers: correctedPages };
+}
+
+async function tryAlignBlankReference(blankFile, studentFile, options) {
+  try {
+    return await alignBlankReference(blankFile, studentFile, options);
+  } catch (error) {
+    if (options.signal?.aborted || error?.name === "AbortError") throw error;
+    return null;
   }
 }
 
@@ -4593,13 +4730,14 @@ async function openStudentResult(course, targetStudents, studentId) {
       : achievementBandForScore(score, summary.maxScore, design.performanceThresholds);
   }
   const initialAchievementBand = teacherAchievementBand(initialTeacherTotal);
+  const alignedReferenceStatus = result.alignedReferencePageCount > 0 ? ` · 평가지 위치 보정 ${result.alignedReferencePageCount}쪽` : "";
   const fractionVerificationStatus = result.fractionVerificationCompleted
     ? `선별 분수 ${result.fractionTargetCount || 0}개 문항 고해상도 재검토 완료`
     : result.fractionTargetCount ? `선별 분수 ${result.fractionTargetCount}개 문항 교사 검토 필요` : "";
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(alignedAiTotal)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}${fractionVerificationStatus ? ` · ${escapeHtml(fractionVerificationStatus)}` : ""}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(alignedAiTotal)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}${fractionVerificationStatus ? ` · ${escapeHtml(fractionVerificationStatus)}` : ""}${escapeHtml(alignedReferenceStatus)}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
