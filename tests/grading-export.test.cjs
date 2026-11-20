@@ -197,12 +197,13 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.match(source, /aria-label="\$\{formatScore\(score\)\}점"/);
   assert.match(source, />\$\{formatScore\(score\)\}<\/button>/);
   assert.doesNotMatch(source, />\$\{formatScore\(score\)\}점<\/button>/);
-  assert.match(source, /data-reset-teacher-scores>점수 초기화/);
-  assert.match(source, /data-restore-ai-scores>점수 그대로 적용/);
+  assert.match(source, /data-reset-teacher-scores>0점으로 초기화/);
+  assert.match(source, /data-restore-ai-scores>AI 배점 불러오기/);
+  assert.match(source, /data-save-current-review>현재 점수 저장/);
   assert.match(source, /data-regrade-student>AI 채점 재실행/);
   assert.match(source, /resultStatus\.textContent = "검토 완료"/);
   assert.match(source, /textarea data-achievement-feedback=/);
-  assert.match(source, /result\.achievementResults = derivedAchievementResults\(design, result, result\.teacherScores, true\)\.map/);
+  assert.match(source, /confirmation\.achievementResults = derivedAchievementResults\(design, confirmation, confirmation\.teacherScores, true\)\.map/);
   assert.match(source, /성취기준별 평가요소 합산 결과/);
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
@@ -238,11 +239,11 @@ test("teacher can edit point attainment and automatically refresh evidence and f
   assert.match(schoolSource, /data-point-evidence/);
   assert.match(schoolSource, /data-question-evidence/);
   assert.match(schoolSource, /data-question-feedback/);
-  assert.match(schoolSource, /result\.teacherExampleAnswerResults = workingExampleRows\.map/);
+  assert.match(schoolSource, /teacherExampleAnswerResults: exampleRows\.map/);
   assert.match(schoolSource, /resultExampleAnswerRows\(result, design, false\)/);
-  assert.match(schoolSource, /result\.teacherFeedbackManuallyEdited = feedbackManuallyEdited/);
+  assert.match(schoolSource, /teacherFeedbackManuallyEdited: feedbackManuallyEdited/);
   assert.match(schoolSource, /teacherFeedbackManuallyEdited: manuallyEditedAchievementFeedbacks\.has\(index\)/);
-  assert.match(schoolSource, /feedbackInput\.addEventListener\("input", \(\) => \{ feedbackManuallyEdited = true; \}\)/);
+  assert.match(schoolSource, /feedbackInput\.addEventListener\("input", \(\) => \{ feedbackManuallyEdited = true; markReviewDraft\(\); \}\)/);
   assert.match(styles, /\.example-point-score-edit select/);
 });
 
@@ -440,12 +441,38 @@ test("student answer PDF previews open fitted to the available panel width", () 
   assert.match(styles, /\.pdf-fullscreen-shell iframe \{[^}]*width: 100%;[^}]*height: 100%;/);
 });
 
-test("teacher confirmation dismisses the review-required guidance and persists AI scores", () => {
+test("reset and AI restore remain drafts, and the explicit save confirms the teacher's scores", () => {
   assert.match(schoolSource, /result\.needsTeacherReview && !result\.teacherConfirmed/);
   assert.match(schoolSource, /data-teacher-review-alert/);
   assert.match(schoolSource, /panel\.querySelector\("\[data-teacher-review-alert\]"\)\?\.remove\(\)/);
-  assert.match(schoolSource, /data-restore-ai-scores[^]*await saveCurrent\(\)/);
-  assert.match(schoolSource, /result\.teacherConfirmed = true;[^]*dismissTeacherReviewAlert\(\)/);
+  const reset = schoolSource.slice(schoolSource.indexOf('panel.querySelector("[data-reset-teacher-scores]")'), schoolSource.indexOf("const dismissTeacherReviewAlert"));
+  const restore = schoolSource.slice(schoolSource.indexOf('panel.querySelector("[data-restore-ai-scores]")'), schoolSource.indexOf('saveReviewButton.addEventListener("click"'));
+  assert.match(reset, /input\.value = "0"/);
+  assert.match(restore, /initialAiQuestionRows/);
+  for (const draft of [reset, restore]) {
+    assert.match(draft, /markReviewDraft/);
+    assert.doesNotMatch(draft, /saveCurrent\(|putCourse\(/);
+  }
+  assert.match(schoolSource, /saveReviewButton\.addEventListener\("click", async \(\) => \{\s*if \(await saveCurrent\(\)\)/);
+  assert.match(schoolSource, /teacherConfirmed: true,[^]*await putCourse\([^]*dismissTeacherReviewAlert\(\)/);
+});
+
+test("teacher score snapshots keep AI results available for restoration after saving zero", () => {
+  const start = schoolSource.indexOf("function teacherReviewScoreSnapshot");
+  const end = schoolSource.indexOf("async function openStudentResult", start);
+  const snapshot = new Function(schoolSource.slice(start, end) + "; return teacherReviewScoreSnapshot;")();
+  const ai = { totalScore: 4, questionResults: [{ criterionId: "r", score: 4, maxScore: 5, evidence: "AI 근거" }] };
+  const draft = [{ ...ai.questionResults[0], score: 0, evidence: "교사 수정" }];
+  const saved = { ...ai, ...snapshot(draft, [{ value: "0" }], [{ awardedScore: 0, pointResults: [{ awardedScore: 0 }] }]) };
+  assert.equal(saved.totalScore, 4);
+  assert.equal(saved.questionResults[0].score, 4);
+  assert.equal(saved.teacherQuestionResults[0].score, 0);
+  assert.equal(saved.teacherTotal, 0);
+  const rowStart = schoolSource.indexOf("function resultQuestionRows");
+  const rowEnd = schoolSource.indexOf("function resultScoreSummary", rowStart);
+  const rows = new Function("normalizeRubricCriteria", "normalizePerformanceThresholds", schoolSource.slice(rowStart, rowEnd) + "; return resultQuestionRows;")(() => [], () => ({}));
+  assert.equal(rows(saved, {})[0].score, 0);
+  assert.equal(rows(saved, {}, false)[0].score, 4);
 });
 
 test("teacher total shows and updates the threshold-based achievement level", () => {
@@ -454,7 +481,7 @@ test("teacher total shows and updates the threshold-based achievement level", ()
   assert.match(schoolSource, /data-teacher-level/);
   assert.match(schoolSource, /data-result-level/);
   assert.match(schoolSource, /const achievementBand = teacherAchievementBand\(total\)/);
-  assert.match(schoolSource, /result\.teacherPerformanceLevel = achievementBandForScore/);
+  assert.match(schoolSource, /confirmation\.teacherPerformanceLevel = achievementBandForScore/);
   assert.match(schoolSource, /performanceLevel: performanceLevel\.label/);
   assert.match(styles, /\.performance-level-badge\.is-excellent/);
   assert.match(styles, /\.performance-level-badge\.is-good/);

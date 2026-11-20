@@ -4401,9 +4401,10 @@ function asFile(file) {
   return new File([file.blob || file], file.name || "document.pdf", { type: file.type || file.blob?.type || "application/pdf" });
 }
 
-function resultQuestionRows(result, design) {
+function resultQuestionRows(result, design, includeTeacherEdits = true) {
   const rubricCriteria = normalizeRubricCriteria(design?.rubricCriteria || [], normalizePerformanceThresholds(design?.performanceThresholds));
-  const storedRows = Array.isArray(result?.questionResults) ? result.questionResults : [];
+  const storedRows = includeTeacherEdits && Array.isArray(result?.teacherQuestionResults)
+    ? result.teacherQuestionResults : Array.isArray(result?.questionResults) ? result.questionResults : [];
   if (!rubricCriteria.length) return storedRows.map((item, index) => ({ ...item, sourceIndex: index, missingResult: false }));
   const usedIndexes = new Set();
   return rubricCriteria.map((rubric, index) => {
@@ -4526,7 +4527,7 @@ function scoreChoicesForResultRow(item, design) {
   const componentChoices = hasPointScoring
     ? Array.from({ length: Math.max(0, Math.round(Number(item?.maxScore || 0) * 2)) + 1 }, (_value, index) => index / 2)
     : [];
-  return [...new Set([...(configured.length ? configured : fallback), ...componentChoices, Number(item?.score || 0)])].filter(Number.isFinite).sort((a, b) => b - a);
+  return [...new Set([0, ...(configured.length ? configured : fallback), ...componentChoices, Number(item?.score || 0)])].filter(Number.isFinite).sort((a, b) => b - a);
 }
 
 function nearestScoreChoice(value, choices) {
@@ -4779,6 +4780,23 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
   return problemSections + rubricSection;
 }
 
+function teacherReviewScoreSnapshot(questionRows, scoreInputs, exampleRows) {
+  const teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
+  return {
+    teacherScores,
+    teacherTotal: Math.round(teacherScores.reduce((sum, value) => sum + value, 0) * 100) / 100,
+    teacherQuestionResults: questionRows.map(({ sourceIndex, missingResult, ...item }, index) => ({ ...item, score: teacherScores[index] })),
+    teacherExampleAnswerResults: exampleRows.map((item) => ({
+      ...item,
+      awardedScore: Math.max(0, Number(item.awardedScore || 0)),
+      pointResults: (item.pointResults || []).map((point) => ({
+        ...point,
+        awardedScore: Math.max(0, Number(point.awardedScore || 0)),
+      })),
+    })),
+  };
+}
+
 async function openStudentResult(course, targetStudents, studentId) {
   const slot = app.querySelector("[data-student-result-inline]");
   if (!slot) return;
@@ -4803,14 +4821,16 @@ async function openStudentResult(course, targetStudents, studentId) {
   const questionRows = summary.rows;
   const workingExampleRows = resultExampleAnswerRows(result, design);
   const initialExampleRows = resultExampleAnswerRows(result, design, false);
-  const alignedAiScores = alignedCriterionScoresFromExamples(questionRows, initialExampleRows);
-  questionRows.forEach((item, index) => { item.score = alignedAiScores[index]; });
+  const aiQuestionRows = resultQuestionRows(result, design, false);
+  const alignedAiScores = alignedCriterionScoresFromExamples(aiQuestionRows, initialExampleRows);
+  const initialAiQuestionRows = aiQuestionRows.map((item, index) => ({ ...item, score: alignedAiScores[index] }));
   const hasSavedTeacherScores = Array.isArray(result.teacherScores) && result.teacherScores.length > 0;
-  const teacherScores = questionRows.map((item) => {
+  const teacherScores = questionRows.map((item, index) => {
     const rawScore = hasSavedTeacherScores && item.sourceIndex >= 0
       ? Number(result.teacherScores?.[item.sourceIndex] ?? item.score ?? 0)
-      : Number(item.score || 0);
-    return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
+      : Number(alignedAiScores[index] ?? item.score ?? 0);
+    item.score = nearestScoreChoice(rawScore, scoreChoicesForResultRow({ ...item, score: rawScore }, design));
+    return item.score;
   });
   const initialAchievementResults = derivedAchievementResults(design, result, teacherScores);
   const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
@@ -4839,7 +4859,8 @@ async function openStudentResult(course, targetStudents, studentId) {
           <div class="teacher-score-list">
             ${renderQuestionScoreGroups(questionRows, teacherScores, design, workingExampleRows)}
           </div>
-          <div class="score-bulk-actions"><button class="secondary-action" type="button" data-reset-teacher-scores>점수 초기화</button><button class="primary-action" type="button" data-restore-ai-scores>점수 그대로 적용</button></div>
+          <div class="score-bulk-actions"><button class="secondary-action" type="button" data-reset-teacher-scores>0점으로 초기화</button><button class="secondary-action" type="button" data-restore-ai-scores>AI 배점 불러오기</button><button class="primary-action" type="button" data-save-current-review>현재 점수 저장</button></div>
+          <p class="score-draft-note" data-score-draft-note role="status">초기화와 AI 배점 불러오기는 화면에 먼저 반영됩니다. 저장을 누르면 교사 점수가 확정됩니다.</p>
           ${!result.teacherConfirmed && questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert" data-missing-rubric-alert><strong>응답에 빠진 채점기준이 있습니다.</strong><p>교사 검토 전까지 점수는 잠정값입니다. 답안 원본에서 확인하고 점수를 수정하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview && !result.teacherConfirmed ? `<div class="teacher-review-alert" data-teacher-review-alert><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>배점 항목의 획득점수를 바꾸면 피드백도 자동으로 갱신됩니다. 직접 입력한 뒤에는 교사가 쓴 문장을 덮어쓰지 않습니다.</small></label>
@@ -4848,7 +4869,7 @@ async function openStudentResult(course, targetStudents, studentId) {
         </section>
       </div>
       <div class="student-review-actions">
-        <button class="secondary-action" type="button" data-previous-student ${currentIndex === 0 ? "disabled" : ""}>← 이전 학생</button>
+        <button class="secondary-action" type="button" data-previous-student ${currentIndex === 0 ? "disabled" : ""}>← 저장 후 이전 학생</button>
         <span data-review-save-status>${result.teacherConfirmed ? "교사 검토 저장됨" : "아직 교사 검토 전"}</span>
         <button class="primary-action" type="button" data-save-next>${currentIndex === orderedResults.length - 1 ? "저장 후 닫기" : "저장 후 다음 학생 →"}</button>
       </div>
@@ -4861,13 +4882,25 @@ async function openStudentResult(course, targetStudents, studentId) {
   const pointScoreSelects = Array.from(panel.querySelectorAll("[data-example-point-score]"));
   const feedbackInput = panel.querySelector("[data-teacher-feedback]");
   const achievementFeedbackInputs = Array.from(panel.querySelectorAll("[data-achievement-feedback]"));
+  const draftNote = panel.querySelector("[data-score-draft-note]");
+  const reviewSaveStatus = panel.querySelector("[data-review-save-status]");
+  const saveReviewButton = panel.querySelector("[data-save-current-review]");
+  let draftRevision = 0;
+  let savingReview = false;
+  const markReviewDraft = (message = "현재 변경사항을 아직 저장하지 않았습니다.") => {
+    draftRevision += 1;
+    draftNote.textContent = `${message} ‘현재 점수 저장’으로 확정하세요.`;
+    reviewSaveStatus.textContent = "저장하지 않은 변경사항 있음";
+    panel.querySelector("[data-teacher-total-label]").textContent = "저장 전 총점";
+  };
   let feedbackManuallyEdited = Boolean(result.teacherFeedbackManuallyEdited);
   const manuallyEditedAchievementFeedbacks = new Set(initialAchievementResults
     .map((item, index) => item.teacherFeedbackManuallyEdited ? index : -1)
     .filter((index) => index >= 0));
-  feedbackInput.addEventListener("input", () => { feedbackManuallyEdited = true; });
+  feedbackInput.addEventListener("input", () => { feedbackManuallyEdited = true; markReviewDraft(); });
   achievementFeedbackInputs.forEach((input, index) => input.addEventListener("input", () => {
     manuallyEditedAchievementFeedbacks.add(index);
+    markReviewDraft();
   }));
   const syncScoreChoiceStates = () => scoreButtons.forEach((button) => {
     const selected = Number(scoreInputs[Number(button.dataset.scoreIndex)]?.value) === Number(button.dataset.scoreChoice);
@@ -4944,7 +4977,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     const confidence = row.querySelector("[data-point-confidence]");
     if (confidence) {
       const level = ["high", "medium", "low"].includes(target.confidence) ? target.confidence : "low";
-      confidence.textContent = target.teacherAdjusted ? "교사 확정" : `확신도 ${level}`;
+      confidence.textContent = target.teacherAdjusted ? "교사 입력" : `확신도 ${level}`;
       confidence.className = `confidence-badge confidence-${level}`;
     }
   };
@@ -5003,6 +5036,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     const pointRow = select.closest("[data-example-point-row]");
     if (pointRow) syncPointRow(pointRow);
     syncQuestionScoresFromPoints();
+    markReviewDraft();
   }));
   scoreButtons.forEach((button) => button.addEventListener("click", () => {
     const input = scoreInputs[Number(button.dataset.scoreIndex)];
@@ -5010,6 +5044,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     input.value = button.dataset.scoreChoice;
     syncScoreChoiceStates();
     updateTotal();
+    markReviewDraft();
   }));
   panel.querySelector("[data-reset-teacher-scores]").addEventListener("click", () => {
     workingExampleRows.forEach((exampleRow) => {
@@ -5032,49 +5067,63 @@ async function openStudentResult(course, targetStudents, studentId) {
       }
     });
     panel.querySelectorAll("[data-example-point-row]").forEach(syncPointRow);
-    scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(0, scoreChoicesForResultRow(questionRows[index], design)); });
+    questionRows.forEach((item) => { item.score = 0; });
+    scoreInputs.forEach((input) => { input.value = "0"; });
     syncScoreChoiceStates();
     syncQuestionScoresFromPoints();
+    markReviewDraft("화면의 점수를 모두 0점으로 바꿨습니다.");
   });
   const dismissTeacherReviewAlert = () => {
     panel.querySelector("[data-teacher-review-alert]")?.remove();
     panel.querySelector("[data-missing-rubric-alert]")?.remove();
     const totalLabel = panel.querySelector("[data-teacher-total-label]");
     if (totalLabel) totalLabel.textContent = "교사 확정 총점";
-    const reviewSaveStatus = panel.querySelector("[data-review-save-status]");
     if (reviewSaveStatus) reviewSaveStatus.textContent = "교사 검토 저장됨";
   };
   const saveCurrent = async () => {
+    if (savingReview) return false;
     if (studentRegradeRuns.get(course.id)?.status === "running") {
       showToast("학생별 재채점이 끝난 뒤 교사 점수를 저장해 주세요.");
       return false;
     }
-    result.questionResults = questionRows.map(({ sourceIndex, missingResult, ...item }) => item);
-    result.teacherExampleAnswerResults = workingExampleRows.map((item) => ({
-      ...item,
-      awardedScore: Math.max(0, Number(item.awardedScore || 0)),
-      pointResults: (item.pointResults || []).map((point) => ({
-        ...point,
-        awardedScore: Math.max(0, Number(point.awardedScore || 0)),
-      })),
-    }));
-    result.teacherScores = scoreInputs.map((input, index) => Math.min(Number(questionRows[index]?.maxScore || 0), Math.max(0, Number(input.value || 0))));
-    result.teacherTotal = Math.round(result.teacherScores.reduce((sum, value) => sum + value, 0) * 100) / 100;
-    result.teacherPerformanceLevel = achievementBandForScore(result.teacherTotal, summary.maxScore, design.performanceThresholds).label;
-    result.totalScore = Math.round(questionRows.reduce((sum, item) => sum + Number(item.score || 0), 0) * 100) / 100;
-    result.maxScore = summary.maxScore;
-    result.teacherFeedback = feedbackInput.value.trim();
-    result.teacherFeedbackManuallyEdited = feedbackManuallyEdited;
-    result.achievementResults = derivedAchievementResults(design, result, result.teacherScores, true).map((item, index) => ({
+    const revisionToSave = draftRevision;
+    const confirmation = {
+      ...result,
+      ...teacherReviewScoreSnapshot(questionRows, scoreInputs, workingExampleRows),
+      maxScore: summary.maxScore,
+      teacherFeedback: feedbackInput.value.trim(),
+      teacherFeedbackManuallyEdited: feedbackManuallyEdited,
+      teacherConfirmed: true,
+      teacherReviewedAt: new Date().toISOString(),
+    };
+    confirmation.teacherPerformanceLevel = achievementBandForScore(confirmation.teacherTotal, summary.maxScore, design.performanceThresholds).label;
+    confirmation.achievementResults = derivedAchievementResults(design, confirmation, confirmation.teacherScores, true).map((item, index) => ({
       ...item,
       feedback: panel.querySelector(`[data-achievement-feedback="${index}"]`)?.value.trim() ?? item.feedback,
       teacherFeedbackManuallyEdited: manuallyEditedAchievementFeedbacks.has(index),
     }));
-    result.teacherConfirmed = true;
-    result.teacherReviewedAt = new Date().toISOString();
-    await putCourse(course);
+    const nextGrading = {
+      ...course.grading,
+      results: course.grading.results.map((entry) => entry.studentId === studentId ? confirmation : entry),
+    };
+    savingReview = true;
+    saveReviewButton.disabled = true;
+    try {
+      await putCourse({ ...course, grading: nextGrading });
+      Object.assign(result, confirmation);
+    } catch (error) {
+      draftNote.textContent = `저장하지 못했습니다. ${friendlyError(error)}`;
+      showToast(draftNote.textContent);
+      return false;
+    } finally {
+      savingReview = false;
+      saveReviewButton.disabled = false;
+    }
     updateTotal();
-    dismissTeacherReviewAlert();
+    if (draftRevision === revisionToSave) {
+      dismissTeacherReviewAlert();
+      draftNote.textContent = "현재 점수를 교사 확정 점수로 저장했습니다.";
+    }
     const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
     if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}점`;
     const resultLevel = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-level]`);
@@ -5089,21 +5138,25 @@ async function openStudentResult(course, targetStudents, studentId) {
       resultStatus.textContent = "검토 완료";
       resultStatus.className = "confirmed-label";
     }
-    return true;
+    return draftRevision === revisionToSave;
   };
-  panel.querySelector("[data-restore-ai-scores]").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      workingExampleRows.splice(0, workingExampleRows.length, ...JSON.parse(JSON.stringify(initialExampleRows)));
-      panel.querySelectorAll("[data-example-point-row]").forEach(syncPointRow);
-      scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(questionRows[index]?.score ?? 0, scoreChoicesForResultRow(questionRows[index], design)); });
-      syncScoreChoiceStates();
-      syncQuestionScoresFromPoints();
-      if (await saveCurrent()) showToast("AI가 제안한 점수를 그대로 적용하고 교사 검토를 저장했습니다.");
-    } finally {
-      button.disabled = false;
-    }
+  panel.querySelector("[data-restore-ai-scores]").addEventListener("click", () => {
+    workingExampleRows.splice(0, workingExampleRows.length, ...JSON.parse(JSON.stringify(initialExampleRows)));
+    panel.querySelectorAll("[data-example-point-row]").forEach(syncPointRow);
+    initialAiQuestionRows.forEach((item, index) => {
+      Object.assign(questionRows[index], item);
+      scoreInputs[index].value = String(item.score);
+      const evidenceLabel = panel.querySelector(`[data-question-evidence="${index}"]`);
+      const feedbackLabel = panel.querySelector(`[data-question-feedback="${index}"]`);
+      if (evidenceLabel) evidenceLabel.textContent = item.evidence || "근거가 반환되지 않았습니다.";
+      if (feedbackLabel) feedbackLabel.textContent = item.feedback || "";
+    });
+    syncScoreChoiceStates();
+    syncAutomaticFeedback();
+    markReviewDraft("AI 배점을 화면에 불러왔습니다.");
+  });
+  saveReviewButton.addEventListener("click", async () => {
+    if (await saveCurrent()) showToast("현재 점수를 저장했습니다.");
   });
   const closeCurrent = () => {
     if (slot.dataset.previewUrl) {
