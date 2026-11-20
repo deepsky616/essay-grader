@@ -1044,7 +1044,7 @@ test("truncated grading JSON recovers through a compact request without acceptin
   assert.equal(result.hasMissingScores, false);
 });
 
-test("exact fraction checking corrects both false equations in grouped Gemini evidence", () => {
+test("exact fraction checking corrects both false equations in grouped student transcription", () => {
   const metadata = {
     totalScore: 6,
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 곱셈 계산", maxScore: 6 }],
@@ -1063,7 +1063,7 @@ test("exact fraction checking corrects both false equations in grouped Gemini ev
   const evidence = "2와 5/14 × 7 = 32/2 = 16으로 정확하게 계산함. 12 × 2/9 = 12/3 = 4로 정확하게 계산함.";
   const result = AI.normalizeGradingResult({
     totalScore: 6, summary: evidence, strengths: ["분수의 곱셈 결과가 모두 정확함."],
-    questionResults: [{ criterionId: "r1", score: 6, answerReading: "풀이 작성", evidence, feedback: "모두 정확함", confidence: "high" }],
+    questionResults: [{ criterionId: "r1", score: 6, answerReading: evidence, evidence, feedback: "모두 정확함", confidence: "high" }],
     exampleAnswerResults: [
       { exampleAnswerId: "a", confidence: "high", pointResults: [{ pointItemId: "a1", earned: true, confidence: "high" }] },
       { exampleAnswerId: "b", confidence: "high", pointResults: [
@@ -1128,6 +1128,85 @@ test("a conflicting precision reread does not silently restore a rejected fracti
   assert.equal(merged.totalScore, 0);
   assert.equal(merged.hasMissingScores, true);
   assert.match(merged.summary, /1차 판독과 정밀 재판독/);
+});
+
+test("fraction grading reads ink without teacher materials and rejects a copied correct solution for the student's 7", async () => {
+  const file = (content) => new Blob([content], { type: "application/pdf" });
+  const correct = "2 1/6 × 3 3/4 = 13/6 × 15/4 = 65/8 = 8 1/8";
+  const leakedKey = "teacher-only-full-solution";
+  const metadata = {
+    totalScore: 2, requireBlankComparison: true, identityRedacted: true,
+    rubricCriteria: [{ id: "r1", questionNumber: "2-(3)", evaluationElement: "분수 계산", maxScore: 2 }],
+    exampleAnswers: [{ id: "a", questionNumber: "2-(3)", answerText: leakedKey, mathNotation: correct,
+      evaluationElementIds: ["r1"], pointItems: [{ id: "p1", score: 2, criterion: "최종 답이 정확함" }] }],
+  };
+  const files = [
+    { role: "rubric", file: file("rubric-text") }, { role: "example", file: file(leakedKey) },
+    { role: "blank", file: file("blank-printed-worksheet") }, { role: "studentAnswer", file: file("student-ink") },
+  ];
+  const confident = (finalAnswer, status = "readable") => [{ exampleAnswerId: "a", questionNumber: "2-(3)", confidence: "high", status, finalAnswer, work: "" }];
+  async function grade(readings, overrides = {}) {
+    const requests = [];
+    const result = await AI.gradeAnswer({
+      apiKey: VALID_KEY, files, metadata: { ...metadata, ...overrides },
+      fetchImpl: async (_url, options) => {
+        const body = JSON.parse(options.body);
+        requests.push(body);
+        const isTranscription = Boolean(body.generationConfig.responseSchema?.properties.readings);
+        const payload = isTranscription ? { readings } : {
+          totalScore: 2, summary: correct + " — 정확하게 계산함",
+          questionResults: [{ criterionId: "r1", score: 2, answerReading: correct, evidence: correct, confidence: "high" }],
+          exampleAnswerResults: [{ exampleAnswerId: "a", answerReading: correct, evidence: correct,
+            pointResults: [{ pointItemId: "p1", earned: true, evidence: correct, confidence: "high" }] }],
+        };
+        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+      },
+    });
+    assert.equal(requests.length, 2);
+    const initialParts = requests[0].contents[0].parts;
+    const attached = initialParts.filter((part) => part.inlineData).map((part) => Buffer.from(part.inlineData.data, "base64").toString());
+    assert.deepEqual(attached, ["blank-printed-worksheet", "student-ink"]);
+    assert.doesNotMatch(initialParts[0].text, /teacher-only-full-solution|65\/8|8 1\/8/);
+    assert.match(requests[1].contents[0].parts[0].text, /independentFractionReadings/);
+    return result;
+  }
+  const wrong = await grade(confident("7"));
+  assert.equal(wrong.totalScore, 0);
+  assert.equal(wrong.exampleAnswerResults[0].pointResults[0].awardedScore, 0);
+  assert.match(wrong.questionResults[0].answerReading, /최종 답 7$/);
+  assert.doesNotMatch(wrong.summary, /정확하게 계산함/);
+  const absent = await grade([]);
+  assert.equal(absent.hasMissingScores, true);
+  assert.equal(absent.totalScore, 0);
+  assert.match(absent.questionResults[0].answerReading, /판독 불확실/);
+  const blank = await grade(confident("", "blank"));
+  assert.equal(blank.hasMissingScores, false);
+  assert.equal(blank.totalScore, 0);
+  assert.match(blank.questionResults[0].answerReading, /무응답/);
+  const precision = await grade(confident("8과 1/8"), { precisionReview: true, precisionCriterionIds: ["r1"] });
+  assert.equal(precision.totalScore, 2);
+  const merged = AI.mergePrecisionGradingResult(wrong, precision, ["r1"], metadata);
+  assert.equal(merged.totalScore, 0);
+  assert.equal(merged.hasMissingScores, true);
+  assert.match(merged.questionResults[0].answerReading, /1차 7 · 재판독 8과 1\/8/);
+});
+
+test("calculation evidence alone never fills an empty student transcription or qualifies for points", () => {
+  const correct = "2 1/6 × 3 3/4 = 65/8";
+  const result = AI.normalizeGradingResult({
+    questionResults: [{ criterionId: "r1", score: 2, evidence: correct, confidence: "high" }],
+    exampleAnswerResults: [{ exampleAnswerId: "a", evidence: correct, pointResults: [
+      { pointItemId: "p1", earned: true, evidence: correct, confidence: "high" },
+    ] }],
+  }, {
+    totalScore: 2,
+    rubricCriteria: [{ id: "r1", questionNumber: "2-(3)", evaluationElement: "분수 계산", maxScore: 2 }],
+    exampleAnswers: [{ id: "a", questionNumber: "2-(3)", mathNotation: correct,
+      pointItems: [{ id: "p1", criterion: "최종 답이 정확함", score: 2 }] }],
+  });
+  assert.equal(result.totalScore, 0);
+  assert.equal(result.questionResults[0].answerReading, "판독 불가");
+  assert.equal(result.hasMissingScores, true);
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
