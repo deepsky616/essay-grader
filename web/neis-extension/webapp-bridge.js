@@ -3,6 +3,7 @@
 const WEBAPP_ORIGIN = "https://deepsky616.github.io";
 const PAGE_SOURCE = "essay-grader-neis-page";
 const EXTENSION_SOURCE = "essay-grader-neis-extension";
+const OPEN_PANEL_EVENT = "essay-grader-neis-open-panel";
 
 function respond(type, requestId, payload = {}) {
   window.postMessage({
@@ -13,6 +14,13 @@ function respond(type, requestId, payload = {}) {
     ...payload,
   }, WEBAPP_ORIGIN);
 }
+
+window.addEventListener(OPEN_PANEL_EVENT, () => {
+  chrome.runtime.sendMessage({
+    type: "NEIS_OPEN_SIDE_PANEL_REQUEST",
+    version: 1,
+  }).catch(() => {});
+});
 
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.origin !== WEBAPP_ORIGIN) return;

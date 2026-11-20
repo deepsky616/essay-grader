@@ -2905,7 +2905,8 @@ const NEIS_PERFORMANCE_LEVELS = Object.freeze([
 ]);
 const NEIS_EXTENSION_PAGE_SOURCE = "essay-grader-neis-page";
 const NEIS_EXTENSION_RESPONSE_SOURCE = "essay-grader-neis-extension";
-const NEIS_EXTENSION_MIN_VERSION = "1.1.0";
+const NEIS_EXTENSION_OPEN_PANEL_EVENT = "essay-grader-neis-open-panel";
+const NEIS_EXTENSION_MIN_VERSION = "1.2.0";
 
 function neisExtensionRequestId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -2971,7 +2972,7 @@ function neisAutoFillPayload(records, course, design) {
 }
 
 async function requestNeisAutoFill(records, course, design) {
-  const response = await sendNeisExtensionMessage("NEIS_AUTO_FILL_REQUEST", neisAutoFillPayload(records, course, design), 30000);
+  const response = await sendNeisExtensionMessage("NEIS_AUTO_FILL_REQUEST", neisAutoFillPayload(records, course, design), 90000);
   return response.result || { ok: false, message: "NEIS 입력 결과를 확인하지 못했습니다." };
 }
 
@@ -3043,7 +3044,7 @@ function renderNeisTransferDialog(course, targetStudents) {
       <div class="neis-transfer-privacy"><strong>학생 정보와 NEIS 로그인 정보는 외부로 전송하지 않습니다.</strong><p>한 번 설치하는 브라우저 확장 도우미가 이 컴퓨터 안에서만 번호·이름을 대조한 뒤 NEIS의 ‘단계’ 칸만 입력합니다. 저장 버튼은 누르지 않으며 교사가 최종 확인합니다.</p></div>
       <div class="neis-transfer-toolbar"><label>입력할 학급<select data-neis-class>${classOptions.join("")}</select></label><div data-neis-ready-summary></div></div>
       <div class="neis-extension-state is-checking" data-neis-extension-state aria-live="polite"><div><strong>브라우저 확장 도우미 확인 중</strong><span>설치 여부를 확인하고 있습니다.</span></div><a href="./neis-extension-install.html" target="_blank" rel="noopener">설치 안내</a></div>
-      <ol class="neis-transfer-steps"><li><b>1</b><span>NEIS에서 학년도·학기·학년·반·교과·영역·성취기준을 선택하고 조회합니다.</span></li><li><b>2</b><span>아래 학생별 단계와 교사 검토 상태를 확인합니다.</span></li><li><b>3</b><span>‘NEIS 단계 자동 입력’을 누르면 도우미가 번호·이름을 모두 대조한 뒤 단계만 입력합니다.</span></li><li><b>4</b><span>NEIS 화면의 단계와 평가결과를 다시 확인한 뒤 교사가 직접 저장합니다.</span></li></ol>
+      <ol class="neis-transfer-steps"><li><b>1</b><span>NEIS에서 학년도·학기·학년·반·교과·영역·성취기준을 선택하고 조회합니다.</span></li><li><b>2</b><span>아래 학생별 단계와 교사 검토 상태를 확인합니다.</span></li><li><b>3</b><span>‘NEIS 단계 자동 입력’을 한 번 누르면 번호·이름을 대조한 뒤 단계 입력까지 자동으로 이어집니다.</span></li><li><b>4</b><span>NEIS 화면의 단계와 평가결과를 다시 확인한 뒤 교사가 직접 저장합니다.</span></li></ol>
       <section class="neis-level-groups" data-neis-level-groups aria-label="성취수준별 학생 묶음"></section>
       <section class="neis-transfer-list"><div class="neis-transfer-list-head"><div><strong>학생별 입력값 최종 확인</strong><p>교사 검토 완료 결과만 NEIS 입력 자료로 사용할 수 있습니다.</p></div><span data-neis-list-count></span></div><div class="neis-transfer-table" data-neis-transfer-table></div></section>
       <footer class="neis-transfer-actions"><p><strong>중요:</strong> NEIS 저장은 자동으로 누르지 않습니다. 반·성취기준과 학생별 단계를 교사가 최종 확인해 주세요.</p><div><button class="secondary-action" type="button" data-download-neis-transfer>NEIS 확인용 Excel</button><button class="secondary-action" type="button" data-copy-neis-transfer>번호·성취수준 복사</button><button class="primary-action neis-auto-fill-action" type="button" data-auto-fill-neis disabled>NEIS 단계 자동 입력</button></div></footer>
@@ -3171,15 +3172,16 @@ function openNeisTransferDialog(course, targetStudents) {
       const selected = selectedNeisTransferRecords(dialog, context?.records || []);
       if (!selected.length || selected.some((record) => !record.ready)) { showToast("교사 검토가 끝나지 않은 학생을 먼저 확인해 주세요."); return; }
       if (!dialog._neisExtensionReady) { showToast("브라우저 확장 도우미를 설치한 뒤 이 페이지를 새로고침해 주세요."); return; }
-      const confirmed = window.confirm(`${selected[0].classLabel}\n${context.design.taskName || "평가"}\n${selected.length}명의 NEIS 입력 자료를 준비합니다.\n\nNEIS에서 올바른 학급·영역·성취기준을 조회했는지 확인하셨나요?\n※ NEIS 탭 오른쪽 패널에서 입력을 시작하며 저장은 자동으로 누르지 않습니다.`);
+      const confirmed = window.confirm(`${selected[0].classLabel}\n${context.design.taskName || "평가"}\n${selected.length}명의 NEIS 단계를 자동으로 입력합니다.\n\nNEIS에서 올바른 학급·영역·성취기준을 조회했는지 확인하셨나요?\n※ 오른쪽 패널에서 진행 상황을 보여 주며 저장은 자동으로 누르지 않습니다.`);
       if (!confirmed) return;
+      window.dispatchEvent(new CustomEvent(NEIS_EXTENSION_OPEN_PANEL_EVENT));
       dialog._neisExtensionRunning = true;
-      setNeisExtensionState(dialog, "running", "NEIS 명단과 단계 대조 중", `${selected.length}명의 번호·이름을 확인한 뒤 NEIS 탭 오른쪽에 진행 패널을 엽니다.`);
+      setNeisExtensionState(dialog, "running", "NEIS 명단 대조·단계 입력 중", `${selected.length}명의 번호·이름을 확인한 뒤 단계 입력까지 자동으로 진행합니다.`);
       dialog._updateNeisTransfer?.();
       try {
         const result = await requestNeisAutoFill(selected, context.course, context.design);
         if (!result.ok) throw new Error(result.message || "NEIS 자동 입력을 완료하지 못했습니다.");
-        if (result.staged) {
+        if (result.staged && !result.completed) {
           setNeisExtensionState(dialog, "success", "오른쪽 입력 패널 준비 완료", result.message || "NEIS 탭 오른쪽 패널에서 자동 입력을 시작해 주세요.");
           showToast(result.panelOpened ? "NEIS 탭 오른쪽 패널에서 ‘자동 입력 시작’을 눌러 주세요." : "NEIS 탭에서 확장 도우미 아이콘을 눌러 입력 패널을 열어 주세요.");
         } else {
@@ -3206,7 +3208,7 @@ function openNeisTransferDialog(course, targetStudents) {
       dialog,
       ready ? "ready" : "missing",
       ready ? `브라우저 확장 도우미 ${extension.version} 연결됨` : outdated ? `확장 도우미 ${extension.version} 업데이트 필요` : "브라우저 확장 도우미 설치 필요",
-      ready ? "NEIS 탭 오른쪽 진행 패널에서 단계 자동 입력을 사용할 수 있습니다." : outdated ? `설치 안내에서 ${NEIS_EXTENSION_MIN_VERSION} 이상을 내려받아 다시 로드한 뒤 이 페이지를 새로고침해 주세요.` : "설치 안내를 열어 확장 도우미를 한 번 설치한 뒤 이 페이지를 새로고침해 주세요.",
+      ready ? "버튼 한 번으로 NEIS 단계 입력이 시작되며 오른쪽 패널에서 진행 상황을 확인할 수 있습니다." : outdated ? `설치 안내에서 ${NEIS_EXTENSION_MIN_VERSION} 이상을 내려받아 다시 로드한 뒤 이 페이지를 새로고침해 주세요.` : "설치 안내를 열어 확장 도우미를 한 번 설치한 뒤 이 페이지를 새로고침해 주세요.",
     );
     dialog._updateNeisTransfer?.();
   });

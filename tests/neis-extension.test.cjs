@@ -66,18 +66,78 @@ test("NEIS helper preflights every frame before applying to exactly one frame", 
   assert.match(background, /NEIS 단계 입력이 10초 안에 끝나지 않았습니다/);
 });
 
-test("NEIS helper stages a right-side panel and fills one verified student at a time", () => {
+test("NEIS helper opens a right-side panel and starts filling after one web-app click", () => {
+  assert.match(school, /dispatchEvent\(new CustomEvent\(NEIS_EXTENSION_OPEN_PANEL_EVENT\)\)/);
+  assert.match(bridge, /NEIS_OPEN_SIDE_PANEL_REQUEST/);
+  assert.match(background, /message\?\.type === "NEIS_OPEN_SIDE_PANEL_REQUEST"/);
+  assert.match(background, /chrome\.sidePanel\.open\(\{ windowId: sender\.tab\.windowId \}\)/);
   assert.match(background, /chrome\.sidePanel\.setOptions\(\{ tabId: tab\.id, path: "side-panel\.html", enabled: true \}\)/);
   assert.match(background, /chrome\.sidePanel\.open\(\{ tabId: tab\.id \}\)/);
-  assert.match(background, /staged: true/);
+  assert.match(background, /const completedJob = await runStagedSidePanelJob\(\)/);
+  assert.match(background, /completed: true/);
+  assert.match(background, /staged: false/);
   assert.match(background, /for \(let index = 0; index < job\.payload\.records\.length; index \+= 1\)/);
   assert.match(background, /const singlePayload = \{ \.\.\.job\.payload, records: \[record\] \}/);
-  assert.match(background, /waitForVisibleProgress\(450\)/);
+  assert.match(background, /waitForVisibleProgress\(180\)/);
   assert.match(sidePanel, /NEIS_SIDE_PANEL_START/);
   assert.match(sidePanel, /NEIS_SIDE_PANEL_CANCEL/);
   assert.match(sidePanel, /scrollIntoView/);
   assert.ok(fs.existsSync(path.join(root, "web", "neis-extension", "side-panel.html")));
   assert.ok(fs.existsSync(path.join(root, "web", "neis-extension", "side-panel.css")));
+});
+
+test("NEIS web-app click opens the panel immediately and completes input without a second click", async () => {
+  let messageListener = null;
+  const openedPanels = [];
+  const appliedRecords = [];
+  const chrome = {
+    runtime: {
+      onConnect: { addListener: () => {} },
+      onMessage: { addListener: (listener) => { messageListener = listener; } },
+    },
+    sidePanel: {
+      setPanelBehavior: () => Promise.resolve(),
+      setOptions: () => Promise.resolve(),
+      open: (target) => { openedPanels.push(target); return Promise.resolve(); },
+    },
+    tabs: {
+      query: async () => [{ id: 42, windowId: 7, url: "https://goe.neis.go.kr/" }],
+      update: async () => {},
+    },
+    windows: { update: async () => {} },
+    scripting: {
+      executeScript: async ({ args }) => {
+        if (args[1] === false) return [{ frameId: 11, result: { status: "ready", method: "cpr-model", matched: args[0].records.length, missing: [] } }];
+        appliedRecords.push(args[0].records[0]);
+        return [{ frameId: 11, result: { status: "ok", method: "cpr-model", matched: 1, updated: 1, already: 0, missing: [] } }];
+      },
+    },
+  };
+  new Function("chrome", background)(chrome);
+  assert.equal(typeof messageListener, "function");
+  const sender = { tab: { id: 3, windowId: 7, url: "https://deepsky616.github.io/essay-grader/#/" } };
+  const openResult = await new Promise((resolve) => {
+    assert.equal(messageListener({ type: "NEIS_OPEN_SIDE_PANEL_REQUEST", version: 1 }, sender, resolve), true);
+  });
+  assert.deepEqual(openResult, { ok: true });
+  assert.deepEqual(openedPanels[0], { windowId: 7 });
+
+  const payload = {
+    classLabel: "가람초 · 5학년 3반",
+    course: "미술",
+    assessment: "책가도 감상",
+    records: [
+      { number: "1", name: "가람", level: "매우잘함" },
+      { number: "2", name: "나래", level: "보통" },
+    ],
+  };
+  const result = await new Promise((resolve) => {
+    assert.equal(messageListener({ type: "NEIS_AUTO_FILL_REQUEST", version: 1, payload }, sender, resolve), true);
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.completed, true);
+  assert.equal(result.staged, false);
+  assert.deepEqual(appliedRecords.map((record) => record.number), ["1", "2"]);
 });
 
 test("NEIS helper matches student names and levels despite display-only spacing", async () => {
@@ -248,7 +308,7 @@ test("NEIS helper never sends data to a server or presses the NEIS save button",
 
 test("the grading web app detects the extension and keeps copy and Excel fallbacks", () => {
   assert.match(school, /function detectNeisExtension\(\)/);
-  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.1\.0"/);
+  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.2\.0"/);
   assert.match(school, /확장 도우미 \$\{extension\.version\} 업데이트 필요/);
   assert.match(school, /NEIS_AUTO_FILL_REQUEST/);
   assert.match(school, /data-auto-fill-neis disabled>NEIS 단계 자동 입력/);
@@ -256,7 +316,7 @@ test("the grading web app detects the extension and keeps copy and Excel fallbac
   assert.match(school, /오른쪽 입력 패널 준비 완료/);
   assert.match(school, /data-copy-neis-transfer/);
   assert.match(school, /data-download-neis-transfer/);
-  assert.match(install, /href="\.\/neis-extension\.zip\?version=1\.1\.0" download/);
+  assert.match(install, /href="\.\/neis-extension\.zip\?version=1\.2\.0" download/);
   assert.match(bridge, /chrome\.runtime\.getManifest\(\)\.version/);
   assert.ok(fs.existsSync(path.join(root, "web", "neis-extension.zip")), "extension ZIP must be packaged");
 });

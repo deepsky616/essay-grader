@@ -25,6 +25,7 @@ const elements = {
 
 const STATUS_TITLES = {
   idle: "입력 준비 없음",
+  checking: "NEIS 명단 대조 중",
   ready: "명단 대조 완료",
   running: "NEIS 입력 중",
   complete: "입력 완료",
@@ -74,7 +75,13 @@ function render(state) {
   elements.progress.hidden = !hasJob;
   elements.students.hidden = !hasJob;
   elements.start.disabled = status !== "ready";
-  elements.start.textContent = status === "complete" ? "입력 완료" : "자동 입력 시작";
+  elements.start.textContent = status === "checking"
+    ? "입력 준비 중"
+    : status === "running"
+      ? "자동 입력 중"
+      : status === "complete"
+        ? "입력 완료"
+        : "자동 입력 시작";
   elements.cancel.hidden = status !== "running";
 
   if (!hasJob) return;
