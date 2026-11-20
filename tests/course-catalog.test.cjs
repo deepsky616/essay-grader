@@ -1,451 +1,20 @@
-"use strict";
-
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-
-const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
-const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
-
-function loadSubjectCatalog() {
-  const start = source.indexOf("const COURSE_SUBJECTS_BY_GRADE");
-  const end = source.indexOf("const ACHIEVEMENT_LEVEL_EXAMPLES", start);
-  assert.ok(start >= 0 && end > start, "course subject catalog must exist");
-  return new Function(`${source.slice(start, end)}; return COURSE_SUBJECTS_BY_GRADE;`)();
-}
-
-function loadQuestionScoreHelpers() {
-  const bandsStart = source.indexOf("const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS");
-  const bandsEnd = source.indexOf("\n\nconst app", bandsStart);
-  const achievementLevelsStart = source.indexOf("function achievementLevelBandKey");
-  const achievementLevelsEnd = source.indexOf("function designEditor", achievementLevelsStart);
-  const start = source.indexOf("function positiveDesignScore");
-  const end = source.indexOf("function bindDesignTab", start);
-  const alignStart = source.indexOf("function alignGeneratedRubrics");
-  const alignEnd = source.indexOf("async function generateRubricWithAi", alignStart);
-  const normalizeStart = source.indexOf("function normalizeRubricCriteria");
-  const normalizeEnd = source.indexOf("function rubricGroupMaxScore", normalizeStart);
-  const achievementScoresStart = source.indexOf("function achievementRangeQuestionKeys");
-  const achievementScoresEnd = source.indexOf("function derivedAchievementResults", achievementScoresStart);
-  assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && achievementLevelsStart >= 0 && achievementLevelsEnd > achievementLevelsStart && start >= 0 && end > start && alignStart >= 0 && alignEnd > alignStart && normalizeStart >= 0 && normalizeEnd > normalizeStart && achievementScoresStart >= 0 && achievementScoresEnd > achievementScoresStart, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(achievementLevelsStart, achievementLevelsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}\n${source.slice(achievementScoresStart, achievementScoresEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, rubricAllocationsFromLinkedExamples, alignGeneratedRubrics, normalizeRubricCriteria, normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries };`)();
-}
-
-test("grades 1 and 2 offer the five lower-primary subjects", () => {
-  const catalog = loadSubjectCatalog();
-  const expected = ["êµ­ì–´", "ìˆ˜í•™", "ë°”ë¥¸ ìƒí™œ", "ìŠ¬ê¸°ë¡œìš´ ìƒí™œ", "ì¦ê±°ìš´ ìƒí™œ"];
-  assert.deepEqual([...catalog["1"]], expected);
-  assert.deepEqual([...catalog["2"]], expected);
-});
-
-test("the interface uses readable body and control text without enlarging page titles", () => {
-  const printableReportStart = styles.indexOf(".result-print-preview .result-report-sheet");
-  const interfaceStyles = styles.slice(0, printableReportStart);
-  assert.match(interfaceStyles, /body\s*\{[\s\S]*?font-size:\s*16px;[\s\S]*?line-height:\s*1\.55;/);
-  assert.doesNotMatch(interfaceStyles, /font-size:\s*(?:[0-9]|1[01])px;/);
-  assert.match(interfaceStyles, /\.primary-action\s*\{[\s\S]*?font-size:\s*16px;/);
-  assert.match(interfaceStyles, /\.design-form-status\s*\{[^}]*font-size:\s*13px;/);
-  assert.match(interfaceStyles, /\.school-hero h1\s*\{[^}]*font-size:\s*clamp\(52px, 7vw, 82px\);/);
-});
-
-test("the rubric AI action has its own unclipped launch row", () => {
-  assert.match(source, /data-open-rubric-ai>ì±„ì ê¸°ì¤€ AI ìƒì„±<\/button>/);
-  assert.match(source, /class="rubric-ai-launch"[\s\S]*?data-open-rubric-ai>ì±„ì ê¸°ì¤€ AI ìƒì„±<\/button>/);
-  assert.match(source, /class="editor-section-title rubric-section-title"[\s\S]*?data-add-rubric>ï¼‹ í‰ê°€ìš”ì†Œ ì¶”ê°€<\/button><\/div>[\s\S]*?class="rubric-ai-launch"/);
-  assert.match(styles, /\.rubric-ai-launch \{[^}]*grid-template-columns: minmax\(0,1fr\) auto;[^}]*gap: 18px;/);
-  assert.match(styles, /\.rubric-ai-launch > button \{[^}]*min-width: max-content;[^}]*white-space: nowrap;[^}]*word-break: keep-all;[^}]*writing-mode: horizontal-tb;/);
-  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.rubric-ai-launch \{ grid-template-columns: 1fr;/);
-});
-
-test("AI grading guidance cards wrap long Korean copy without text overlap", () => {
-  assert.match(source, /<strong>í•™ìƒìš© í‰ê°€ì§€ ë¹„êµ<\/strong>/);
-  assert.match(source, /<strong>ì‹ ì› ì‚­ì œÂ·ê³ í•´ìƒë„ ë³´ì •<\/strong>/);
-  assert.match(source, /<strong>ë¹ ë¥¸ ì„ ë³„ ê²€ì¦ ì±„ì <\/strong>/);
-  assert.match(styles, /\.grading-quality-grid article \{[^}]*min-height: 156px;[^}]*padding: 20px;/);
-  assert.match(styles, /\.grading-quality-grid article > div \{[^}]*gap: 7px;/);
-  assert.match(styles, /\.grading-quality-grid strong \{[^}]*line-height: 1\.45;[^}]*word-break: keep-all;/);
-  assert.match(styles, /\.grading-quality-grid p \{[^}]*line-height: 1\.7;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;[^}]*word-break: keep-all;/);
-  assert.doesNotMatch(styles, /\.grading-quality-grid p \{[^}]*white-space: nowrap;/);
-});
-
-test("grades 3 and 4 offer the requested nine subjects without practical arts", () => {
-  const catalog = loadSubjectCatalog();
-  const expected = ["êµ­ì–´", "ì‚¬íšŒ", "ë„ë•", "ìˆ˜í•™", "ê³¼í•™", "ì²´ìœ¡", "ìŒì•…", "ë¯¸ìˆ ", "ì˜ì–´"];
-  assert.deepEqual([...catalog["3"]], expected);
-  assert.deepEqual([...catalog["4"]], expected);
-  assert.ok(!catalog["4"].includes("ì‹¤ê³¼"));
-});
-
-test("grades 5 and 6 include practical arts in the requested subject order", () => {
-  const catalog = loadSubjectCatalog();
-  const expected = ["êµ­ì–´", "ì‚¬íšŒ", "ë„ë•", "ìˆ˜í•™", "ê³¼í•™", "ì‹¤ê³¼", "ì²´ìœ¡", "ìŒì•…", "ë¯¸ìˆ ", "ì˜ì–´"];
-  assert.deepEqual([...catalog["5"]], expected);
-  assert.deepEqual([...catalog["6"]], expected);
-});
-
-test("course form and evaluation targets follow the selected course grade", () => {
-  assert.match(source, /<label>í•™ë…„<select name="grade">\$\{gradeOptions/);
-  assert.match(source, /form\.elements\.grade\.addEventListener\("change"/);
-  assert.match(source, /subjectOptions\(form\.elements\.grade\.value, previousSubject\)/);
-  assert.match(source, /student\.grade === courseGrade/);
-  assert.match(source, /targetStudentIds: gradeChanged \? \[\]/);
-});
-
-test("course setup uses the teacher-facing term êµê³¼ instead of ê³¼ëª©", () => {
-  assert.match(source, /í•´ë‹¹ í•™ë…„êµ°ì—ì„œ ìš´ì˜í•˜ëŠ” êµê³¼ë¥¼ ì„ íƒ/);
-  assert.match(source, /<label>êµê³¼<select name="subject">/);
-  assert.doesNotMatch(source, /<label>ê³¼ëª©<select name="subject">/);
-});
-
-test("assessment design selects curriculum standards by domain and can generate rubric bands with AI", () => {
-  assert.match(source, /name="achievementDomain"/);
-  assert.match(source, /name="achievementCode"/);
-  assert.match(source, /CurriculumStandards\?\.find/);
-  assert.match(source, /<strong>ì„±ì·¨ìˆ˜ì¤€ ìž…ë ¥<\/strong>/);
-  assert.doesNotMatch(source, /<strong>ì„±ì·¨ê¸°ì¤€ ìž…ë ¥<\/strong>/);
-  assert.match(source, /normalizeAchievementLevels/);
-  assert.match(source, /data-achievement-band-range/);
-  assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>ì„±ì·¨ìˆ˜ì¤€ ìž…ë ¥<\/strong>[\s\S]*?<strong>ë¬¸ì œë³„ í‰ê°€ìš”ì†Œ ê¸°ì¤€ ìž…ë ¥<\/strong>/);
-  assert.match(source, /ì„±ì·¨ê¸°ì¤€ê³¼ \$\{levels\.length\}ê°œ ì„±ì·¨ìˆ˜ì¤€ì„ ìžë™ ìž…ë ¥/);
-  assert.match(source, /data-open-rubric-ai>ì±„ì ê¸°ì¤€ AI ìƒì„±/);
-  assert.match(source, /name="rubricAiBandCount"/);
-  assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
-  assert.match(source, /data-extract-document="design">AIë¡œ 1~3 ìžë™ ìž…ë ¥/);
-  assert.match(source, /prepareEvaluationReferenceImages\(file\)/);
-  assert.match(source, /ë¶„ìˆ˜ëŠ” 2ì°¨ ê²€ì¦ í›„ ìžë™ ìž…ë ¥/);
-  assert.match(source, /page\.getTextContent\(\)/);
-  assert.match(source, /pdfjsLib\?\.Util\?\.transform/);
-  assert.match(source, /ë¬¸ì œ-\$\{anchor\.number\}-ì˜ˆì‹œë‹µì•ˆ/);
-  assert.match(source, /ì›ë³¸í™•ëŒ€/);
-  assert.match(source, /ê³ ëŒ€ë¹„í™•ëŒ€/);
-  assert.match(source, /<strong>í•™ìƒìš© í‰ê°€ì§€ ë“±ë¡<\/strong>/);
-  assert.match(source, /êµì‚¬ìš© ê¸°ì¤€ì•ˆÂ·ì˜ˆì‹œë‹µì•ˆ íŽ˜ì´ì§€ëŠ” ì œì™¸/);
-});
-
-test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, rubricAllocationsFromLinkedExamples, normalizeRubricCriteria } = loadQuestionScoreHelpers();
-  assert.equal(questionScoreGroupKey("1-(1)"), "1");
-  assert.equal(questionScoreGroupKey("1-(2)"), "1");
-  assert.equal(questionScoreGroupKey("ë¬¸í•­ 2-â‘ "), "2");
-  assert.equal(questionScoreGroupKey("ì„œìˆ í˜• A"), "ì„œìˆ í˜•A");
-  assert.deepEqual(Array.from(exampleQuestionScoreMap([
-    { questionNumber: "1-(1)", maxScore: 2, pointItems: [{ score: 0.5 }, { score: 1.5 }] },
-    { questionNumber: "1-(2)", maxScore: 3 },
-    { questionNumber: "2", maxScore: 4 },
-  ]).entries()), [["1", 5], ["2", 4]]);
-  assert.deepEqual(allocateQuestionScore(10, 3), [3.5, 3.5, 3]);
-  assert.deepEqual(buildEqualExamplePointItems(6, 3).map((item) => item.score), [2, 2, 2]);
-  assert.deepEqual(buildEqualExamplePointItems(5, 3).map((item) => item.score), [2, 1.5, 1.5]);
-  assert.equal(buildEqualExamplePointItems(6, 3, [{ id: "saved", criterion: "ì²« ê¸°ì¤€" }])[0].criterion, "ì²« ê¸°ì¤€");
-  assert.throws(() => buildEqualExamplePointItems(0.5, 2), /ì´ ë°°ì ì„ ë†’ì´ê±°ë‚˜ ê¸°ì¤€ ìˆ˜ë¥¼ ì¤„ì—¬/);
-  assert.deepEqual(prepareExtractedExampleAnswers([
-    { questionNumber: "1-(1)", maxScore: 0 },
-    { questionNumber: "1-(2)", maxScore: 0 },
-    { questionNumber: "2", maxScore: 0 },
-  ], new Map([["1", 3], ["2", 2]])).map((item) => item.maxScore), [1.5, 1.5, 2]);
-  assert.deepEqual(performanceBandScores(10), [10, 7, 5, 3]);
-  assert.deepEqual(performanceBandScores(5), [5, 3.5, 2.5, 1.5]);
-  const customThresholds = { excellent: 85, good: 65, average: 45, effort: 25 };
-  assert.equal(performanceThresholdsAreValid(customThresholds), true);
-  assert.equal(performanceThresholdsAreValid({ excellent: 80, good: 80, average: 40, effort: 20 }), false);
-  assert.deepEqual(performanceBandScores(10, customThresholds), [10, 7.5, 5.5, 3.5]);
-  assert.deepEqual(performanceBandDefinitions(customThresholds).map((band) => band.range), ["85% ì´ìƒ", "65% ì´ìƒ 85% ë¯¸ë§Œ", "45% ì´ìƒ 65% ë¯¸ë§Œ", "25% ì´ìƒ 45% ë¯¸ë§Œ"]);
-  assert.equal(achievementBandForScore(8, 10).label, "ë§¤ìš°ìž˜í•¨");
-  assert.equal(achievementBandForScore(7.9, 10).label, "ìž˜í•¨");
-  assert.equal(achievementBandForScore(4, 10).label, "ë³´í†µ");
-  assert.equal(achievementBandForScore(0, 10).label, "ë…¸ë ¥ìš”í•¨");
-  assert.equal(achievementBandForScore(8.4, 10, customThresholds).label, "ìž˜í•¨");
-  assert.equal(achievementBandForScore(0, 0).label, "ì‚°ì • ì „");
-  const dynamicLevels = { levels: [
-    { id: "l1", label: "íƒì›”", minimum: 90 },
-    { id: "l2", label: "ìš°ìˆ˜", minimum: 80 },
-    { id: "l3", label: "ì¶©ì‹¤", minimum: 60 },
-    { id: "l4", label: "ê¸°ì´ˆ", minimum: 40 },
-    { id: "l5", label: "ì§€ì›í•„ìš”", minimum: 30 },
-  ] };
-  assert.equal(performanceThresholdsAreValid(dynamicLevels), true);
-  assert.equal(performanceThresholdsAreValid({ levels: [{ label: "ì¤‘ë³µ", minimum: 80 }, { label: "ì¤‘ë³µ", minimum: 40 }] }), false);
-  assert.deepEqual(performanceBandDefinitions(dynamicLevels).map((band) => band.label), ["íƒì›”", "ìš°ìˆ˜", "ì¶©ì‹¤", "ê¸°ì´ˆ", "ì§€ì›í•„ìš”"]);
-  assert.deepEqual(performanceBandScores(10, dynamicLevels), [10, 8.5, 7, 5, 3.5]);
-  assert.equal(achievementBandForScore(7.2, 10, dynamicLevels).label, "ì¶©ì‹¤");
-  assert.equal(rubricPerformanceLevels([], dynamicLevels).length, 5);
-  const savedDynamicRubric = normalizeRubricCriteria([{ questionNumber: "1", evaluationElement: "ì„¤ëª…", scoreLevels: [
-    { id: "score-1", bandId: "l1", score: 10, criterion: "íƒì›” ê¸°ì¤€" },
-    { id: "score-2", bandId: "l2", score: 8.5, criterion: "ìš°ìˆ˜ ê¸°ì¤€" },
-    { id: "score-3", bandId: "l3", score: 7, criterion: "ì¶©ì‹¤ ê¸°ì¤€" },
-    { id: "score-4", bandId: "l4", score: 5, criterion: "ê¸°ì´ˆ ê¸°ì¤€" },
-    { id: "score-5", bandId: "l5", score: 3.5, criterion: "ì§€ì› ê¸°ì¤€" },
-  ] }], dynamicLevels);
-  assert.deepEqual(savedDynamicRubric[0].scoreLevels.map((level) => level.bandId), ["l1", "l2", "l3", "l4", "l5"]);
-  assert.deepEqual(savedDynamicRubric[0].scoreLevels.map((level) => level.criterion), ["íƒì›” ê¸°ì¤€", "ìš°ìˆ˜ ê¸°ì¤€", "ì¶©ì‹¤ ê¸°ì¤€", "ê¸°ì´ˆ ê¸°ì¤€", "ì§€ì› ê¸°ì¤€"]);
-  assert.deepEqual(rubricPerformanceLevels([
-    { id: "high", score: 10, criterion: "ì™„ì „í•œ ìˆ˜í–‰" },
-    { id: "middle", score: 5, criterion: "ë¶€ë¶„ ìˆ˜í–‰" },
-    { id: "zero", score: 0, criterion: "ë¬´ì‘ë‹µ" },
-  ]).map((level) => level.score), [10, 7, 5, 3]);
-  assert.deepEqual(derivedBandScores(5, [10, 7, 0]), [5, 3.5, 0]);
-  assert.deepEqual(derivedBandScores(10, [10, 7, 5, 3]), [10, 7, 5, 3]);
-  const allocations = rubricAllocationsFromElements([
-    { questionNumber: "1" },
-    { questionNumber: "1" },
-    { questionNumber: "2" },
-  ], new Map([["1", 10], ["2", 6]]));
-  assert.deepEqual(Array.from(allocations.values()), [5, 5, 6]);
-  const linkedAllocations = rubricAllocationsFromLinkedExamples([
-    { id: "r1", questionNumber: "1", evaluationElement: "ê³„ì‚°" },
-    { id: "r2", questionNumber: "1", evaluationElement: "ì„¤ëª…" },
-    { id: "r3", questionNumber: "2", evaluationElement: "í‘œí˜„" },
-  ], [
-    { questionNumber: "1-(1)", maxScore: 4, evaluationElementIds: ["r1"] },
-    { questionNumber: "1-(2)", maxScore: 2, evaluationElementIds: ["r1", "r2"] },
-    { questionNumber: "2", maxScore: 6, evaluationElementIds: [] },
-  ]);
-  assert.deepEqual(Array.from(linkedAllocations.allocations.values()), [5, 1, 6]);
-  assert.deepEqual(linkedAllocations.questionLabels.get(0), ["1-(1)", "1-(2)"]);
-  assert.match(source, /name="exampleEvaluationElement" type="checkbox"/);
-  assert.match(source, /evaluationElementIds: Array\.from\(row\.querySelectorAll/);
-  assert.match(source, /syncRubricQuestionNumbersFromExampleLinks\(form\)/);
-  assert.match(styles, /\.example-evaluation-linker \{/);
-  assert.match(source, /name="examplePointScore" type="number" min="0\.5" step="0\.5"/);
-  assert.match(source, /data-add-example-point>ï¼‹ ë°°ì  ì¶”ê°€/);
-  assert.match(source, /data-example-auto-total/);
-  assert.match(source, /data-example-auto-count/);
-  assert.match(source, /data-build-example-points>ê· ë“± ë°°ì  ë§Œë“¤ê¸°/);
-  assert.match(source, /buildEqualExamplePointItems\(card\.querySelector/);
-  assert.match(styles, /\.example-point-auto-builder \{/);
-  assert.match(source, /ë°°ì  í•­ëª©ì´ 1ê°œë¿ì´ë©´ ë‹µì´ í‹€ë ¸ì„ ë•Œ í•´ë‹¹ ë¬¸ì œëŠ” 0ì /);
-  assert.match(source, /pointItems\.reduce\(\(sum, point\) => sum \+ point\.score, 0\)/);
-  assert.match(source, /name="rubricScore" type="hidden"/);
-  assert.match(source, /data-question-score-summary/);
-  assert.match(source, /ë¬¸ì œë³„ ë°°ì  ì´í•©/);
-  assert.match(source, /name="performanceLevelLabel"/);
-  assert.match(source, /name="performanceLevelMin"/);
-  assert.match(source, /data-add-performance-level>ï¼‹ ì„±ì·¨ìˆ˜ì¤€ ì¶”ê°€/);
-  assert.match(source, /data-remove-performance-level/);
-  assert.match(source, /MIN_PERFORMANCE_LEVELS = 2/);
-  assert.match(source, /MAX_PERFORMANCE_LEVELS = 6/);
-  assert.match(source, /data-rubric-lowest-level-guide/);
-  assert.match(source, /guide\.textContent = `ë¯¸ì‘ë‹µ ë˜ëŠ” ê·¼ê±° ì—†ìŒë„ ë³„ë„ í–‰ ì—†ì´ \$\{definitions\.at\(-1\)\?\.label/);
-  assert.doesNotMatch(source, /key: "effortZero"/);
-  assert.match(source, /ë¯¸ì‘ë‹µ ë˜ëŠ” ê·¼ê±° ì—†ìŒë„ \$\{definitions\.at\(-1\)\?\.label/);
-  assert.match(source, /performanceThresholds,/);
-  assert.match(source, /rubricQuestionMaxScoreMap\(rubricCriteria\)/);
-  assert.match(source, /ë¬¸ì œ ë°°ì ë³´ë‹¤ í‰ê°€ìš”ì†Œ ìˆ˜ê°€ ë§ŽìŠµë‹ˆë‹¤/);
-  assert.match(styles, /\.question-score-summary \{/);
-  assert.match(styles, /\.rubric-derived-score \{/);
-  assert.match(styles, /\.performance-threshold-grid article \{/);
-});
-
-test("achievement levels aggregate every linked evaluation element using the shared thresholds", () => {
-  const { normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries } = loadQuestionScoreHelpers();
-  const legacy = normalizeAchievementLevels([
-    { id: "high", label: "ìƒ", description: "ì •í™•ížˆ í•´ê²°í•¨" },
-    { id: "middle", label: "ì¤‘", description: "ë¶€ë¶„ì ìœ¼ë¡œ í•´ê²°í•¨" },
-    { id: "low", label: "í•˜", description: "ë„ì›€ì„ ë°›ì•„ ì‹œë„í•¨" },
-  ]);
-  assert.deepEqual(legacy.map((level) => level.label), ["ë§¤ìš°ìž˜í•¨", "ìž˜í•¨", "ë³´í†µ", "ë…¸ë ¥ìš”í•¨"]);
-  assert.equal(legacy[0].description, "ì •í™•ížˆ í•´ê²°í•¨");
-  assert.equal(legacy[2].description, "ë¶€ë¶„ì ìœ¼ë¡œ í•´ê²°í•¨");
-  assert.equal(legacy[3].description, "ë„ì›€ì„ ë°›ì•„ ì‹œë„í•¨");
-  const defaults = normalizeAchievementLevels([]);
-  assert.match(defaults[0].description, /ì„±ì·¨ê¸°ì¤€ì„ ì¶©ë¶„ížˆ ì¶©ì¡±/);
-  assert.match(defaults[3].description, /ì„±ì·¨ê¸°ì¤€ê³¼ ê´€ë ¨ëœ ê¸°ì´ˆì ì¸ ì‹œë„/);
-  assert.doesNotMatch(defaults.map((level) => level.description).join(" "), /ì„±ì·¨ê¸°ì¤€(?:ë¥¼|ì™€)/);
-  const customLevels = normalizeAchievementLevels([], { levels: [
-    { id: "custom-1", label: "íƒì›”", minimum: 90 },
-    { id: "custom-2", label: "ì¶©ì‹¤", minimum: 60 },
-    { id: "custom-3", label: "ì§€ì›í•„ìš”", minimum: 30 },
-  ] });
-  assert.deepEqual(customLevels.map((level) => level.label), ["íƒì›”", "ì¶©ì‹¤", "ì§€ì›í•„ìš”"]);
-  assert.deepEqual(customLevels.map((level) => level.bandId), ["custom-1", "custom-2", "custom-3"]);
-  assert.deepEqual(achievementRangeQuestionKeys("1~2ë²ˆ", ["1", "2", "3"]), ["1", "2"]);
-  assert.deepEqual(achievementRangeQuestionKeys("1-(1), 1-(2)", ["1", "2"]), ["1"]);
-
-  const summaries = achievementPerformanceSummaries({
-    performanceThresholds: { excellent: 80, good: 60, average: 40, effort: 20 },
-    achievementGroups: [
-      { id: "a1", itemRange: "1~2ë²ˆ", standard: "ê³„ì‚°í•˜ê³  ì„¤ëª…í•œë‹¤" },
-      { id: "a2", itemRange: "3ë²ˆ", standard: "ê·¼ê±°ë¥¼ ì œì‹œí•œë‹¤" },
-    ],
-  }, [
-    { questionNumber: "1", maxScore: 5 },
-    { questionNumber: "1", maxScore: 5 },
-    { questionNumber: "2", maxScore: 10 },
-    { questionNumber: "3", maxScore: 10 },
-  ], [4, 3, 9, 5]);
-  assert.deepEqual(summaries.map((item) => ({ score: item.score, maxScore: item.maxScore, level: item.band.label })), [
-    { score: 16, maxScore: 20, level: "ë§¤ìš°ìž˜í•¨" },
-    { score: 5, maxScore: 10, level: "ë³´í†µ" },
-  ]);
-  assert.match(source, /form\.querySelectorAll\("\[data-rubric-group\]"\)\.forEach\(\(group\) => \{[\s\S]*?group\.querySelectorAll\("\[data-rubric-score\]"\)\.forEach/);
-  assert.match(source, /derivedAchievementResults\(design, result/);
-});
-
-test("every requested evaluation element keeps four performance levels without AI extras", () => {
-  const { alignGeneratedRubrics, normalizeRubricCriteria } = loadQuestionScoreHelpers();
-  const requested = [
-    { questionNumber: "1", evaluationElement: "ê³„ì‚° ê³¼ì •", maxScore: 5, scoreValues: [5, 3.5, 2.5, 1.5] },
-    { questionNumber: "1", evaluationElement: "ì„¤ëª… ê·¼ê±°", maxScore: 5, scoreValues: [5, 3.5, 2.5, 1.5] },
-  ];
-  const aligned = alignGeneratedRubrics({ rubricCriteria: [
-    { questionNumber: "1", evaluationElement: "ê³„ì‚° ê³¼ì •", scoreLevels: [{ score: 1.5, criterion: "ê¸°ì´ˆì ì¸ ì‹œë„ ë˜ëŠ” ë¯¸ì‘ë‹µ" }] },
-    { questionNumber: "1", evaluationElement: "ì„¤ëª… ê·¼ê±°", scoreLevels: [
-      { score: 5, criterion: "ê·¼ê±°ê°€ ì™„ì „í•¨" },
-      { score: 3.5, criterion: "ê·¼ê±°ê°€ ëŒ€ì²´ë¡œ ë§žìŒ" },
-      { score: 2.5, criterion: "ê·¼ê±°ê°€ ì¼ë¶€ ìžˆìŒ" },
-      { score: 1.5, criterion: "ê·¼ê±°ê°€ ì—†ê±°ë‚˜ ë¯¸ì‘ë‹µ" },
-    ] },
-    { questionNumber: "2", evaluationElement: "AIê°€ ìž„ì˜ë¡œ ì¶”ê°€í•œ ìš”ì†Œ", scoreLevels: [] },
-  ] }, requested);
-  assert.equal(aligned.length, 2);
-  assert.deepEqual(aligned.map((item) => item.evaluationElement), ["ê³„ì‚° ê³¼ì •", "ì„¤ëª… ê·¼ê±°"]);
-  assert.ok(aligned.every((item) => item.scoreLevels.length === 4));
-  assert.match(aligned[0].scoreLevels[3].criterion, /ë¯¸ì‘ë‹µ/);
-
-  const partial = alignGeneratedRubrics({ rubricCriteria: [
-    { questionNumber: "1", evaluationElement: "ì„¤ëª… ê·¼ê±°", scoreLevels: [{ score: 5, criterion: "ì„¤ëª… ê·¼ê±° ì „ìš© ë§Œì  ê¸°ì¤€" }] },
-  ] }, requested);
-  assert.doesNotMatch(partial[0].scoreLevels[0].criterion, /ì„¤ëª… ê·¼ê±° ì „ìš©/);
-  assert.match(partial[1].scoreLevels[0].criterion, /ì„¤ëª… ê·¼ê±° ì „ìš©/);
-
-  const repaired = normalizeRubricCriteria([{ questionNumber: "3", evaluationElement: "í‘œí˜„", scoreLevels: [{ score: 0, criterion: "ë¯¸ì‘ë‹µ" }] }]);
-  assert.equal(repaired.length, 1);
-  assert.equal(repaired[0].scoreLevels.length, 4);
-  assert.match(repaired[0].scoreLevels[3].criterion, /ë¯¸ì‘ë‹µ/);
-  assert.match(source, /í‰ê°€ìš”ì†Œ í•©ì‚° ì ìˆ˜/);
-  assert.match(source, /data-question-level/);
-});
-
-test("assessment document AI input shows a visible five-stage progress card", () => {
-  assert.match(source, /data-document-progress="\$\{kind\}"/);
-  assert.match(source, /data-document-progress-percent/);
-  assert.match(source, /data-document-progress-bar/);
-  assert.match(source, /data-document-progress-step="\$\{index\}"/);
-  assert.match(source, /ìž‘ì€ ìˆ˜ì‹Â·ë¶„ìˆ˜ ê³ í•´ìƒë„ í™•ëŒ€ ì¤‘/);
-  assert.match(source, /AIê°€ ë¬¸ì„œ ë‚´ìš©ì„ êµ¬ì¡°í™”í•˜ëŠ” ì¤‘/);
-  assert.match(source, /ë¶„ìžÂ·ë¶„ëª¨ì™€ ê³„ì‚°ì‹ 2ì°¨ ê²€ì¦ ì¤‘/);
-  assert.match(source, /ë¶„ì„ ê²°ê³¼ë¥¼ í™”ë©´ì— ìž…ë ¥í•˜ëŠ” ì¤‘/);
-  assert.match(source, /status: "complete"/);
-  assert.match(source, /status: "error"/);
-  assert.match(styles, /\.document-analysis-progress \{[^}]*border:[^}]*background:/);
-  assert.match(styles, /\.document-analysis-progress ol \{[^}]*grid-template-columns: repeat\(5/);
-  assert.match(styles, /@keyframes document-progress-spin/);
-});
-
-test("easy math input is collapsible and opens by default only for math courses", () => {
-  assert.match(source, /<details class="example-math-disclosure" data-example-math-disclosure \$\{options\.mathOpen \? "open" : ""\}>/);
-  assert.match(source, /exampleEditorRow\(item, \{ mathOpen: course\.subject === "ìˆ˜í•™" \}\)/);
-  assert.match(source, /data-example-math-disclosure/);
-  assert.match(styles, /\.example-math-disclosure\[open\] summary/);
-});
-
-test("example-answer fields use teacher-friendly labels and inclusive guidance", () => {
-  assert.match(source, /<label>ì˜ˆì‹œ ë‹µì•ˆ <small>í’€ì´ ê³¼ì •ê³¼ ì •ë‹µì„ êµì‚¬ê°€ ë°”ë¡œ ì´í•´í•  ìˆ˜ ìžˆëŠ” ë¬¸ìž¥ìœ¼ë¡œ ìž…ë ¥í•˜ì„¸ìš”/);
-  assert.match(source, /<label>ì˜ˆì‹œ ë‹µì•ˆ ì„¤ëª… <small>í‘œÂ·ê·¸ë¦¼Â·ë„í˜•Â·ê·¸ëž˜í”„ ë“± ê¸€ë¡œ ë³´ì™„í•  ë‚´ìš©ì„ ìž…ë ¥í•˜ì„¸ìš”/);
-  assert.doesNotMatch(source, /<label>ë‹µì•ˆì— ëŒ€í•œ ì„¤ëª…/);
-  assert.doesNotMatch(source, /<label>ë„í˜•Â·ê·¸ëž˜í”„ ì„¤ëª…/);
-});
-
-test("assessment design files can clear a new selection or remove and restore a saved file", () => {
-  const { designFilePickerState } = loadQuestionScoreHelpers();
-  assert.deepEqual(designFilePickerState("ìƒˆíŒŒì¼.pdf", "ê¸°ì¡´íŒŒì¼.pdf", false, "ì„ íƒ ì—†ìŒ"), { state: "selected", message: "ì„ íƒë¨: ìƒˆíŒŒì¼.pdf", action: "ì„ íƒ íŒŒì¼ ì‚­ì œ", disabled: false });
-  assert.deepEqual(designFilePickerState("", "ê¸°ì¡´íŒŒì¼.pdf", false, "ì„ íƒ ì—†ìŒ"), { state: "saved", message: "ì €ìž¥ë¨: ê¸°ì¡´íŒŒì¼.pdf", action: "ì €ìž¥ íŒŒì¼ ì‚­ì œ", disabled: false });
-  assert.deepEqual(designFilePickerState("", "ê¸°ì¡´íŒŒì¼.pdf", true, "ì„ íƒ ì—†ìŒ"), { state: "removed", message: "ì‚­ì œ ì˜ˆì •: ê¸°ì¡´íŒŒì¼.pdf Â· í‰ê°€ ì„¤ê³„ ì €ìž¥ ì‹œ ë°˜ì˜", action: "ì‚­ì œ ì·¨ì†Œ", disabled: false });
-  assert.deepEqual(designFilePickerState("", "", false, "ì„ íƒ ì—†ìŒ"), { state: "empty", message: "ì„ íƒ ì—†ìŒ", action: "ì„ íƒ íŒŒì¼ ì‚­ì œ", disabled: true });
-  for (const field of ["removeDesignDocument", "removeRubricDocument", "removeExampleDocument", "removeBlankDocument", "removeExampleItemFile"]) assert.match(source, new RegExp(field));
-  assert.match(source, /data-clear-design-file/);
-  assert.match(source, /data-clear-file-action>ì‚­ì œ/);
-  assert.match(source, /button\.hidden = presentation\.disabled/);
-  assert.match(source, /input\.value = ""/);
-  assert.match(source, /form\._designSourceFile = event\.target\.files\?\.\[0\] \|\| null/);
-  assert.match(source, /ì €ìž¥ëœ íŒŒì¼ì„ ì‚­ì œí•˜ë„ë¡ í‘œì‹œí–ˆìŠµë‹ˆë‹¤/);
-  assert.match(styles, /\.design-file-status\[data-file-state="removed"\]/);
-  assert.match(styles, /\.design-file-status \{[^}]*grid-column: 1;[^}]*width: fit-content;/);
-  assert.match(styles, /\.design-file-status \[data-clear-design-file\] \{[^}]*border-radius: 999px;[^}]*background: #ffe7e1;/);
-  assert.match(styles, /\.design-file-status \[data-clear-design-file\]\[hidden\] \{ display: none; \}/);
-});
-
-test("downloaded student roster template includes school name and leaves every data row blank", () => {
-  assert.match(source, /const rosterRows = \[\["í•™êµëª…", "í•™ë…„", "ë°˜", "ë²ˆí˜¸", "ì´ë¦„"\]\]/);
-  assert.match(source, /rosterRows\.push\(\["", "", "", "", ""\]\)/);
-  assert.doesNotMatch(source, /rosterRows\.push\(\[6, "", "", ""\]\)/);
-  assert.match(source, /StudentWorkflow\.selectRosterSheet\(sheets/);
-  assert.match(source, /workbook\.SheetNames\.map/);
-});
-
-test("student management renders a separate roster for every school, grade, and class group", () => {
-  assert.match(source, /studentGroups\.map\(\(group, groupIndex\) =>/);
-  assert.match(source, /class="student-roster-group"/);
-  assert.match(source, /\$\{escapeHtml\(group\.schoolName \|\| "í•™êµ ë¯¸ìž…ë ¥"\)\}/);
-  assert.match(source, /\$\{escapeHtml\(group\.grade\)\}í•™ë…„ \$\{escapeHtml\(group\.className\)\}ë°˜/);
-  assert.match(source, /group\.students\.map\(\(student\) =>/);
-  assert.match(source, /data-delete-student-group="\$\{groupIndex\}"/);
-});
-
-test("student management filters roster cards to the selected school", () => {
-  assert.match(source, /const studentSchools = Array\.from\(new Set\(studentGroups\.map/);
-  assert.match(source, /data-student-school-filter="\$\{schoolIndex\}" aria-pressed="\$\{isSelected\}"/);
-  assert.match(source, /data-student-school-group="\$\{studentSchools\.indexOf\(group\.schoolName \|\| ""\)\}"/);
-  assert.match(source, /group\.schoolName === selectedStudentSchoolName \? "" : " hidden"/);
-  assert.match(source, /group\.hidden = Number\(group\.dataset\.studentSchoolGroup\) !== schoolIndex/);
-});
-
-test("assessment target class options come only from classes registered in student management", () => {
-  assert.match(source, /StudentWorkflow\.rosterClasses\(students, courseGrade\)/);
-  assert.match(source, /targetClassOptions\(availableClasses, selectedTargetClass\)/);
-  assert.doesNotMatch(source, /data-target-class>\$\{classOptions\(selectedTargetClass\)\}/);
-  assert.match(source, /í•™ìƒ ê´€ë¦¬ì— ë“±ë¡ëœ .*í•™ë…„ ë°˜ë§Œ í‘œì‹œë©ë‹ˆë‹¤/);
-});
-
-test("submission splitting can select or clear every target student at once", () => {
-  assert.match(source, /data-select-all-submissions[^>]*>ì „ì²´ í•™ìƒ ì„ íƒ<\/button>/);
-  assert.match(source, /data-clear-all-submissions[^>]*>ì „ì²´ ì„ íƒ í•´ì œ<\/button>/);
-  assert.match(source, /ë¶„í•  ëŒ€ìƒ <b[^>]*>\$\{includedStudentCount\}<\/b> \/ \$\{targetStudents\.length\}ëª…/);
-  assert.match(source, /í•„ìš” \$\{requiredPageCount\}ìª½ Â· ì—…ë¡œë“œ PDF \$\{submission\.pageCount\}ìª½/);
-  assert.match(source, /data-select-all-submissions[\s\S]*?targetStudents\.map\(\(student\) => student\.id\)/);
-  assert.match(source, /data-clear-all-submissions[\s\S]*?saveSubmissionSelection\(\s*\[\]/);
-  assert.match(styles, /\.split-selection-toolbar \{[^}]*justify-content: space-between/);
-  assert.match(styles, /\.split-bulk-actions \{[^}]*display: flex/);
-});
-
-test("submission selection updates in place without jumping the student list to the top", () => {
-  const bindStart = source.indexOf("function bindSubmissionTab");
-  const buildStart = source.indexOf("function buildSubmission", bindStart);
-  const selectionSource = source.slice(bindStart, buildStart);
-  const saveStart = selectionSource.indexOf("const saveSubmissionSelection");
-  const updateStart = selectionSource.indexOf("function updateSubmissionSelectionView");
-  const saveSource = selectionSource.slice(saveStart, updateStart);
-  assert.match(selectionSource, /function updateSubmissionSelectionView\(submission, targetStudents\)/);
-  assert.match(selectionSource, /updateSubmissionSelectionView\(course\.submission, targetStudents\)/);
-  assert.match(selectionSource, /data-split-selected-count/);
-  assert.match(selectionSource, /data-split-page-summary/);
-  assert.match(selectionSource, /row\?\.classList\.toggle\("is-included", isIncluded\)/);
-  assert.doesNotMatch(saveSource, /renderCourse\(course\.id, "submissions"\)/);
-});
-
-test("submission management can preview each student's assigned PDF at full screen", () => {
-  assert.match(source, /data-preview-submission="\$\{escapeHtml\(student\.id\)\}"/);
-  assert.match(source, /data-expand-submission-preview>ì „ì²´ í™”ë©´ìœ¼ë¡œ í¬ê²Œ ë³´ê¸°<\/button>/);
-  assert.match(source, /splitStudentPdf\(course\.submission\.sourceFile\.blob, assignment\.pageNumbers, assignmentIndex\)/);
-  assert.match(source, /frame\.src = fitPdfPreviewUrl\(studentPreviewUrl\)/);
-  assert.match(source, /openPdfFullscreenPreview\(frame\?\.src/);
-  assert.match(styles, /\.split-preview-button \{/);
-  assert.match(styles, /\.pdf-fullscreen-dialog \{[^}]*width: calc\(100vw - 16px\);[^}]*height: calc\(100vh - 16px\)/);
-});
-
-test("home and navigation use the requested AI essay-assessment title", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
-  assert.match(source, /<h1>AI ì„œÂ·ë…¼ìˆ í˜•<br><span>í‰ê°€ì§€ì›ì‹œìŠ¤í…œ<\/span><\/h1>/);
-  assert.doesNotMatch(source, /2026í•™ë…„ë„ 2í•™ê¸° Â· ì´ˆë“± 1~6í•™ë…„/);
-  assert.match(html, /AI ì„œÂ·ë…¼ìˆ í˜•/);
-  assert.doesNotMatch(html, /AI ì„œ-ë…¼ìˆ í˜•/);
-});
-
-test("the global footer credits the requested developer", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
-  assert.match(html, /<footer class="site-credit" aria-label="ê°œë°œìž ì •ë³´">/);
-  assert.match(html, /<span>ê°œë°œìž<\/span>\s*<strong>ì²­ê³„ì´ˆë“±í•™êµ ì¡°ì˜ì„<\/strong>/);
-});
-
-
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×Mûõ:-jZ.¶›­–)Þ³R'W6R7G&–7B#° ¦6öç7BFW7BÒ&WV—&R‚&æöFS§FW7B"“°¦6öç7B76W'BÒ&WV—&R‚&æöFS¦76W'B÷7G&–7B"“°¦6öç7Bg2Ò&WV—&R‚&æöFS¦g2"“°¦6öç7BF‚Ò&WV—&R‚&æöFS§F‚"“° ¦6öç7B6÷W&6RÒg2ç&VDf–ÆU7–æ2‡F‚æ¦ö–â…õöF—&æÖRÂ"ââ"Â'vV""Â'66†ööÂÖæ§2"’Â'WFc‚"“°¦6öç7B7G–ÆW2Òg2ç&VDf–ÆU7–æ2‡F‚æ¦ö–â…õöF—&æÖRÂ"ââ"Â'vV""Â'7G–ÆW2æ772"’Â'WFc‚"“° ¦gVæ7F–öâÆöE7V&¦V7D6FÆör‚’°¢6öç7B7F'BÒ6÷W&6Ræ–æFW„öb‚&6öç7B4õU%4Uõ5T$¤T5E5ô%•ôu$DR"“°¢6öç7BVæBÒ6÷W&6Ræ–æFW„öb‚&6öç7B4„”UdTÔTåEôÄUdTÅôU„ÕÄU2"Â7F'B“°¢76W'Bæö²‡7F'BãÒbbVæBâ7F'BÂ&6÷W'6R7V&¦V7B6FÆör×W7BW†—7B"“°¢&WGW&âæWrgVæ7F–öâ†G·6÷W&6Rç6Æ–6R‡7F'BÂVæB—Ó²&WGW&â4õU%4Uõ5T$¤T5E5ô%•ôu$DS¶’‚“°§Ð ¦gVæ7F–öâÆöEVW7F–öå66÷&T†VÇW'2‚’°¢6öç7B&æG57F'BÒ6÷W&6Ræ–æFW„öb‚&6öç7BDTdTÅEõ%T%$”5õU$dõ$Ôä4UõD…$U4„ôÄE2"“°¢6öç7B&æG4VæBÒ6÷W&6Ræ–æFW„öb‚%ÆåÆæ6öç7B"Â&æG57F'B“°¢6öç7B6†–WfVÖVçDÆWfVÇ57F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ6†–WfVÖVçDÆWfVÄ&æD¶W’"“°¢6öç7B6†–WfVÖVçDÆWfVÇ4VæBÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâFW6–väVF—F÷""Â6†–WfVÖVçDÆWfVÇ57F'B“°¢6öç7B7F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ÷6—F—fTFW6–vå66÷&R"“°¢6öç7BVæBÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ&–æDFW6–våF""Â7F'B“°¢6öç7BÆ–vå7F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâÆ–vävVæW&FVE'V'&–72"“°¢6öç7BÆ–väVæBÒ6÷W&6Ræ–æFW„öb‚&7–æ2gVæ7F–öâvVæW&FU'V'&–5v—F„’"ÂÆ–vå7F'B“°¢6öç7Bæ÷&ÖÆ—¦U7F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâæ÷&ÖÆ—¦U'V'&–47&—FW&–"“°¢6öç7Bæ÷&ÖÆ—¦TVæBÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ'V'&–4w&÷WÖ…66÷&R"Âæ÷&ÖÆ—¦U7F'B“°¢6öç7B6†–WfVÖVçE66÷&W57F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ6†–WfVÖVçE&ævUVW7F–öä¶W—2"“°¢6öç7B6†–WfVÖVçE66÷&W4VæBÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâFW&—fVD6†–WfVÖVçE&W7VÇG2"Â6†–WfVÖVçE66÷&W57F'B“°¢76W'Bæö²†&æG57F'BãÒbb&æG4VæBâ&æG57F'Bbb6†–WfVÖVçDÆWfVÇ57F'BãÒbb6†–WfVÖVçDÆWfVÇ4VæBâ6†–WfVÖVçDÆWfVÇ57F'Bbb7F'BãÒbbVæBâ7F'BbbÆ–vå7F'BãÒbbÆ–väVæBâÆ–vå7F'Bbbæ÷&ÖÆ—¦U7F'BãÒbbæ÷&ÖÆ—¦TVæBâæ÷&ÖÆ—¦U7F'Bbb6†–WfVÖVçE66÷&W57F'BãÒbb6†–WfVÖVçE66÷&W4VæBâ6†–WfVÖVçE66÷&W57F'BÂ'VW7F–öâ66÷&R†VÇW'2×W7BW†—7B"“°¢&WGW&âæWrgVæ7F–öâ†G·6÷W&6Rç6Æ–6R†&æG57F'BÂ&æG4VæB—ÕÆâG·6÷W&6Rç6Æ–6R†6†–WfVÖVçDÆWfVÇ57F'BÂ6†–WfVÖVçDÆWfVÇ4VæB—ÕÆâG·6÷W&6Rç6Æ–6R‡7F'BÂVæB—ÕÆâG·6÷W&6Rç6Æ–6R†Æ–vå7F'BÂÆ–väVæB—ÕÆâG·6÷W&6Rç6Æ–6R†æ÷&ÖÆ—¦U7F'BÂæ÷&ÖÆ—¦TVæB—ÕÆâG·6÷W&6Rç6Æ–6R†6†–WfVÖVçE66÷&W57F'BÂ6†–WfVÖVçE66÷&W4VæB—Ó²&WGW&â²VW7F–öå66÷&Tw&÷W¶W’ÂW†×ÆUVW7F–öå66÷&TÖÂÆÆö6FUVW7F–öå66÷&RÂ'V–ÆDWVÄW†×ÆUö–çD—FV×2Â&W&TW‡G&7FVDW†×ÆTç7vW'2ÂFW6–väf–ÆU–6¶W%7FFRÂæ÷&ÖÆ—¦UW&f÷&Öæ6UF‡&W6†öÆG2ÂW&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–BÂW&f÷&Öæ6T&æDFVf–æ—F–öç2Â6†–WfVÖVçD&æDf÷%66÷&RÂW&f÷&Öæ6T&æE66÷&W2Â'V'&–5W&f÷&Öæ6TÆWfVÇ2ÂFW&—fVD&æE66÷&W2Â'V'&–4ÆÆö6F–öç4g&öÔVÆVÖVçG2Â'V'&–4ÆÆö6F–öç4g&öÔÆ–æ¶VDW†×ÆW2ÂÆ–vävVæW&FVE'V'&–72Âæ÷&ÖÆ—¦U'V'&–47&—FW&–Âæ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2Â6†–WfVÖVçE&ævUVW7F–öä¶W—2Â6†–WfVÖVçEW&f÷&Öæ6U7VÖÖ&–W2Ó¶’‚“°§Ð §FW7B‚&w&FW2æB"öffW"F†Rf—fRÆ÷vW"×&–Ö'’7V&¦V7G2"Â‚’Óâ°¢6öç7B6FÆörÒÆöE7V&¦V7D6FÆör‚“°¢6öç7BW‡V7FVBÒ².«ZÞÉkB"Â.È‰ŽÙY’"Â.»	Nº[‚È9ÞÙ™Â"Â.ÈªÎ«‹ºÎÉ«BÈ9ÞÙ™Â"Â.Êi«É«BÈ9ÞÙ™Â%Ó°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#%ÕÒÂW‡V7FVB“°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#"%ÕÒÂW‡V7FVB“°§Ò“° §FW7B‚'F†R–çFW&f6RW6W2&VF&ÆR&öG’æB6öçG&öÂFW‡Bv—F†÷WBVæÆ&v–ærvRF—FÆW2"Â‚’Óâ°¢6öç7B&–çF&ÆU&W÷'E7F'BÒ7G–ÆW2æ–æFW„öb‚"ç&W7VÇB×&–çB×&Wf–Wrç&W7VÇB×&W÷'B×6†VWB"“°¢6öç7B–çFW&f6U7G–ÆW2Ò7G–ÆW2ç6Æ–6RƒÂ&–çF&ÆU&W÷'E7F'B“°¢76W'BæÖF6‚†–çFW&f6U7G–ÆW2Âö&öG•Ç2¥ÇµµÇ5Å5Ò£öföçB×6—¦S¥Ç2£gƒµµÇ5Å5Ò£öÆ–æRÖ†V–v‡C¥Ç2£ÂãSS²ò“°¢76W'BæFöW4æ÷DÖF6‚†–çFW&f6U7G–ÆW2ÂöföçB×6—¦S¥Ç2¢ƒó¥³Ó•×Ã³Ò—ƒ²ò“°¢76W'BæÖF6‚†–çFW&f6U7G–ÆW2ÂõÂç&–Ö'’Ö7F–öåÇ2¥ÇµµÇ5Å5Ò£öföçB×6—¦S¥Ç2£gƒ²ò“°¢76W'BæÖF6‚†–çFW&f6U7G–ÆW2ÂõÂæFW6–vâÖf÷&Ò×7FGW5Ç2¥ÇµµçÕÒ¦föçB×6—¦S¥Ç2£7ƒ²ò“°¢76W'BæÖF6‚†–çFW&f6U7G–ÆW2ÂõÂç66†ööÂÖ†W&òƒÇ2¥ÇµµçÕÒ¦föçB×6—¦S¥Ç2¦6Æ×ÂƒS'‚ÂwgrÂƒ'…Â“²ò“°§Ò“° §FW7B‚'F†R'V'&–2’7F–öâ†2—G2÷vâVæ6Æ—VBÆVæ6‚&÷r"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ÷Vâ×'V'&–2Ö“îËNÊ	«‹ÊH’È9ÞÈKÅÂö'WGFöãâò“°¢76W'BæÖF6‚‡6÷W&6RÂö6Æ73Ò''V'&–2Ö’ÖÆVæ6‚%µÇ5Å5Ò£öFFÖ÷Vâ×'V'&–2Ö“îËNÊ	«‹ÊH’È9ÞÈKÅÂö'WGFöãâò“°¢76W'BæÖF6‚‡6÷W&6RÂö6Æ73Ò&VF—F÷"×6V7F–öâ×F—FÆR'V'&–2×6V7F–öâ×F—FÆR%µÇ5Å5Ò£öFFÖFB×'V'&–3îûÈ²Øøž«É©NÈhÂËiN«ÅÂö'WGFöããÅÂöF—cåµÇ5Å5Ò£ö6Æ73Ò''V'&–2Ö’ÖÆVæ6‚"ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç'V'&–2Ö’ÖÆVæ6‚ÇµµçÕÒ¦w&–B×FV×ÆFRÖ6öÇVÖç3¢Ö–æÖ…ÂƒÃg%Â’WFóµµçÕÒ¦v¢‡ƒ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç'V'&–2Ö’ÖÆVæ6‚â'WGFöâÇµµçÕÒ¦Ö–â×v–GFƒ¢Ö‚Ö6öçFVçCµµçÕÒ§v†—FR×76S¢æ÷w&µµçÕÒ§v÷&BÖ'&V³¢¶VWÖÆÃµµçÕÒ§w&—F–ærÖÖöFS¢†÷&—¦öçFÂ×F#²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂôÖVF–Â†Ö‚×v–GFƒ¢c#…Â•µÇ5Å5Ò£õÂç'V'&–2Ö’ÖÆVæ6‚Ç²w&–B×FV×ÆFRÖ6öÇVÖç3¢g#²ò“°§Ò“° §FW7B‚$’w&F–ærwV–Fæ6R6&G2w&Æöær¶÷&Vâ6÷’v—F†÷WBFW‡B÷fW&Æ"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂóÇ7G&öæsîÙYžÈ9ÞÉª’Øøž«Êx»˜N«YÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡6÷W&6RÂóÇ7G&öæsîÈºÉ¹È*ÞÊ	Ì+~«:Ù[NÈ8¸øB»;NÊ	SÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡6÷W&6RÂóÇ7G&öæsî»šº[‚ÈJ»8B«(ÊiÒËNÊ	ÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæw&F–ær×VÆ—G’Öw&–B'F–6ÆRÇµµçÕÒ¦Ö–âÖ†V–v‡C¢SgƒµµçÕÒ§FF–æs¢#ƒ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæw&F–ær×VÆ—G’Öw&–B'F–6ÆRâF—bÇµµçÕÒ¦v¢wƒ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæw&F–ær×VÆ—G’Öw&–B7G&öærÇµµçÕÒ¦Æ–æRÖ†V–v‡C¢ÂãCSµµçÕÒ§v÷&BÖ'&V³¢¶VWÖÆÃ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæw&F–ær×VÆ—G’Öw&–BÇµµçÕÒ¦Æ–æRÖ†V–v‡C¢ÂãsµµçÕÒ¦÷fW&fÆ÷r×w&¢ç—v†W&SµµçÕÒ§v†—FR×76S¢æ÷&ÖÃµµçÕÒ§v÷&BÖ'&V³¢¶VWÖÆÃ²ò“°¢76W'BæFöW4æ÷DÖF6‚‡7G–ÆW2ÂõÂæw&F–ær×VÆ—G’Öw&–BÇµµçÕÒ§v†—FR×76S¢æ÷w&²ò“°§Ò“° §FW7B‚&w&FW22æBBöffW"F†R&WVW7FVBæ–æR7V&¦V7G2v—F†÷WB&7F–6Â'G2"Â‚’Óâ°¢6öç7B6FÆörÒÆöE7V&¦V7D6FÆör‚“°¢6öç7BW‡V7FVBÒ².«ZÞÉkB"Â.È*ÎÙ¨Â"Â.¸øN¸ÙR"Â.È‰ŽÙY’"Â.«;ÎÙY’"Â.Ë+NÉÊ"Â.ÉØÎÉXR"Â.ºûŽÈŠ"Â.ÉˆÉkB%Ó°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#2%ÕÒÂW‡V7FVB“°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#B%ÕÒÂW‡V7FVB“°¢76W'Bæö²‚6FÆöu²#B%Òæ–æ6ÇVFW2‚.ÈºN«;Â"’“°§Ò“° §FW7B‚&w&FW2RæBb–æ6ÇVFR&7F–6Â'G2–âF†R&WVW7FVB7V&¦V7B÷&FW""Â‚’Óâ°¢6öç7B6FÆörÒÆöE7V&¦V7D6FÆör‚“°¢6öç7BW‡V7FVBÒ².«ZÞÉkB"Â.È*ÎÙ¨Â"Â.¸øN¸ÙR"Â.È‰ŽÙY’"Â.«;ÎÙY’"Â.ÈºN«;Â"Â.Ë+NÉÊ"Â.ÉØÎÉXR"Â.ºûŽÈŠ"Â.ÉˆÉkB%Ó°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#R%ÕÒÂW‡V7FVB“°¢76W'BæFVWWVÂ…²ââæ6FÆöu²#b%ÕÒÂW‡V7FVB“°§Ò“° §FW7B‚&6÷W'6Rf÷&ÒæBWfÇVF–öâF&vWG2föÆÆ÷rF†R6VÆV7FVB6÷W'6Rw&FR"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂóÆÆ&VÃîÙYž¸XCÇ6VÆV7BæÖSÒ&w&FR#åÂEÇ¶w&FT÷F–öç2ò“°¢76W'BæÖF6‚‡6÷W&6RÂöf÷&ÕÂæVÆVÖVçG5Âæw&FUÂæFDWfVçDÆ—7FVæW%Â‚&6†ævR"ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7V&¦V7D÷F–öç5Â†f÷&ÕÂæVÆVÖVçG5Âæw&FUÂçfÇVRÂ&Wf–÷W57V&¦V7EÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7GVFVçEÂæw&FRÓÓÒ6÷W'6Tw&FRò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷F&vWE7GVFVçD–G3¢w&FT6†ævVBÃòÅµÅÒò“°§Ò“° §FW7B‚&6÷W'6R6WGWW6W2F†RFV6†W"Öf6–ærFW&Ò«Y«;Â–ç7FVBöb«;Îºª’"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂþÙ[N¸»’ÙYž¸XN«[ÉyÈIÂÉ«NÉˆÙYŽ¸©B«Y«;Îº[ÂÈJØ9Òò“°¢76W'BæÖF6‚‡6÷W&6RÂóÆÆ&VÃî«Y«;ÃÇ6VÆV7BæÖSÒ'7V&¦V7B#âò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂóÆÆ&VÃî«;Îºª“Ç6VÆV7BæÖSÒ'7V&¦V7B#âò“°§Ò“° §FW7B‚&76W76ÖVçBFW6–vâ6VÆV7G27W'&–7VÇVÒ7FæF&G2'’FöÖ–âæB6âvVæW&FR'V'&–2&æG2v—F‚’"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂöæÖSÒ&6†–WfVÖVçDFöÖ–â"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöæÖSÒ&6†–WfVÖVçD6öFR"ò“°¢76W'BæÖF6‚‡6÷W&6RÂô7W'&–7VÇVÕ7FæF&G5ÃõÂæf–æBò“°¢76W'BæÖF6‚‡6÷W&6RÂóÇ7G&öæsîÈKËzŽÈ‰ŽÊHÉè^º
+SÅÂ÷7G&öæsâò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂóÇ7G&öæsîÈKËzŽ«‹ÊHÉè^º
+SÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡6÷W&6RÂöæ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ6†–WfVÖVçBÖ&æB×&ævRò“°¢76W'BæÖF6‚‡6÷W&6RÂö6†–WfVÖVçB×F‡&W6†öÆB×Æ6VÖVçEµÇ5Å5Ò£óÇ7G&öæsîÈKËzŽÈ‰ŽÊHÉè^º
+SÅÂ÷7G&öæsåµÇ5Å5Ò£óÇ7G&öæsîºËŽÊ	Î»8BËNÊ	«‹ÊHÉè^º
+SÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡6÷W&6RÂþÈKËzŽ«‹ÊH«;ÂÂEÇ¶ÆWfVÇ5ÂæÆVæwF…ÇÞ«	ÂÈKËzŽÈ‰ŽÊHÉØBÉé¸ù’Éè^º
+Rò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ÷Vâ×'V'&–2Ö“îËNÊ	«‹ÊH’È9ÞÈKò“°¢76W'BæÖF6‚‡6÷W&6RÂöæÖSÒ''V'&–4”&æD6÷VçB"ò“°¢76W'BæÖF6‚‡6÷W&6RÂô6†V¦VöÔ•ÂævVæW&FU'V'&–47&—FW&–ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖW‡G&7BÖFö7VÖVçCÒ&FW6–vâ#äžºÂã2Éé¸ù’Éè^º
+Rò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷&W&TWfÇVF–öå&VfW&Væ6T–ÖvW5Â†f–ÆUÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂþ»hNÈ‰Ž¸©B.Ë
+‚«(ÊiÒÙ¸BÉé¸ù’Éè^º
+Rò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷vUÂævWEFW‡D6öçFVçEÂ…Â’ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷Ff§4Æ–%ÃõÂåWF–ÅÃõÂçG&ç6f÷&Òò“°¢76W'BæÖF6‚‡6÷W&6RÂþºËŽÊ	ÂÕÂEÇ¶æ6†÷%ÂæçVÖ&W%ÇÒÞÉˆŽÈ¹Î¸»^ÉX‚ò“°¢76W'BæÖF6‚‡6÷W&6RÂþÉ¹»;ŽÙ™^¸Èò“°¢76W'BæÖF6‚‡6÷W&6RÂþ«:¸È»˜NÙ™^¸Èò“°¢76W'BæÖF6‚‡6÷W&6RÂóÇ7G&öæsîÙYžÈ9ÞÉª’Øøž«Êx¹;ºÓÅÂ÷7G&öæsâò“°¢76W'BæÖF6‚‡6÷W&6RÂþ«YÈ*ÎÉª’«‹ÊHÉXŒ+~ÉˆŽÈ¹Î¸»^ÉX‚ØéŽÉÛNÊx¸©BÊ	ÎÉ›‚ò“°§Ò“° §FW7B‚&W†×ÆRÖç7vW"ö–çG2G&—fRVW7F–öâF÷FÇ2æBFW&—fVB'V'&–266÷&W2"Â‚’Óâ°¢6öç7B²VW7F–öå66÷&Tw&÷W¶W’ÂW†×ÆUVW7F–öå66÷&TÖÂÆÆö6FUVW7F–öå66÷&RÂ'V–ÆDWVÄW†×ÆUö–çD—FV×2Â&W&TW‡G&7FVDW†×ÆTç7vW'2ÂW&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–BÂW&f÷&Öæ6T&æDFVf–æ—F–öç2Â6†–WfVÖVçD&æDf÷%66÷&RÂW&f÷&Öæ6T&æE66÷&W2Â'V'&–5W&f÷&Öæ6TÆWfVÇ2ÂFW&—fVD&æE66÷&W2Â'V'&–4ÆÆö6F–öç4g&öÔVÆVÖVçG2Â'V'&–4ÆÆö6F–öç4g&öÔÆ–æ¶VDW†×ÆW2Âæ÷&ÖÆ—¦U'V'&–47&—FW&–ÒÒÆöEVW7F–öå66÷&T†VÇW'2‚“°¢76W'BæWVÂ‡VW7F–öå66÷&Tw&÷W¶W’‚#Òƒ’"’Â#"“°¢76W'BæWVÂ‡VW7F–öå66÷&Tw&÷W¶W’‚#Òƒ"’"’Â#"“°¢76W'BæWVÂ‡VW7F–öå66÷&Tw&÷W¶W’‚.ºËŽÙZÒ"Þ)"’Â#""“°¢76W'BæWVÂ‡VW7F–öå66÷&Tw&÷W¶W’‚.ÈIÎÈŠÙ‰R"’Â.ÈIÎÈŠÙ‰T"“°¢76W'BæFVWWVÂ„'&’æg&öÒ†W†×ÆUVW7F–öå66÷&TÖ…°¢²VW7F–öäçVÖ&W#¢#Òƒ’"ÂÖ…66÷&S¢"Âö–çD—FV×3¢·²66÷&S¢ãRÒÂ²66÷&S¢ãRÕÒÒÀ¢²VW7F–öäçVÖ&W#¢#Òƒ"’"ÂÖ…66÷&S¢2ÒÀ¢²VW7F–öäçVÖ&W#¢#""ÂÖ…66÷&S¢BÒÀ¢Ò’æVçG&–W2‚’’Âµ²#"ÂUÒÂ²#""ÂEÕÒ“°¢76W'BæFVWWVÂ†ÆÆö6FUVW7F–öå66÷&RƒÂ2’Â³2ãRÂ2ãRÂ5Ò“°¢76W'BæFVWWVÂ†'V–ÆDWVÄW†×ÆUö–çD—FV×2ƒbÂ2’æÖ‚†—FVÒ’Óâ—FVÒç66÷&R’Â³"Â"Â%Ò“°¢76W'BæFVWWVÂ†'V–ÆDWVÄW†×ÆUö–çD—FV×2ƒRÂ2’æÖ‚†—FVÒ’Óâ—FVÒç66÷&R’Â³"ÂãRÂãUÒ“°¢76W'BæWVÂ†'V–ÆDWVÄW†×ÆUö–çD—FV×2ƒbÂ2Â·²–C¢'6fVB"Â7&—FW&–öã¢.Ë*²«‹ÊH"ÕÒ•³Òæ7&—FW&–öâÂ.Ë*²«‹ÊH"“°¢76W'BçF‡&÷w2‚‚’Óâ'V–ÆDWVÄW†×ÆUö–çD—FV×2ƒãRÂ"’ÂþËIÒ»Ê	ÉØB¸i.ÉÛN«¸)‚«‹ÊHÈ‰Žº[ÂÊHNÉzÂò“°¢76W'BæFVWWVÂ‡&W&TW‡G&7FVDW†×ÆTç7vW'2…°¢²VW7F–öäçVÖ&W#¢#Òƒ’"ÂÖ…66÷&S¢ÒÀ¢²VW7F–öäçVÖ&W#¢#Òƒ"’"ÂÖ…66÷&S¢ÒÀ¢²VW7F–öäçVÖ&W#¢#""ÂÖ…66÷&S¢ÒÀ¢ÒÂæWrÖ…µ²#"Â5ÒÂ²#""Â%ÕÒ’’æÖ‚†—FVÒ’Óâ—FVÒæÖ…66÷&R’Â³ãRÂãRÂ%Ò“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æE66÷&W2ƒ’Â³ÂrÂRÂ5Ò“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æE66÷&W2ƒR’Â³RÂ2ãRÂ"ãRÂãUÒ“°¢6öç7B7W7FöÕF‡&W6†öÆG2Ò²W†6VÆÆVçC¢ƒRÂvööC¢cRÂfW&vS¢CRÂVff÷'C¢#RÓ°¢76W'BæWVÂ‡W&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–B†7W7FöÕF‡&W6†öÆG2’ÂG'VR“°¢76W'BæWVÂ‡W&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–B‡²W†6VÆÆVçC¢ƒÂvööC¢ƒÂfW&vS¢CÂVff÷'C¢#Ò’ÂfÇ6R“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æE66÷&W2ƒÂ7W7FöÕF‡&W6†öÆG2’Â³ÂrãRÂRãRÂ2ãUÒ“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æDFVf–æ—F–öç2†7W7FöÕF‡&W6†öÆG2’æÖ‚†&æB’Óâ&æBç&ævR’Â²#ƒRRÉÛNÈ8"Â#cRRÉÛNÈ8ƒRRºûŽºxÂ"Â#CRRÉÛNÈ8cRRºûŽºxÂ"Â##RRÉÛNÈ8CRRºûŽºxÂ%Ò“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&Rƒ‚Â’æÆ&VÂÂ.ºzNÉ«ÉéŽÙZ‚"“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&Rƒrã’Â’æÆ&VÂÂ.ÉéŽÙZ‚"“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&RƒBÂ’æÆ&VÂÂ.»;NØkR"“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&RƒÂ’æÆ&VÂÂ.¸[Žº
+^É©NÙZ‚"“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&Rƒ‚ãBÂÂ7W7FöÕF‡&W6†öÆG2’æÆ&VÂÂ.ÉéŽÙZ‚"“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&RƒÂ’æÆ&VÂÂ.È+Ê	RÊB"“°¢6öç7BG–æÖ–4ÆWfVÇ2Ò²ÆWfVÇ3¢°¢²–C¢&Ã"ÂÆ&VÃ¢.Ø8É¹B"ÂÖ–æ–×VÓ¢“ÒÀ¢²–C¢&Ã""ÂÆ&VÃ¢.É«È‰‚"ÂÖ–æ–×VÓ¢ƒÒÀ¢²–C¢&Ã2"ÂÆ&VÃ¢.ËjžÈºB"ÂÖ–æ–×VÓ¢cÒÀ¢²–C¢&ÃB"ÂÆ&VÃ¢.«‹ËH‚"ÂÖ–æ–×VÓ¢CÒÀ¢²–C¢&ÃR"ÂÆ&VÃ¢.ÊxÉ¹ÙXNÉ©B"ÂÖ–æ–×VÓ¢3ÒÀ¢ÒÓ°¢76W'BæWVÂ‡W&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–B†G–æÖ–4ÆWfVÇ2’ÂG'VR“°¢76W'BæWVÂ‡W&f÷&Öæ6UF‡&W6†öÆG4&UfÆ–B‡²ÆWfVÇ3¢·²Æ&VÃ¢.ÊI»;R"ÂÖ–æ–×VÓ¢ƒÒÂ²Æ&VÃ¢.ÊI»;R"ÂÖ–æ–×VÓ¢CÕÒÒ’ÂfÇ6R“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æDFVf–æ—F–öç2†G–æÖ–4ÆWfVÇ2’æÖ‚†&æB’Óâ&æBæÆ&VÂ’Â².Ø8É¹B"Â.É«È‰‚"Â.ËjžÈºB"Â.«‹ËH‚"Â.ÊxÉ¹ÙXNÉ©B%Ò“°¢76W'BæFVWWVÂ‡W&f÷&Öæ6T&æE66÷&W2ƒÂG–æÖ–4ÆWfVÇ2’Â³Â‚ãRÂrÂRÂ2ãUÒ“°¢76W'BæWVÂ†6†–WfVÖVçD&æDf÷%66÷&Rƒrã"ÂÂG–æÖ–4ÆWfVÇ2’æÆ&VÂÂ.ËjžÈºB"“°¢76W'BæWVÂ‡'V'&–5W&f÷&Öæ6TÆWfVÇ2…µÒÂG–æÖ–4ÆWfVÇ2’æÆVæwF‚ÂR“°¢6öç7B6fVDG–æÖ–5'V'&–2Òæ÷&ÖÆ—¦U'V'&–47&—FW&–…·²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.ÈJNº¨R"Â66÷&TÆWfVÇ3¢°¢²–C¢'66÷&RÓ"Â&æD–C¢&Ã"Â66÷&S¢Â7&—FW&–öã¢.Ø8É¹B«‹ÊH"ÒÀ¢²–C¢'66÷&RÓ""Â&æD–C¢&Ã""Â66÷&S¢‚ãRÂ7&—FW&–öã¢.É«È‰‚«‹ÊH"ÒÀ¢²–C¢'66÷&RÓ2"Â&æD–C¢&Ã2"Â66÷&S¢rÂ7&—FW&–öã¢.ËjžÈºB«‹ÊH"ÒÀ¢²–C¢'66÷&RÓB"Â&æD–C¢&ÃB"Â66÷&S¢RÂ7&—FW&–öã¢.«‹ËH‚«‹ÊH"ÒÀ¢²–C¢'66÷&RÓR"Â&æD–C¢&ÃR"Â66÷&S¢2ãRÂ7&—FW&–öã¢.ÊxÉ¹«‹ÊH"ÒÀ¢ÒÕÒÂG–æÖ–4ÆWfVÇ2“°¢76W'BæFVWWVÂ‡6fVDG–æÖ–5'V'&–5³Òç66÷&TÆWfVÇ2æÖ‚†ÆWfVÂ’ÓâÆWfVÂæ&æD–B’Â²&Ã"Â&Ã""Â&Ã2"Â&ÃB"Â&ÃR%Ò“°¢76W'BæFVWWVÂ‡6fVDG–æÖ–5'V'&–5³Òç66÷&TÆWfVÇ2æÖ‚†ÆWfVÂ’ÓâÆWfVÂæ7&—FW&–öâ’Â².Ø8É¹B«‹ÊH"Â.É«È‰‚«‹ÊH"Â.ËjžÈºB«‹ÊH"Â.«‹ËH‚«‹ÊH"Â.ÊxÉ¹«‹ÊH%Ò“°¢76W'BæFVWWVÂ‡'V'&–5W&f÷&Öæ6TÆWfVÇ2…°¢²–C¢&†–v‚"Â66÷&S¢Â7&—FW&–öã¢.É˜NÊNÙYÂÈ‰ŽÙh’"ÒÀ¢²–C¢&Ö–FFÆR"Â66÷&S¢RÂ7&—FW&–öã¢.»h»hBÈ‰ŽÙh’"ÒÀ¢²–C¢'¦W&ò"Â66÷&S¢Â7&—FW&–öã¢.ºËNÉÙ¸»R"ÒÀ¢Ò’æÖ‚†ÆWfVÂ’ÓâÆWfVÂç66÷&R’Â³ÂrÂRÂ5Ò“°¢76W'BæFVWWVÂ†FW&—fVD&æE66÷&W2ƒRÂ³ÂrÂÒ’Â³RÂ2ãRÂÒ“°¢76W'BæFVWWVÂ†FW&—fVD&æE66÷&W2ƒÂ³ÂrÂRÂ5Ò’Â³ÂrÂRÂ5Ò“°¢6öç7BÆÆö6F–öç2Ò'V'&–4ÆÆö6F–öç4g&öÔVÆVÖVçG2…°¢²VW7F–öäçVÖ&W#¢#"ÒÀ¢²VW7F–öäçVÖ&W#¢#"ÒÀ¢²VW7F–öäçVÖ&W#¢#""ÒÀ¢ÒÂæWrÖ…µ²#"ÂÒÂ²#""ÂeÕÒ’“°¢76W'BæFVWWVÂ„'&’æg&öÒ†ÆÆö6F–öç2çfÇVW2‚’’Â³RÂRÂeÒ“°¢6öç7BÆ–æ¶VDÆÆö6F–öç2Ò'V'&–4ÆÆö6F–öç4g&öÔÆ–æ¶VDW†×ÆW2…°¢²–C¢'#"ÂVW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.«8NÈ+"ÒÀ¢²–C¢'#""ÂVW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.ÈJNº¨R"ÒÀ¢²–C¢'#2"ÂVW7F–öäçVÖ&W#¢#""ÂWfÇVF–öäVÆVÖVçC¢.ÙÎÙˆB"ÒÀ¢ÒÂ°¢²VW7F–öäçVÖ&W#¢#Òƒ’"ÂÖ…66÷&S¢BÂWfÇVF–öäVÆVÖVçD–G3¢²'#%ÒÒÀ¢²VW7F–öäçVÖ&W#¢#Òƒ"’"ÂÖ…66÷&S¢"ÂWfÇVF–öäVÆVÖVçD–G3¢²'#"Â'#"%ÒÒÀ¢²VW7F–öäçVÖ&W#¢#""ÂÖ…66÷&S¢bÂWfÇVF–öäVÆVÖVçD–G3¢µÒÒÀ¢Ò“°¢76W'BæFVWWVÂ„'&’æg&öÒ†Æ–æ¶VDÆÆö6F–öç2æÆÆö6F–öç2çfÇVW2‚’’Â³RÂÂeÒ“°¢76W'BæFVWWVÂ†Æ–æ¶VDÆÆö6F–öç2çVW7F–öäÆ&VÇ2ævWBƒ’Â²#Òƒ’"Â#Òƒ"’%Ò“°¢76W'BæÖF6‚‡6÷W&6RÂöæÖSÒ&W†×ÆTWfÇVF–öäVÆVÖVçB"G—SÒ&6†V6¶&÷‚"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöWfÇVF–öäVÆVÖVçD–G3¢'&•Âæg&öÕÂ‡&÷uÂçVW'•6VÆV7F÷$ÆÂò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7–æ5'V'&–5VW7F–öäçVÖ&W'4g&öÔW†×ÆTÆ–æ·5Â†f÷&ÕÂ’ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæW†×ÆRÖWfÇVF–öâÖÆ–æ¶W"Ç²ò“°¢76W'BæÖF6‚‡6÷W&6RÂöæÖSÒ&W†×ÆUö–çE66÷&R"G—SÒ&çVÖ&W""Ö–ãÒ#ÂãR"7FWÒ#ÂãR"ò“°¢76W'BæÝûöÚ$z{-®éÜj×Rò“°¢76W'BæÖF6‚‡6÷W&6RÂöwV–FUÂçFW‡D6öçFVçBÒºûŽÉÙ¸»R¹‰¸©B«{Î«ÉxnÉØÎ¸øB»8N¸øBÙh’ÉxnÉÛBÂEÇ¶FVf–æ—F–öç5ÂæEÂ‚ÓÂ•ÃõÂæÆ&VÂò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂö¶W“¢&Vff÷'E¦W&ò"ò“°¢76W'BæÖF6‚‡6÷W&6RÂþºûŽÉÙ¸»R¹‰¸©B«{Î«ÉxnÉØÎ¸øBÂEÇ¶FVf–æ—F–öç5ÂæEÂ‚ÓÂ•ÃõÂæÆ&VÂò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷W&f÷&Öæ6UF‡&W6†öÆG2Âò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷'V'&–5VW7F–öäÖ…66÷&TÖÂ‡'V'&–47&—FW&–Â’ò“°¢76W'BæÖF6‚‡6÷W&6RÂþºËŽÊ	Â»Ê	»;N¸ºBØøž«É©NÈhÂÈ‰Ž«ºxîÈ«^¸¸Ž¸ºBò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂçVW7F–öâ×66÷&R×7VÖÖ'’Ç²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç'V'&–2ÖFW&—fVB×66÷&RÇ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂçW&f÷&Öæ6R×F‡&W6†öÆBÖw&–B'F–6ÆRÇ²ò“°§Ò“° §FW7B‚&6†–WfVÖVçBÆWfVÇ2vw&VvFRWfW'’Æ–æ¶VBWfÇVF–öâVÆVÖVçBW6–ærF†R6†&VBF‡&W6†öÆG2"Â‚’Óâ°¢6öç7B²æ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2Â6†–WfVÖVçE&ævUVW7F–öä¶W—2Â6†–WfVÖVçEW&f÷&Öæ6U7VÖÖ&–W2ÒÒÆöEVW7F–öå66÷&T†VÇW'2‚“°¢6öç7BÆVv7’Òæ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2…°¢²–C¢&†–v‚"ÂÆ&VÃ¢.È8"ÂFW67&—F–öã¢.Ê	^Ù™^Ùè‚Ù[N«+ÙZ‚"ÒÀ¢²–C¢&Ö–FFÆR"ÂÆ&VÃ¢.ÊI"ÂFW67&—F–öã¢.»h»hNÊÉËÎºÂÙ[N«+ÙZ‚"ÒÀ¢²–C¢&Æ÷r"ÂÆ&VÃ¢.ÙY‚"ÂFW67&—F–öã¢.¸øNÉ¸ÉØB»	¾ÉXBÈ¹Î¸øNÙZ‚"ÒÀ¢Ò“°¢76W'BæFVWWVÂ†ÆVv7’æÖ‚†ÆWfVÂ’ÓâÆWfVÂæÆ&VÂ’Â².ºzNÉ«ÉéŽÙZ‚"Â.ÉéŽÙZ‚"Â.»;NØkR"Â.¸[Žº
+^É©NÙZ‚%Ò“°¢76W'BæWVÂ†ÆVv7•³ÒæFW67&—F–öâÂ.Ê	^Ù™^Ùè‚Ù[N«+ÙZ‚"“°¢76W'BæWVÂ†ÆVv7•³%ÒæFW67&—F–öâÂ.»h»hNÊÉËÎºÂÙ[N«+ÙZ‚"“°¢76W'BæWVÂ†ÆVv7•³5ÒæFW67&—F–öâÂ.¸øNÉ¸ÉØB»	¾ÉXBÈ¹Î¸øNÙZ‚"“°¢6öç7BFVfVÇG2Òæ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2…µÒ“°¢76W'BæÖF6‚†FVfVÇG5³ÒæFW67&—F–öâÂþÈKËzŽ«‹ÊHÉØBËjž»hNÙè‚ËjžÊò“°¢76W'BæÖF6‚†FVfVÇG5³5ÒæFW67&—F–öâÂþÈKËzŽ«‹ÊH«;Â«Hº
+Ž¹	Â«‹ËHŽÊÉÛ‚È¹Î¸øBò“°¢76W'BæFöW4æ÷DÖF6‚†FVfVÇG2æÖ‚†ÆWfVÂ’ÓâÆWfVÂæFW67&—F–öâ’æ¦ö–â‚""’ÂþÈKËzŽ«‹ÊHƒó®º[ÇÎÉ˜’ò“°¢6öç7B7W7FöÔÆWfVÇ2Òæ÷&ÖÆ—¦T6†–WfVÖVçDÆWfVÇ2…µÒÂ²ÆWfVÇ3¢°¢²–C¢&7W7FöÒÓ"ÂÆ&VÃ¢.Ø8É¹B"ÂÖ–æ–×VÓ¢“ÒÀ¢²–C¢&7W7FöÒÓ""ÂÆ&VÃ¢.ËjžÈºB"ÂÖ–æ–×VÓ¢cÒÀ¢²–C¢&7W7FöÒÓ2"ÂÆ&VÃ¢.ÊxÉ¹ÙXNÉ©B"ÂÖ–æ–×VÓ¢3ÒÀ¢ÒÒ“°¢76W'BæFVWWVÂ†7W7FöÔÆWfVÇ2æÖ‚†ÆWfVÂ’ÓâÆWfVÂæÆ&VÂ’Â².Ø8É¹B"Â.ËjžÈºB"Â.ÊxÉ¹ÙXNÉ©B%Ò“°¢76W'BæFVWWVÂ†7W7FöÔÆWfVÇ2æÖ‚†ÆWfVÂ’ÓâÆWfVÂæ&æD–B’Â²&7W7FöÒÓ"Â&7W7FöÒÓ""Â&7W7FöÒÓ2%Ò“°¢76W'BæFVWWVÂ†6†–WfVÖVçE&ævUVW7F–öä¶W—2‚#ã.»(‚"Â²#"Â#""Â#2%Ò’Â²#"Â#"%Ò“°¢76W'BæFVWWVÂ†6†–WfVÖVçE&ævUVW7F–öä¶W—2‚#Òƒ’ÂÒƒ"’"Â²#"Â#"%Ò’Â²#%Ò“° ¢6öç7B7VÖÖ&–W2Ò6†–WfVÖVçEW&f÷&Öæ6U7VÖÖ&–W2‡°¢W&f÷&Öæ6UF‡&W6†öÆG3¢²W†6VÆÆVçC¢ƒÂvööC¢cÂfW&vS¢CÂVff÷'C¢#ÒÀ¢6†–WfVÖVçDw&÷W3¢°¢²–C¢&"Â—FVÕ&ævS¢#ã.»(‚"Â7FæF&C¢.«8NÈ+ÙYŽ«:ÈJNº¨^ÙYÎ¸ºB"ÒÀ¢²–C¢&""Â—FVÕ&ævS¢#>»(‚"Â7FæF&C¢.«{Î«º[ÂÊ	ÎÈ¹ÎÙYÎ¸ºB"ÒÀ¢ÒÀ¢ÒÂ°¢²VW7F–öäçVÖ&W#¢#"ÂÖ…66÷&S¢RÒÀ¢²VW7F–öäçVÖ&W#¢#"ÂÖ…66÷&S¢RÒÀ¢²VW7F–öäçVÖ&W#¢#""ÂÖ…66÷&S¢ÒÀ¢²VW7F–öäçVÖ&W#¢#2"ÂÖ…66÷&S¢ÒÀ¢ÒÂ³BÂ2Â’ÂUÒ“°¢76W'BæFVWWVÂ‡7VÖÖ&–W2æÖ‚†—FVÒ’Óâ‡²66÷&S¢—FVÒç66÷&RÂÖ…66÷&S¢—FVÒæÖ…66÷&RÂÆWfVÃ¢—FVÒæ&æBæÆ&VÂÒ’’Â°¢²66÷&S¢bÂÖ…66÷&S¢#ÂÆWfVÃ¢.ºzNÉ«ÉéŽÙZ‚"ÒÀ¢²66÷&S¢RÂÖ…66÷&S¢ÂÆWfVÃ¢.»;NØkR"ÒÀ¢Ò“°¢76W'BæÖF6‚‡6÷W&6RÂöf÷&ÕÂçVW'•6VÆV7F÷$ÆÅÂ‚%Å¶FF×'V'&–2Öw&÷WÅÒ%Â•Âæf÷$V6…Â…Â†w&÷WÂ’ÓâÇµµÇ5Å5Ò£öw&÷WÂçVW'•6VÆV7F÷$ÆÅÂ‚%Å¶FF×'V'&–2×66÷&UÅÒ%Â•Âæf÷$V6‚ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFW&—fVD6†–WfVÖVçE&W7VÇG5Â†FW6–vâÂ&W7VÇBò“°§Ò“° §FW7B‚&WfW'’&WVW7FVBWfÇVF–öâVÆVÖVçB¶VW2f÷W"W&f÷&Öæ6RÆWfVÇ2v—F†÷WB’W‡G&2"Â‚’Óâ°¢6öç7B²Æ–vävVæW&FVE'V'&–72Âæ÷&ÖÆ—¦U'V'&–47&—FW&–ÒÒÆöEVW7F–öå66÷&T†VÇW'2‚“°¢6öç7B&WVW7FVBÒ°¢²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.«8NÈ+«;ÎÊ	R"ÂÖ…66÷&S¢RÂ66÷&UfÇVW3¢³RÂ2ãRÂ"ãRÂãUÒÒÀ¢²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.ÈJNº¨R«{Î«"ÂÖ…66÷&S¢RÂ66÷&UfÇVW3¢³RÂ2ãRÂ"ãRÂãUÒÒÀ¢Ó°¢6öç7BÆ–væVBÒÆ–vävVæW&FVE'V'&–72‡²'V'&–47&—FW&–¢°¢²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.«8NÈ+«;ÎÊ	R"Â66÷&TÆWfVÇ3¢·²66÷&S¢ãRÂ7&—FW&–öã¢.«‹ËHŽÊÉÛ‚È¹Î¸øB¹‰¸©BºûŽÉÙ¸»R"ÕÒÒÀ¢²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.ÈJNº¨R«{Î«"Â66÷&TÆWfVÇ3¢°¢²66÷&S¢RÂ7&—FW&–öã¢.«{Î««É˜NÊNÙZ‚"ÒÀ¢²66÷&S¢2ãRÂ7&—FW&–öã¢.«{Î««¸ÈË+NºÂºyîÉØÂ"ÒÀ¢²66÷&S¢"ãRÂ7&—FW&–öã¢.«{Î««ÉÛÎ»hÉèŽÉØÂ"ÒÀ¢²66÷&S¢ãRÂ7&—FW&–öã¢.«{Î««Éxn«¸)‚ºûŽÉÙ¸»R"ÒÀ¢ÒÒÀ¢²VW7F–öäçVÖ&W#¢#""ÂWfÇVF–öäVÆVÖVçC¢$ž«ÉèNÉÙŽºÂËiN«ÙYÂÉ©NÈhÂ"Â66÷&TÆWfVÇ3¢µÒÒÀ¢ÒÒÂ&WVW7FVB“°¢76W'BæWVÂ†Æ–væVBæÆVæwF‚Â"“°¢76W'BæFVWWVÂ†Æ–væVBæÖ‚†—FVÒ’Óâ—FVÒæWfÇVF–öäVÆVÖVçB’Â².«8NÈ+«;ÎÊ	R"Â.ÈJNº¨R«{Î«%Ò“°¢76W'Bæö²†Æ–væVBæWfW'’‚†—FVÒ’Óâ—FVÒç66÷&TÆWfVÇ2æÆVæwF‚ÓÓÒB’“°¢76W'BæÖF6‚†Æ–væVE³Òç66÷&TÆWfVÇ5³5Òæ7&—FW&–öâÂþºûŽÉÙ¸»Rò“° ¢6öç7B'F–ÂÒÆ–vävVæW&FVE'V'&–72‡²'V'&–47&—FW&–¢°¢²VW7F–öäçVÖ&W#¢#"ÂWfÇVF–öäVÆVÖVçC¢.ÈJNº¨R«{Î«"Â66÷&TÆWfVÇ3¢·²66÷&S¢RÂ7&—FW&–öã¢.ÈJNº¨R«{Î«ÊNÉª’ºxÎÊ	«‹ÊH"ÕÒÒÀ¢ÒÒÂ&WVW7FVB“°¢76W'BæFöW4æ÷DÖF6‚‡'F–Å³Òç66÷&TÆWfVÇ5³Òæ7&—FW&–öâÂþÈJNº¨R«{Î«ÊNÉª’ò“°¢76W'BæÖF6‚‡'F–Å³Òç66÷&TÆWfVÇ5³Òæ7&—FW&–öâÂþÈJNº¨R«{Î«ÊNÉª’ò“° ¢6öç7B&W—&VBÒæ÷&ÖÆ—¦U'V'&–47&—FW&–…·²VW7F–öäçVÖ&W#¢#2"ÂWfÇVF–öäVÆVÖVçC¢.ÙÎÙˆB"Â66÷&TÆWfVÇ3¢·²66÷&S¢Â7&—FW&–öã¢.ºûŽÉÙ¸»R"ÕÒÕÒ“°¢76W'BæWVÂ‡&W—&VBæÆVæwF‚Â“°¢76W'BæWVÂ‡&W—&VE³Òç66÷&TÆWfVÇ2æÆVæwF‚ÂB“°¢76W'BæÖF6‚‡&W—&VE³Òç66÷&TÆWfVÇ5³5Òæ7&—FW&–öâÂþºûŽÉÙ¸»Rò“°¢76W'BæÖF6‚‡6÷W&6RÂþØøž«É©NÈhÂÙZžÈ+Ê	È‰‚ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFF×VW7F–öâÖÆWfVÂò“°§Ò“° §FW7B‚&76W76ÖVçBFö7VÖVçB’–çWB6†÷w2f—6–&ÆRf—fR×7FvR&öw&W726&B"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖFö7VÖVçB×&öw&W73Ò%ÂEÇ¶¶–æEÇÒ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖFö7VÖVçB×&öw&W72×W&6VçBò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖFö7VÖVçB×&öw&W72Ö&"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖFö7VÖVçB×&öw&W72×7FWÒ%ÂEÇ¶–æFW…ÇÒ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂþÉéÉØÈ‰ŽÈ¹Ü+~»hNÈ‰‚«:Ù[NÈ8¸øBÙ™^¸ÈÊIò“°¢76W'BæÖF6‚‡6÷W&6RÂôž«ºËŽÈIÂ¸+NÉªžÉØB«ZÎÊÙ™NÙYŽ¸©BÊIò“°¢76W'BæÖF6‚‡6÷W&6RÂþ»hNÉé+~»hNºªŽÉ˜«8NÈ+È¹Ò.Ë
+‚«(ÊiÒÊIò“°¢76W'BæÖF6‚‡6÷W&6RÂþ»hNÈIÒ«+«;Îº[ÂÙ™Nº›NÉyÉè^º
+^ÙYŽ¸©BÊIò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7FGW3¢&6ö×ÆWFR"ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7FGW3¢&W'&÷""ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFö7VÖVçBÖæÇ—6—2×&öw&W72ÇµµçÕÒ¦&÷&FW#¥µçÕÒ¦&6¶w&÷VæC¢ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFö7VÖVçBÖæÇ—6—2×&öw&W72öÂÇµµçÕÒ¦w&–B×FV×ÆFRÖ6öÇVÖç3¢&WVEÂƒRò“°¢76W'BæÖF6‚‡7G–ÆW2Âô¶W–g&ÖW2Fö7VÖVçB×&öw&W72×7–âò“°§Ò“° §FW7B‚&V7’ÖF‚–çWB—26öÆÆ6–&ÆRæB÷Vç2'’FVfVÇBöæÇ’f÷"ÖF‚6÷W'6W2"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂóÆFWF–Ç26Æ73Ò&W†×ÆRÖÖF‚ÖF—66Æ÷7W&R"FFÖW†×ÆRÖÖF‚ÖF—66Æ÷7W&RÂEÇ¶÷F–öç5ÂæÖF„÷VâÃò&÷Vâ"¢"%ÇÓâò“°¢76W'BæÖF6‚‡6÷W&6RÂöW†×ÆTVF—F÷%&÷uÂ†—FVÒÂÇ²ÖF„÷Vã¢6÷W'6UÂç7V&¦V7BÓÓÒ.È‰ŽÙY’"ÇÕÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖW†×ÆRÖÖF‚ÖF—66Æ÷7W&Rò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæW†×ÆRÖÖF‚ÖF—66Æ÷7W&UÅ¶÷VåÅÒ7VÖÖ'’ò“°§Ò“° §FW7B‚&W†×ÆRÖç7vW"f–VÆG2W6RFV6†W"Ög&–VæFÇ’Æ&VÇ2æB–æ6ÇW6—fRwV–Fæ6R"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂóÆÆ&VÃîÉˆŽÈ¹Â¸»^ÉX‚Ç6ÖÆÃîÙ(ÉÛB«;ÎÊ	^«;ÂÊ	^¸»^ÉØB«YÈ*Î«»	NºÂÉÛNÙ[NÙZÈ‰‚ÉèŽ¸©BºËŽÉê^ÉËÎºÂÉè^º
+^ÙYŽÈKŽÉ©Bò“°¢76W'BæÖF6‚‡6÷W&6RÂóÆÆ&VÃîÉˆŽÈ¹Â¸»^ÉX‚ÈJNº¨RÇ6ÖÆÃîÙÌ+~«{ŽºkÌ+~¸øNÙ‰\+~«{Ž¹éŽÙHB¹;«ˆºÂ»;NÉ˜NÙZ¸+NÉªžÉØBÉè^º
+^ÙYŽÈKŽÉ©Bò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂóÆÆ&VÃî¸»^ÉXŽÉy¸ÈÙYÂÈJNº¨Rò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂóÆÆ&VÃî¸øNÙ‰\+~«{Ž¹éŽÙHBÈJNº¨Rò“°§Ò“° §FW7B‚&76W76ÖVçBFW6–vâf–ÆW26â6ÆV"æWr6VÆV7F–öâ÷"&VÖ÷fRæB&W7F÷&R6fVBf–ÆR"Â‚’Óâ°¢6öç7B²FW6–väf–ÆU–6¶W%7FFRÒÒÆöEVW7F–öå66÷&T†VÇW'2‚“°¢76W'BæFVWWVÂ†FW6–väf–ÆU–6¶W%7FFR‚.È8ŽØÈÎÉÛÂçFb"Â.«‹ÊNØÈÎÉÛÂçFb"ÂfÇ6RÂ.ÈJØ9ÒÉxnÉØÂ"’Â²7FFS¢'6VÆV7FVB"ÂÖW76vS¢.ÈJØ9Þ¹
+ƒ¢È8ŽØÈÎÉÛÂçFb"Â7F–öã¢.ÈJØ9ÒØÈÎÉÛÂÈ*ÞÊ	Â"ÂF—6&ÆVC¢fÇ6RÒ“°¢76W'BæFVWWVÂ†FW6–väf–ÆU–6¶W%7FFR‚""Â.«‹ÊNØÈÎÉÛÂçFb"ÂfÇ6RÂ.ÈJØ9ÒÉxnÉØÂ"’Â²7FFS¢'6fVB"ÂÖW76vS¢.ÊÉê^¹
+ƒ¢«‹ÊNØÈÎÉÛÂçFb"Â7F–öã¢.ÊÉêRØÈÎÉÛÂÈ*ÞÊ	Â"ÂF—6&ÆVC¢fÇ6RÒ“°¢76W'BæFVWWVÂ†FW6–väf–ÆU–6¶W%7FFR‚""Â.«‹ÊNØÈÎÉÛÂçFb"ÂG'VRÂ.ÈJØ9ÒÉxnÉØÂ"’Â²7FFS¢'&VÖ÷fVB"ÂÖW76vS¢.È*ÞÊ	ÂÉˆŽÊ	S¢«‹ÊNØÈÎÉÛÂçFb+rØøž«ÈJN«8BÊÉêRÈ¹Â»	ŽÉˆ"Â7F–öã¢.È*ÞÊ	ÂËzŽÈhÂ"ÂF—6&ÆVC¢fÇ6RÒ“°¢76W'BæFVWWVÂ†FW6–väf–ÆU–6¶W%7FFR‚""Â""ÂfÇ6RÂ.ÈJØ9ÒÉxnÉØÂ"’Â²7FFS¢&V×G’"ÂÖW76vS¢.ÈJØ9ÒÉxnÉØÂ"Â7F–öã¢.ÈJØ9ÒØÈÎÉÛÂÈ*ÞÊ	Â"ÂF—6&ÆVC¢G'VRÒ“°¢f÷"†6öç7Bf–VÆBöb²'&VÖ÷fTFW6–väFö7VÖVçB"Â'&VÖ÷fU'V'&–4Fö7VÖVçB"Â'&VÖ÷fTW†×ÆTFö7VÖVçB"Â'&VÖ÷fT&Ææ´Fö7VÖVçB"Â'&VÖ÷fTW†×ÆT—FVÔf–ÆR%Ò’76W'BæÖF6‚‡6÷W&6RÂæWr&VtW‡†f–VÆB’“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ6ÆV"ÖFW6–vâÖf–ÆRò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ6ÆV"Öf–ÆRÖ7F–öãîÈ*ÞÊ	Âò“°¢76W'BæÖF6‚‡6÷W&6RÂö'WGFöåÂæ†–FFVâÒ&W6VçFF–öåÂæF—6&ÆVBò“°¢76W'BæÖF6‚‡6÷W&6RÂö–çWEÂçfÇVRÒ""ò“°¢76W'BæÖF6‚‡6÷W&6RÂöf÷&ÕÂåöFW6–vå6÷W&6Tf–ÆRÒWfVçEÂçF&vWEÂæf–ÆW5ÃõÂåÅ³ÅÒÇÅÇÂçVÆÂò“°¢76W'BæÖF6‚‡6÷W&6RÂþÊÉê^¹	ÂØÈÎÉÛÎÉØBÈ*ÞÊ	ÎÙYŽ¸øNºÒÙÎÈ¹ÎÙhŽÈ«^¸¸Ž¸ºBò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFW6–vâÖf–ÆR×7FGW5Å¶FFÖf–ÆR×7FFSÒ'&VÖ÷fVB%ÅÒò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFW6–vâÖf–ÆR×7FGW2ÇµµçÕÒ¦w&–BÖ6öÇVÖã¢µµçÕÒ§v–GFƒ¢f—BÖ6öçFVçC²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFW6–vâÖf–ÆR×7FGW2Å¶FFÖ6ÆV"ÖFW6–vâÖf–ÆUÅÒÇµµçÕÒ¦&÷&FW"×&F—W3¢““—ƒµµçÕÒ¦&6¶w&÷VæC¢6ffSvS²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂæFW6–vâÖf–ÆR×7FGW2Å¶FFÖ6ÆV"ÖFW6–vâÖf–ÆUÅÕÅ¶†–FFVåÅÒÇ²F—7Æ“¢æöæS²ÇÒò“°§Ò“° §FW7B‚&F÷væÆöFVB7GVFVçB&÷7FW"FV×ÆFR–æ6ÇVFW266†ööÂæÖRæBÆVfW2WfW'’FF&÷r&Ææ²"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂö6öç7B&÷7FW%&÷w2ÒÅµÅ².ÙYž«Yº¨R"Â.ÙYž¸XB"Â.»	‚"Â.»(ŽÙ‹‚"Â.ÉÛNºhB%ÅÕÅÒò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷&÷7FW%&÷w5ÂçW6…Â…Å²""Â""Â""Â""Â"%ÅÕÂ’ò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂ÷&÷7FW%&÷w5ÂçW6…Â…Å³bÂ""Â""Â"%ÅÕÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂõ7GVFVçEv÷&¶fÆ÷uÂç6VÆV7E&÷7FW%6†VWEÂ‡6†VWG2ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷v÷&¶&ööµÂå6†VWDæÖW5ÂæÖò“°§Ò“° §FW7B‚'7GVFVçBÖævVÖVçB&VæFW'26W&FR&÷7FW"f÷"WfW'’66†ööÂÂw&FRÂæB6Æ72w&÷W"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂ÷7GVFVçDw&÷W5ÂæÖÂ…Â†w&÷WÂw&÷W–æFW…Â’Óâò“°¢76W'BæÖF6‚‡6÷W&6RÂö6Æ73Ò'7GVFVçB×&÷7FW"Öw&÷W"ò“°¢76W'BæÖF6‚‡6÷W&6RÂõÂEÇ¶W66T‡FÖÅÂ†w&÷WÂç66†ööÄæÖRÇÅÇÂ.ÙYž«YºûŽÉè^º
+R%Â•ÇÒò“°¢76W'BæÖF6‚‡6÷W&6RÂõÂEÇ¶W66T‡FÖÅÂ†w&÷WÂæw&FUÂ•ÇÞÙYž¸XBÂEÇ¶W66T‡FÖÅÂ†w&÷WÂæ6Æ74æÖUÂ•ÇÞ»	‚ò“°¢76W'BæÖF6‚‡6÷W&6RÂöw&÷WÂç7GVFVçG5ÂæÖÂ…Â‡7GVFVçEÂ’Óâò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖFVÆWFR×7GVFVçBÖw&÷WÒ%ÂEÇ¶w&÷W–æFW…ÇÒ"ò“°§Ò“° §FW7B‚'7GVFVçBÖævVÖVçBf–ÇFW'2&÷7FW"6&G2FòF†R6VÆV7FVB66†ööÂ"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂö6öç7B7GVFVçE66†ööÇ2Ò'&•Âæg&öÕÂ†æWr6WEÂ‡7GVFVçDw&÷W5ÂæÖò“°¢76W'BæÖF6‚‡6÷W&6RÂöFF×7GVFVçB×66†ööÂÖf–ÇFW#Ò%ÂEÇ·66†ööÄ–æFW…ÇÒ"&–×&W76VCÒ%ÂEÇ¶—56VÆV7FVEÇÒ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFF×7GVFVçB×66†ööÂÖw&÷WÒ%ÂEÇ·7GVFVçE66†ööÇ5Âæ–æFW„öeÂ†w&÷WÂç66†ööÄæÖRÇÅÇÂ"%Â•ÇÒ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöw&÷WÂç66†ööÄæÖRÓÓÒ6VÆV7FVE7GVFVçE66†ööÄæÖRÃò""¢"†–FFVâ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöw&÷WÂæ†–FFVâÒçVÖ&W%Â†w&÷WÂæFF6WEÂç7GVFVçE66†ööÄw&÷WÂ’ÓÒ66†ööÄ–æFW‚ò“°§Ò“° §FW7B‚&76W76ÖVçBF&vWB6Æ72÷F–öç26öÖRöæÇ’g&öÒ6Æ76W2&Vv—7FW&VB–â7GVFVçBÖævVÖVçB"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂõ7GVFVçEv÷&¶fÆ÷uÂç&÷7FW$6Æ76W5Â‡7GVFVçG2Â6÷W'6Tw&FUÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷F&vWD6Æ74÷F–öç5Â†f–Æ&ÆT6Æ76W2Â6VÆV7FVEF&vWD6Æ75Â’ò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂöFF×F&vWBÖ6Æ73åÂEÇ¶6Æ74÷F–öç5Â‡6VÆV7FVEF&vWD6Æ75Â•ÇÒò“°¢76W'BæÖF6‚‡6÷W&6RÂþÙYžÈ9Ò«HºjÎÉy¹;ºÞ¹	Ââ®ÙYž¸XB»	ŽºxÂÙÎÈ¹Î¹
+ž¸¸Ž¸ºBò“°§Ò“° §FW7B‚'7V&Ö—76–öâ7Æ—GF–ær6â6VÆV7B÷"6ÆV"WfW'’F&vWB7GVFVçBBöæ6R"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂöFF×6VÆV7BÖÆÂ×7V&Ö—76–öç5µãåÒ£îÊNË+BÙYžÈ9ÒÈJØ9ÓÅÂö'WGFöãâò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ6ÆV"ÖÆÂ×7V&Ö—76–öç5µãåÒ£îÊNË+BÈJØ9ÒÙ[NÊ	ÃÅÂö'WGFöãâò“°¢76W'BæÖF6‚‡6÷W&6RÂþ»hNÙZ¸ÈÈ8Æ%µãåÒ£åÂEÇ¶–æ6ÇVFVE7GVFVçD6÷VçEÇÓÅÂö#âÂòÂEÇ·F&vWE7GVFVçG5ÂæÆVæwF…ÇÞº¨Rò“°¢76W'BæÖF6‚‡6÷W&6RÂþÙXNÉ©BÂEÇ·&WV—&VEvT6÷VçEÇÞÊ«Ò+rÉx^ºÎ¹9ÂDbÂEÇ·7V&Ö—76–öåÂçvT6÷VçEÇÞÊ«Òò“°¢76W'BæÖF6‚‡6÷W&6RÂöFF×6VÆV7BÖÆÂ×7V&Ö—76–öç5µÇ5Å5Ò£÷F&vWE7GVFVçG5ÂæÖÂ…Â‡7GVFVçEÂ’Óâ7GVFVçEÂæ–EÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖ6ÆV"ÖÆÂ×7V&Ö—76–öç5µÇ5Å5Ò£÷6fU7V&Ö—76–öå6VÆV7F–öåÂ…Ç2¥ÅµÅÒò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç7Æ—B×6VÆV7F–öâ×FööÆ&"ÇµµçÕÒ¦§W7F–g’Ö6öçFVçC¢76RÖ&WGvVVâò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç7Æ—BÖ'VÆ²Ö7F–öç2ÇµµçÕÒ¦F—7Æ“¢fÆW‚ò“°§Ò“° §FW7B‚'7V&Ö—76–öâ6VÆV7F–öâWFFW2–âÆ6Rv—F†÷WB§V×–ærF†R7GVFVçBÆ—7BFòF†RF÷"Â‚’Óâ°¢6öç7B&–æE7F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ&–æE7V&Ö—76–öåF""“°¢6öç7B'V–ÆE7F'BÒ6÷W&6Ræ–æFW„öb‚&gVæ7F–öâ'V–ÆE7V&Ö—76–öâ"Â&–æE7F'B“°¢6öç7B6VÆV7F–öå6÷W&6RÒ6÷W&6Rç6Æ–6R†&–æE7F'BÂ'V–ÆE7F'B“°¢6öç7B6fU7F'BÒ6VÆV7F–öå6÷W&6Ræ–æFW„öb‚&6öç7B6fU7V&Ö—76–öå6VÆV7F–öâ"“°¢6öç7BWFFU7F'BÒ6VÆV7F–öå6÷W&6Ræ–æFW„öb‚&gVæ7F–öâWFFU7V&Ö—76–öå6VÆV7F–öåf–Wr"“°¢6öç7B6fU6÷W&6RÒ6VÆV7F–öå6÷W&6Rç6Æ–6R‡6fU7F'BÂWFFU7F'B“°¢76W'BæÖF6‚‡6VÆV7F–öå6÷W&6RÂögVæ7F–öâWFFU7V&Ö—76–öå6VÆV7F–öåf–WuÂ‡7V&Ö—76–öâÂF&vWE7GVFVçG5Â’ò“°¢76W'BæÖF6‚‡6VÆV7F–öå6÷W&6RÂ÷WFFU7V&Ö—76–öå6VÆV7F–öåf–WuÂ†6÷W'6UÂç7V&Ö—76–öâÂF&vWE7GVFVçG5Â’ò“°¢76W'BæÖF6‚‡6VÆV7F–öå6÷W&6RÂöFF×7Æ—B×6VÆV7FVBÖ6÷VçBò“°¢76W'BæÖF6‚‡6VÆV7F–öå6÷W&6RÂöFF×7Æ—B×vR×7VÖÖ'’ò“°¢76W'BæÖF6‚‡6VÆV7F–öå6÷W&6RÂ÷&÷uÃõÂæ6Æ74Æ—7EÂçFövvÆUÂ‚&—2Ö–æ6ÇVFVB"Â—4–æ6ÇVFVEÂ’ò“°¢76W'BæFöW4æ÷DÖF6‚‡6fU6÷W&6RÂ÷&VæFW$6÷W'6UÂ†6÷W'6UÂæ–BÂ'7V&Ö—76–öç2%Â’ò“°§Ò“° §FW7B‚'7V&Ö—76–öâÖævVÖVçB6â&Wf–WrV6‚7GVFVçBw276–væVBDbBgVÆÂ67&VVâ"Â‚’Óâ°¢76W'BæÖF6‚‡6÷W&6RÂöFF×&Wf–Wr×7V&Ö—76–öãÒ%ÂEÇ¶W66T‡FÖÅÂ‡7GVFVçEÂæ–EÂ•ÇÒ"ò“°¢76W'BæÖF6‚‡6÷W&6RÂöFFÖW‡æB×7V&Ö—76–öâ×&Wf–WsîÊNË+BÙ™Nº›NÉËÎºÂØÎ«(Â»;N«‹ÅÂö'WGFöãâò“°¢76W'BæÖF6‚‡6÷W&6RÂ÷7Æ—E7GVFVçEFeÂ†6÷W'6UÂç7V&Ö—76–öåÂç6÷W&6Tf–ÆUÂæ&Æö"Â76–væÖVçEÂçvTçVÖ&W'2Â76–væÖVçD–æFW…Â’ò“°¢76W'BæÖF6‚‡6÷W&6RÂög&ÖUÂç7&2Òf—EFe&Wf–WuW&ÅÂ‡7GVFVçE&Wf–WuW&ÅÂ’ò“°¢76W'BæÖF6‚‡6÷W&6RÂö÷VåFdgVÆÇ67&VVå&Wf–WuÂ†g&ÖUÃõÂç7&2ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂç7Æ—B×&Wf–WrÖ'WGFöâÇ²ò“°¢76W'BæÖF6‚‡7G–ÆW2ÂõÂçFbÖgVÆÇ67&VVâÖF–ÆörÇµµçÕÒ§v–GFƒ¢6Æ5ÂƒgrÒg…Â“µµçÕÒ¦†V–v‡C¢6Æ5Âƒf‚Òg…Â’ò“°§Ò“° §FW7B‚&†öÖRæBæf–vF–öâW6RF†R&WVW7FVB’W76’Ö76W76ÖVçBF—FÆR"Â‚’Óâ°¢6öç7B‡FÖÂÒg2ç&VDf–ÆU7–æ2‡F‚æ¦ö–â…õöF—&æÖRÂ"ââ"Â'vV""Â&–æFW‚æ‡FÖÂ"’Â'WFc‚"“°¢76W'BæÖF6‚‡6÷W&6RÂóÆƒä’ÈIÌ+~¸[ÎÈŠÙ‰SÆ'#ãÇ7ãîØøž«ÊxÉ¹È¹ÎÈªNØYÃÅÂ÷7ããÅÂöƒâò“°¢76W'BæFöW4æ÷DÖF6‚‡6÷W&6RÂó##nÙYž¸XN¸øB.ÙYž«‹+rËHŽ¹;ãnÙYž¸XBò“°¢76W'BæÖF6‚†‡FÖÂÂô’ÈIÌ+~¸[ÎÈŠÙ‰Rò“°¢76W'BæFöW4æ÷DÖF6‚†‡FÖÂÂô’ÈIÂÞ¸[ÎÈŠÙ‰Rò“°§Ò“° §FW7B‚'F†RvÆö&Âfö÷FW"7&VF—G2F†R&WVW7FVBFWfVÆ÷W""Â‚’Óâ°¢6öç7B‡FÖÂÒg2ç&VDf–ÆU7–æ2‡F‚æ¦ö–â…õöF—&æÖRÂ"ââ"Â'vV""Â&–æFW‚æ‡FÖÂ"’Â'WFc‚"“°¢76W'BæÖF6‚†‡FÖÂÂóÆfö÷FW"6Æ73Ò'6—FRÖ7&VF—B"&–ÖÆ&VÃÒ.«	Î»	ÎÉéÊ	^»;B#âò“°¢76W'BæÖF6‚†‡FÖÂÂóÇ7ãî«	Î»	ÎÉéÅÂ÷7ãåÇ2£Ç7G&öæsîË*Þ«8NËHŽ¹;ÙYž«YÊÉˆÈIÓÅÂ÷7G&öæsâò“°§Ò“° Ð Ð 

@@ -730,7 +730,7 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 평가요소 기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 평가요소를 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 평가요소를 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
