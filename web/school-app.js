@@ -730,7 +730,7 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 채점기준을 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 채점기준을 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 채점기준 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
@@ -824,7 +824,7 @@ function performanceThresholdRow(level, index = 0) {
 function rubricEditorGroup(item, index, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const bandDefinitions = performanceBandDefinitions(thresholds);
   return `<article class="rubric-editor-group" data-rubric-group data-group-id="${escapeHtml(item.id || "")}">
-    <div class="rubric-group-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>평가요소 삭제</button></div>
+    <div class="rubric-group-head"><div><strong>채점기준 ${index + 1}</strong><span data-rubric-point-summary>문제 배점을 연결하는 중</span></div><button type="button" data-remove-rubric>채점기준 삭제</button></div>
     <div class="rubric-group-fields"><label>문제 번호<input name="rubricQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1" required></label><label>평가요소<input name="rubricElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성" required></label></div>
     <div class="rubric-performance-guide"><strong>성취구간별 대표 자동배점</strong><span data-rubric-lowest-level-guide>미응답 또는 근거 없음도 별도 행 없이 ${escapeHtml(bandDefinitions.at(-1)?.label || "마지막 성취수준")} 기준에 포함됩니다.</span></div>
     <div class="rubric-score-head"><span>성취수준 · 비율 · 대표점수</span><span>해당 수준의 채점기준</span></div>
@@ -844,7 +844,7 @@ function rubricAiDialog(items, course, thresholds = DEFAULT_RUBRIC_PERFORMANCE_T
       <div class="rubric-ai-heading"><div><p class="section-kicker">GEMINI RUBRIC BUILDER</p><h3>채점기준 AI 생성</h3><p>${escapeHtml(course.grade)}학년 ${escapeHtml(course.subject)} 교과에 맞춰 평가요소별 배점 기준을 만듭니다.</p></div><button type="button" data-close-rubric-ai aria-label="닫기">×</button></div>
       <div class="rubric-ai-guide"><strong>예시답안의 문제별 배점과 설정한 성취수준에 맞춰 자동 배치됩니다.</strong><span>미응답 또는 근거 없음도 별도 수준 없이 마지막 성취수준 기준 안에 함께 생성합니다.</span></div>
       <div class="rubric-ai-element-list" data-rubric-ai-elements>${items.map((item, index) => rubricAiElementRow(item, index, bandCount)).join("")}</div>
-      <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 평가요소 추가</button>
+      <button class="mini-add" type="button" data-add-rubric-ai-element>＋ 채점기준 추가</button>
       <p class="rubric-ai-status" data-rubric-ai-status role="status">설정에 저장된 Gemini 모델과 API 키를 사용합니다.</p>
       <div class="rubric-ai-actions"><button class="secondary-action" type="button" data-close-rubric-ai>취소</button><button class="primary-action" type="button" data-run-rubric-ai>채점기준 AI 생성</button></div>
     </div>
@@ -853,7 +853,7 @@ function rubricAiDialog(items, course, thresholds = DEFAULT_RUBRIC_PERFORMANCE_T
 
 function rubricAiElementRow(item = {}, index = 0, defaultBandCount = RUBRIC_PERFORMANCE_BANDS.length) {
   const bandCount = Math.min(MAX_PERFORMANCE_LEVELS, Math.max(MIN_PERFORMANCE_LEVELS, Number(item.bandCount || defaultBandCount)));
-  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>평가요소 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${bandCount}"><span class="rubric-ai-fixed-levels">${bandCount}개 성취수준</span></label></div></article>`;
+  return `<article class="rubric-ai-element" data-rubric-ai-element><div class="rubric-ai-element-head"><div><strong>채점기준 ${index + 1}</strong><span data-rubric-ai-score-summary>문제 배점 연결 전</span></div><button type="button" data-remove-rubric-ai-element>삭제</button></div><div class="rubric-ai-element-fields"><label>문제 번호<input name="rubricAiQuestion" value="${escapeHtml(item.questionNumber || String(index + 1))}" placeholder="예: 1"></label><label>평가요소<input name="rubricAiElement" value="${escapeHtml(item.evaluationElement || "")}" placeholder="예: 풀이 과정의 논리성"></label><label>자동 채점수준<input name="rubricAiBandCount" type="hidden" value="${bandCount}"><span class="rubric-ai-fixed-levels">${bandCount}개 성취수준</span></label></div></article>`;
 }
 
 function exampleEditorRow(item, options = {}) {
@@ -1310,7 +1310,7 @@ function rubricElementsFromForm(form) {
   return Array.from(form.querySelectorAll("[data-rubric-group]")).map((group, index) => ({
     id: group.dataset.groupId || `rubric-${index + 1}`,
     questionNumber: group.querySelector('[name="rubricQuestion"]')?.value.trim() || "",
-    evaluationElement: group.querySelector('[name="rubricElement"]')?.value.trim() || `평가요소 ${index + 1}`,
+    evaluationElement: group.querySelector('[name="rubricElement"]')?.value.trim() || `채점기준 ${index + 1}`,
   }));
 }
 
@@ -1447,20 +1447,21 @@ function syncQuestionScoreUI(form) {
       if (!questionNumber) return;
       reflectedScores.set(questionNumber, (reflectedScores.get(questionNumber) || 0) + Number(allocations.get(index) || 0));
     });
-    const groupedLabels = new Map();
+    const groupedQuestionRows = new Map();
     form.querySelectorAll("[data-example-row]").forEach((row) => {
       const label = row.querySelector('[name="exampleQuestion"]')?.value.trim() || "";
       const key = questionScoreGroupKey(label);
       if (!key || !label) return;
-      if (!groupedLabels.has(key)) groupedLabels.set(key, []);
-      groupedLabels.get(key).push(label);
+      const rowScore = Array.from(row.querySelectorAll('[name="examplePointScore"]')).reduce((sum, input) => sum + positiveDesignScore(input.value), 0);
+      if (!groupedQuestionRows.has(key)) groupedQuestionRows.set(key, []);
+      groupedQuestionRows.get(key).push({ label, score: rowScore });
     });
     const total = entries.reduce((sum, [, score]) => sum + score, 0);
     const reflectedTotal = Array.from(reflectedScores.values()).reduce((sum, score) => sum + score, 0);
     const totalsMatch = Math.abs(total - reflectedTotal) <= 0.001;
     summary.classList.toggle("is-warning", !entries.length || !totalsMatch);
     summary.innerHTML = entries.length
-      ? `<div><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b><span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span></div><ul>${entries.map(([question, score]) => { const labels = groupedLabels.get(question) || []; const reflected = reflectedScores.get(question) || 0; const details = [labels.length > 1 ? `${labels.join(" + ")} 합산` : "", `채점기준 반영 ${formatScore(reflected)}점${Math.abs(score - reflected) <= 0.001 ? "" : " · 확인 필요"}`].filter(Boolean); return `<li>문제 ${escapeHtml(question)} <strong>${formatScore(score)}점</strong>${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</li>`; }).join("")}</ul>`
+      ? `<div class="question-score-summary-total"><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b><span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span></div><div class="question-score-breakdown"><strong>문제별 배점 합산</strong><ul>${entries.map(([question, score]) => { const rows = groupedQuestionRows.get(question) || []; const reflected = reflectedScores.get(question) || 0; const matches = Math.abs(score - reflected) <= 0.001; const calculation = rows.map((item) => `${item.label} ${formatScore(item.score)}점`).join(" + ") || `문제 ${question} ${formatScore(score)}점`; return `<li><div><span>문제 ${escapeHtml(question)}</span><b>${formatScore(score)}점</b></div><small>${escapeHtml(calculation)}</small><em class="question-score-reflection ${matches ? "is-match" : "is-mismatch"}">채점기준 반영 ${formatScore(reflected)}점${matches ? " · 일치" : " · 확인 필요"}</em></li>`; }).join("")}</ul></div>`
       : `<div><strong>문제별 배점을 먼저 입력해 주세요.</strong><span>3번 예시답안의 문제 번호와 배점을 입력하면 이곳에 총점이 표시됩니다.</span></div>`;
   }
   syncRubricAiScoreSummaries(form);
