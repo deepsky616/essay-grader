@@ -713,11 +713,14 @@
       if (!hasParts || whole || recordedValue !== answerNumber(`${numerator}/${denominator}`)) return layoutUncertain;
       const expected = fractionReference(example)?.value;
       // The key may trigger a reread. It never supplies or changes the student's digits.
-      if (!enlarged && expected !== recordedValue && /^\d{2,12}$/.test(numerator)) {
+      if (expected !== recordedValue && /^\d{2,12}$/.test(numerator)) {
         for (let split = 1; split < numerator.length; split += 1) {
           const suffix = numerator.slice(split);
           if (Number(suffix) <= 0 || Number(suffix) >= Number(denominator)) continue;
-          if (answerNumber(`${numerator.slice(0, split)} ${suffix}/${denominator}`) === expected) return layoutUncertain;
+          if (answerNumber(`${numerator.slice(0, split)} ${suffix}/${denominator}`) === expected) {
+            // A repeated reading after enlargement can be the same layout error.
+            return enlarged ? { ...layoutUncertain, issue: "mixed-layout-unresolved" } : layoutUncertain;
+          }
         }
       }
       return { ...base, status: "readable" };
@@ -1569,7 +1572,9 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     if (reading.status !== "readable") {
       const message = reading.status === "conflict"
         ? "1차 판독과 정밀 재판독의 답이 다릅니다. 학생 답안을 확인해 주세요."
-        : reading.issue === "fraction-layout"
+        : reading.issue === "mixed-layout-unresolved"
+          ? "확대 재판독에서도 대분수의 자연수와 분자 경계를 확인하지 못했습니다. 학생이 쓴 숫자의 위치를 직접 확인해 주세요."
+          : reading.issue === "fraction-layout"
           ? "대분수의 자연수와 분자 또는 분수선의 경계가 불분명합니다. 확대 판독이 확정되기 전에는 교사 확인이 필요합니다."
           : "예시답을 보지 않은 독립 판독에서 최종 답을 확인하지 못했습니다. 학생 답안을 확인해 주세요.";
       return { ...base, pending: true, observed: reading.finalAnswer || "판독 불확실", message };
