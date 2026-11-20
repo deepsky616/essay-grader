@@ -1086,12 +1086,12 @@ a { color: inherit; text-decoration: none; }
 .pdf-fullscreen-shell header span { color: var(--muted); font-size: 12px; }
 .pdf-fullscreen-shell header button { flex: 0 0 auto; padding: 9px 12px; border: 1px solid var(--ink); border-radius: 9px; background: white; color: var(--ink); cursor: pointer; font-size: 13px; font-weight: 900; }
 .pdf-fullscreen-shell iframe { display: block; width: 100%; height: 100%; border: 0; background: #dfe2e8; }
-.teacher-score-panel { overflow: auto; max-height: 820px; }
+.teacher-score-panel { container-type: inline-size; }
 .teacher-score-panel > .mini-panel-head strong { font-size: 17px; }
 .teacher-score-panel > .mini-panel-head span { font-size: 15px; }
 .question-score-group { border-bottom: 2px solid var(--ink); }
 .question-score-group:last-child { border-bottom: 0; }
-.question-score-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; background: rgba(185,234,210,.24); }
+.question-score-group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; background: rgba(185,234,210,.24); }
 .question-score-group-head > strong { font-size: 18px; }
 .question-score-group-head span { color: var(--muted); font-size: 15px; }
 .question-score-group-head b { margin-left: 5px; color: var(--blue); font-size: 16px; }
@@ -1101,28 +1101,30 @@ a { color: inherit; text-decoration: none; }
 .example-point-status.is-partial { background: #fff5d8; color: #765800; }
 .example-point-status.is-none { background: #ffe4de; color: #8b2e20; }
 .example-point-status.is-unlinked { background: #f1f2f5; color: var(--muted); }
-.example-point-table-wrap { overflow-x: auto; padding: 14px 16px 16px; border-bottom: 1px solid var(--line); background: rgba(242,217,167,.12); }
-.example-point-table-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.example-point-table-wrap { padding: 14px 16px 16px; border-bottom: 1px solid var(--line); background: rgba(242,217,167,.12); }
+.example-point-table-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
 .example-point-table-title strong { font-size: 16px; }
 .example-point-table-title span { color: var(--muted); font-size: 14px; font-weight: 800; }
 .example-point-table { width: 100%; border-collapse: collapse; table-layout: fixed; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
-.example-point-table th, .example-point-table td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.example-point-table th, .example-point-table td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .example-point-table thead th { background: rgba(233,239,255,.72); color: var(--ink); font-size: 14px; }
-.example-point-table thead th:nth-child(1) { width: 14%; }
-.example-point-table thead th:nth-child(2) { width: 19%; }
-.example-point-table thead th:nth-child(3) { width: 19%; }
-.example-point-table tbody th { color: var(--blue); font-size: 16px; white-space: nowrap; }
+.example-point-table thead th:nth-child(1) { width: 25%; }
+.example-point-table thead th:nth-child(2) { width: 8.25rem; }
+.example-point-table tbody th { color: var(--blue); font-size: 16px; }
 .example-point-table tbody th small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: normal; }
 .example-point-table tbody td { color: var(--ink); font-size: 14px; }
-.example-point-score-edit { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 14px; white-space: nowrap; }
-.example-point-score-edit select { min-width: 78px; min-height: 40px; padding: 7px 28px 7px 10px; border: 2px solid var(--blue); border-radius: 9px; background: #fff; color: var(--ink); cursor: pointer; font-size: 16px; font-weight: 950; }
+.example-point-score-edit { display: flex; align-items: center; gap: 5px; color: var(--ink); font-size: 14px; white-space: nowrap; }
+.example-point-score-edit select { width: 4.5rem; min-width: 0; min-height: 40px; padding: 5px 6px; border: 2px solid var(--blue); border-radius: 9px; background: #fff; color: var(--ink); cursor: pointer; font-size: 16px; font-weight: 950; }
 .example-point-score-edit select:focus-visible { outline: 3px solid rgba(49,84,214,.24); outline-offset: 2px; }
 .example-point-score-edit strong { font-size: 15px; }
+.example-point-table .example-point-status { max-width: 100%; margin-top: 6px; white-space: normal; }
 .example-point-table tbody tr:last-child th, .example-point-table tbody tr:last-child td { border-bottom: 0; }
 .teacher-score-list .example-point-table p { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.5; }
 .example-point-table .confidence-badge { min-height: 24px; margin-top: 6px; padding: 3px 7px; font-size: 12px; }
 .example-point-empty { color: var(--muted); text-align: center !important; }
-.teacher-score-list article { display: grid; grid-template-columns: minmax(0,1fr) 160px; gap: 15px; padding: 17px 16px; border-bottom: 1px solid var(--line); }
+.teacher-score-list article { display: grid; grid-template-columns: minmax(0,1fr) minmax(12rem,.8fr); gap: 15px; padding: 17px 16px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.teacher-score-list article.has-many-score-choices { grid-template-columns: minmax(0,1fr); }
+.has-many-score-choices .score-choice-field { grid-row: 1; }
 .question-score-group article:last-child { border-bottom: 0; }
 .teacher-score-list strong { font-size: 16px; }
 .teacher-score-list p { display: block; margin: 7px 0 0; color: var(--muted); font-size: 16px; line-height: 1.65; }
@@ -1138,13 +1140,19 @@ a { color: inherit; text-decoration: none; }
 .missing-score-label { display: inline-block; margin: 6px 0 0; padding: 5px 8px; border-radius: 999px; background: #ffe4de; color: #8b2e20; font-size: 14px; font-style: normal; font-weight: 900; }
 .score-choice-field { min-width: 0; margin: 0; padding: 0; border: 0; }
 .score-choice-field legend { margin-bottom: 9px; color: var(--muted); font-size: 15px; font-weight: 900; }
-.score-choice-buttons { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding: 0 2px 3px; }
-.score-choice-buttons button { flex: 1 0 40px; min-width: 40px; padding: 10px 8px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); cursor: pointer; font-size: 16px; font-weight: 900; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
+.score-choice-buttons { display: grid; grid-template-columns: repeat(auto-fill,minmax(3.35rem,1fr)); gap: 7px; padding: 0 2px 3px; }
+.score-choice-buttons button { min-width: 0; min-height: 42px; padding: 7px 4px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--muted); cursor: pointer; font-size: 16px; font-weight: 900; font-variant-numeric: tabular-nums; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 .score-choice-buttons button:hover { border-color: var(--blue); color: var(--blue); transform: translateY(-1px); }
 .score-choice-buttons button.is-selected { border-color: var(--ink); background: var(--blue); color: white; box-shadow: 2px 2px 0 var(--ink); }
 .teacher-total { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px; border-bottom: 2px solid var(--ink); background: var(--sand); font-size: 16px; }
 .teacher-total strong { color: var(--blue); font-size: 18px; }
 .teacher-total-result { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
+@container (max-width: 460px) {
+  .teacher-score-list article { grid-template-columns: minmax(0,1fr); }
+  .example-point-table th, .example-point-table td { padding: 8px 5px; }
+  .example-point-table thead th:nth-child(2) { width: 7rem; }
+  .example-point-score-edit select { width: 4rem; }
+}
 .score-bulk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 14px 16px 16px; border-top: 1px solid var(--line); }
 .score-bulk-actions button { width: 100%; }
 .feedback-edit-field { display: grid; gap: 9px; padding: 18px 16px; color: var(--muted); font-size: 16px; font-weight: 900; }
@@ -1388,7 +1396,6 @@ a { color: inherit; text-decoration: none; }
   .student-review-actions, .detail-ai-actions, .score-bulk-actions { grid-template-columns: 1fr; }
   .grading-prerequisite, .grading-result-actions { align-items: stretch; flex-direction: column; }
   .teacher-score-list article { grid-template-columns: 1fr; }
-  .example-point-table { min-width: 620px; }
   .result-distribution-head, .result-distribution-toolbar { align-items: stretch; flex-direction: column; }
   .result-distribution-close { align-self: flex-end; order: -1; }
   .result-output-toolbar { align-items: stretch; }

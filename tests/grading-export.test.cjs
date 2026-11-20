@@ -201,7 +201,7 @@ test("grading detail source exposes rubric score buttons and the requested revie
   assert.match(source, /data-regrade-student>AI 채점 재실행/);
   assert.match(source, /resultStatus\.textContent = "검토 완료"/);
   assert.match(source, /textarea data-achievement-feedback=/);
-  assert.match(source, /result\.achievementResults = derivedAchievementResults\(design, result, result\.teacherScores\)\.map/);
+  assert.match(source, /result\.achievementResults = derivedAchievementResults\(design, result, result\.teacherScores, true\)\.map/);
   assert.match(source, /성취기준별 평가요소 합산 결과/);
   assert.doesNotMatch(source, /data-apply-ai-score/);
 });
@@ -342,6 +342,17 @@ test("student grading detail gives the scoring panel more horizontal space", () 
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.student-review-grid \{ grid-template-columns: 1fr; \}/);
 });
 
+test("teacher score choices wrap into rows and the point table fits the panel", () => {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
+  const choices = styles.match(/\.score-choice-buttons \{([^}]+)\}/)[1];
+  assert.match(choices, /display: grid; grid-template-columns: repeat\(auto-fill,minmax/);
+  assert.doesNotMatch(choices, /overflow-x|nowrap/);
+  assert.match(schoolSource, /choices\.length > 8 \? "has-many-score-choices"/);
+  assert.match(styles, /article\.has-many-score-choices \{ grid-template-columns: minmax\(0,1fr\);/);
+  assert.doesNotMatch(styles, /\.example-point-table(?:-wrap)? \{[^}]*(?:min-width: \d|overflow-x: auto)/);
+  assert.match(schoolSource, /data-example-point-score[\s\S]*?<\/select>[^<]*<strong>[^<]*<\/strong><\/label><em[^>]+data-point-status/);
+});
+
 test("result distribution source exposes five default-on output item controls", () => {
   const source = schoolSource;
   assert.match(source, /data-toggle-result-output-settings[^>]*>출력 항목 설정/);
@@ -386,7 +397,7 @@ test("teacher total shows and updates the threshold-based achievement level", ()
   assert.match(schoolSource, /function achievementBandForScore\(score, maxScore, thresholds/);
   assert.match(schoolSource, /data-teacher-level/);
   assert.match(schoolSource, /data-result-level/);
-  assert.match(schoolSource, /achievementBandForScore\(total, summary\.maxScore, design\.performanceThresholds\)/);
+  assert.match(schoolSource, /const achievementBand = teacherAchievementBand\(total\)/);
   assert.match(schoolSource, /result\.teacherPerformanceLevel = achievementBandForScore/);
   assert.match(schoolSource, /performanceLevel: performanceLevel\.label/);
   assert.match(styles, /\.performance-level-badge\.is-excellent/);
@@ -423,7 +434,7 @@ test("problem scoring panel uses readable text and score button sizes", () => {
   assert.match(styles, /\.question-score-group-head > strong \{ font-size: 18px; \}/);
   assert.match(styles, /\.teacher-score-list p \{[^}]*font-size: 16px;[^}]*line-height: 1\.65;/);
   assert.match(styles, /\.teacher-score-list small \{[^}]*font-size: 15px;/);
-  assert.match(styles, /\.score-choice-buttons button \{[^}]*min-width: 40px;[^}]*font-size: 16px;/);
+  assert.match(styles, /\.score-choice-buttons button \{[^}]*min-height: 42px;[^}]*font-size: 16px;/);
   assert.match(styles, /\.teacher-total strong \{[^}]*font-size: 18px;/);
 });
 

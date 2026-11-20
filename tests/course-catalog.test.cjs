@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8").replace(/\r\n/g, "\n");
 const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
 
 function loadSubjectCatalog() {

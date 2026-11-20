@@ -880,7 +880,7 @@ test("gradeAnswer aborts the active request without retrying", async () => {
   assert.equal(attempts, 1);
 });
 
-test("gradeAnswer automatically repairs empty per-question and achievement results", async () => {
+test("gradeAnswer recovers missing rubric rows with a smaller score-only request", async () => {
   const bytes = new TextEncoder().encode("pdf");
   const file = (name) => ({ name, type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer });
   let attempts = 0;
@@ -918,13 +918,13 @@ test("gradeAnswer automatically repairs empty per-question and achievement resul
       const body = JSON.parse(options.body);
       assert.equal("minItems" in body.generationConfig.responseSchema.properties.questionResults, false);
       assert.equal("maxItems" in body.generationConfig.responseSchema.properties.questionResults, false);
-      assert.equal("minItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
-      assert.equal("maxItems" in body.generationConfig.responseSchema.properties.achievementResults, false);
       assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 512);
-      if (attempts === 1) assert.equal("enum" in body.generationConfig.responseSchema.properties.maxScore, false);
-      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.score, false);
-      assert.equal("enum" in body.generationConfig.responseSchema.properties.questionResults.items.properties.maxScore, false);
-      if (attempts === 2) assert.match(body.contents[0].parts[0].text, /이전 채점 응답에서/);
+      if (attempts === 2) {
+        const schema = body.generationConfig.responseSchema.properties;
+        assert.deepEqual(Object.keys(schema), ["questionResults"]);
+        assert.equal(body.generationConfig.maxOutputTokens, 16384);
+        assert.match(body.contents[0].parts[0].text, /"criterionIds":\["r1","r2"\]/);
+      }
       const payload = attempts === 1 ? incomplete : repaired;
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
     },
@@ -934,6 +934,114 @@ test("gradeAnswer automatically repairs empty per-question and achievement resul
   assert.equal(result.achievementResults.length, 1);
   assert.equal(result.totalScore, 7);
   assert.deepEqual(result.questionResults.map((item) => item.score), [4, 3]);
+});
+
+test("dense fraction assessments are split by model and every subquestion point is summed locally", async () => {
+  const file = new Blob(["answer"], { type: "application/pdf" });
+  const numbers = ["1-(1)", "1-(2)", "1-(3)", "1-(4)", "1-(5)", "2-(1)", "2-(2)", "2-(3)", "3-(1)", "3-(2)", "4"];
+  const rubricCriteria = [1, 2, 3, 4].map((number) => ({
+    id: `r${number}`, questionNumber: String(number), evaluationElement: "분수의 곱셈", maxScore: 5,
+  }));
+  const exampleAnswers = numbers.map((questionNumber, index) => ({
+    id: `e${index}`, questionNumber, pointItems: [{ id: `p${index}`, score: 1 }],
+    evaluationElementIds: [`r${questionNumber[0]}`],
+  }));
+  for (const [model, thinking, expectedRequests] of [
+    ["gemini-2.5-flash-lite", { thinkingBudget: 512 }, 3],
+    ["gemini-2.5-flash", { thinkingBudget: 512 }, 2],
+    ["gemini-3.7-flash", { thinkingLevel: "low" }, 1],
+    ["gemini-2.0-flash", undefined, 2],
+  ]) {
+    let requests = 0;
+    const progress = [];
+    const result = await AI.gradeAnswer({
+      apiKey: VALID_KEY, model, metadata: { totalScore: 11, rubricCriteria, exampleAnswers },
+      files: [{ role: "studentAnswer", file }], onProgress: (stage) => progress.push(stage),
+      fetchImpl: async (_url, options) => {
+        requests += 1;
+        const { contents, generationConfig } = JSON.parse(options.body);
+        assert.deepEqual(generationConfig.thinkingConfig, thinking);
+        const scopeLine = contents[0].parts[0].text.match(/채점 대상\(JSON\): (.+)/);
+        const scope = scopeLine ? JSON.parse(scopeLine[1]) : {
+          criterionIds: rubricCriteria.map((rubric) => rubric.id),
+          pointItems: Object.fromEntries(exampleAnswers.map((example) => [example.id, [example.pointItems[0].id]])),
+        };
+        const payload = {
+          questionResults: scope.criterionIds.map((criterionId) => ({ criterionId, score: 5, answerReading: "1/3", evidence: "분자와 분모 확인", feedback: "계산식을 확인했어요.", confidence: "high" })),
+          exampleAnswerResults: Object.entries(scope.pointItems).map(([exampleAnswerId, ids]) => ({
+            exampleAnswerId, pointResults: ids.map((pointItemId) => ({ pointItemId, earned: true, evidence: "정확", confidence: "high" })),
+          })),
+        };
+        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+      },
+    });
+    assert.equal(requests, expectedRequests, model);
+    assert.equal(progress.length, expectedRequests === 1 ? 0 : expectedRequests, model);
+    assert.equal(result.totalScore, 11);
+    assert.equal(result.hasMissingScores, false);
+    assert.deepEqual(result.exampleAnswerResults.map((row) => row.questionNumber), numbers);
+  }
+});
+
+test("targeted recovery retains accepted points and marks only the unresolved point for review", async () => {
+  const file = new Blob(["answer"], { type: "application/pdf" });
+  let requests = 0;
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: {
+      totalScore: 3,
+      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", maxScore: 3 }],
+      exampleAnswers: [{ id: "e1", questionNumber: "1-(1)", evaluationElementIds: ["r1"],
+        pointItems: ["p1", "p2", "p3"].map((id) => ({ id, score: 1 })) }],
+    },
+    files: [{ role: "studentAnswer", file }],
+    fetchImpl: async (_url, options) => {
+      requests += 1;
+      const body = JSON.parse(options.body);
+      const point = (pointItemId, earned) => ({ pointItemId, earned, evidence: "식 확인", confidence: "high" });
+      const payload = requests === 1
+        ? { questionResults: [{ criterionId: "r1", score: 3, answerReading: "1/3", confidence: "high" }],
+          exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: [point("p1", true)] }] }
+        : { exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: [point("p2", true), point("p1", false), point("other", true)] }] };
+      if (requests === 2) {
+        assert.match(body.contents[0].parts[0].text, /"criterionIds":\[\],"pointItems":\{"e1":\["p2","p3"\]\}/);
+        assert.deepEqual(Object.keys(body.generationConfig.responseSchema.properties), ["exampleAnswerResults"]);
+      }
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+    },
+  });
+  assert.equal(requests, 2);
+  assert.equal(result.totalScore, 2);
+  assert.equal(result.hasMissingScores, true);
+  assert.equal(result.needsTeacherReview, true);
+  assert.deepEqual(result.exampleAnswerResults[0].pointResults.map((point) => [point.awardedScore, point.missingResult]), [[1, false], [1, false], [0, true]]);
+});
+
+test("truncated grading JSON recovers through a compact request without accepting an empty score", async () => {
+  const file = new Blob(["answer"], { type: "application/pdf" });
+  let calls = 0;
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: {
+      totalScore: 2, exampleAnswers: [],
+      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2 }, { score: 0 }] }],
+    },
+    files: [{ role: "studentAnswer", file }],
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      const body = JSON.parse(options.body);
+      if (calls === 1) {
+        return Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"questionResults":[{"criterionId":"r1","score":' }] } }] });
+      }
+      assert.equal(body.generationConfig.maxOutputTokens, 16384);
+      assert.deepEqual(Object.keys(body.generationConfig.responseSchema.properties), ["questionResults"]);
+      const payload = { questionResults: [{ criterionId: "r1", score: 0, answerReading: "무응답", confidence: "high" }] };
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.totalScore, 0);
+  assert.equal(result.hasMissingScores, false);
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {

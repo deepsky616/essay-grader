@@ -2720,6 +2720,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const grading = course.grading || {};
   const results = grading.results || [];
   const errors = grading.errors || [];
+  const partialScoreCount = results.filter((result) => result.hasMissingScores && !result.teacherConfirmed).length;
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   const resultEntries = orderedGradingResultEntries(results, errors, studentMap);
   const isActivelyRunning = activeGradingRun?.courseId === course.id && !activeGradingRun.controller.signal.aborted;
@@ -2777,7 +2778,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     </section>
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
-        <div><strong>${results.length + errors.length}명 채점 결과</strong><p>성공 ${results.length}명 · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
+        <div><strong>${results.length + errors.length}명 채점 결과</strong><p>채점 완료 ${results.length - partialScoreCount}명${partialScoreCount ? ` · 일부 문항 확인 필요 ${partialScoreCount}명` : ""} · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
         <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action neis-transfer-action" type="button" data-open-neis-transfer ${results.length ? "" : "disabled"}>NEIS 입력 도우미</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
       ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${resultEntries.map((entry) => entry.kind === "result" ? gradingResultRow(entry.item, studentMap.get(entry.studentId), design) : gradingErrorRow(entry.item, studentMap.get(entry.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
@@ -2789,13 +2790,18 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
 
 function gradingResultRow(result, student, design) {
   const summary = resultScoreSummary(result, design);
-  const achievementBand = achievementBandForScore(summary.total, summary.maxScore, design?.performanceThresholds);
+  const awaitingScores = result.hasMissingScores && !result.teacherConfirmed;
+  const achievementBand = awaitingScores
+    ? { key: "pending", label: "산정 전", range: "누락된 문항 확인 필요" }
+    : achievementBandForScore(summary.total, summary.maxScore, design?.performanceThresholds);
   const resultStatus = result.teacherConfirmed
     ? { label: "검토 완료", className: "confirmed-label" }
     : result.needsTeacherReview
       ? { label: "검토 필요", className: "review-label" }
       : { label: "AI 채점 완료", className: "success-label" };
-  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${resultStatus.className}" data-result-status>${resultStatus.label}</em><span class="grading-score-summary"><b data-result-score>${formatScore(summary.total)} / ${formatScore(summary.maxScore)}점</b><em class="performance-level-badge is-${achievementBand.key}" data-result-level title="${escapeHtml(`${achievementBand.percentage}% · ${achievementBand.range}`)}">${achievementBand.label}</em></span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
+  const scoreLabel = awaitingScores ? `잠정 ${formatScore(summary.total)}` : formatScore(summary.total);
+  const bandTitle = awaitingScores ? achievementBand.range : `${achievementBand.percentage}% · ${achievementBand.range}`;
+  return `<div class="grading-result-row" data-result-row="${escapeHtml(result.studentId)}"><span>${escapeHtml(student?.grade || "6")}</span><span>${escapeHtml(student?.className || "-")}</span><span>${escapeHtml(student?.number || "-")}</span><strong>${escapeHtml(student?.name || "학생")}</strong><em class="${resultStatus.className}" data-result-status>${resultStatus.label}</em><span class="grading-score-summary"><b data-result-score>${scoreLabel} / ${formatScore(summary.maxScore)}점</b><em class="performance-level-badge is-${achievementBand.key}" data-result-level title="${escapeHtml(bandTitle)}">${achievementBand.label}</em></span><button type="button" data-open-student-result="${escapeHtml(result.studentId)}">학생 채점 상세</button></div>`;
 }
 
 function gradingErrorRow(error, student) {
@@ -3600,7 +3606,9 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   } else {
     course.grading.finishedAt = new Date().toISOString();
     course.grading.status = course.grading.results.length === allAssignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
-    course.grading.currentStage = course.grading.status === "complete" ? "모든 학생의 채점이 완료되었습니다." : "일부 학생 채점이 완료되지 않았습니다.";
+    const hasPartialScores = course.grading.results.some((result) => result.hasMissingScores && !result.teacherConfirmed);
+    course.grading.currentStage = course.grading.status !== "complete" ? "일부 학생 채점이 완료되지 않았습니다."
+      : hasPartialScores ? "AI 채점이 끝났습니다. 일부 문항은 교사 확인이 필요합니다." : "모든 학생의 채점이 완료되었습니다.";
   }
   await putCourse(course);
   activeGradingRun = null;
@@ -3608,7 +3616,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   showToast(course.grading.status === "stopped"
     ? "AI 채점을 멈췄습니다. 완료된 결과는 저장되었으며 다시 실행하면 남은 학생부터 계속합니다."
     : course.grading.status === "complete"
-      ? "모든 학생의 AI 채점을 완료했습니다."
+      ? course.grading.currentStage
       : "일부 학생 채점에 실패했습니다. 오류 원인을 확인한 뒤 실패 학생만 다시 채점할 수 있습니다.");
   renderCourse(course.id, "grading");
 }
@@ -3766,6 +3774,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     signal,
     metadata: baseMetadata,
     files: firstPassFiles,
+    onProgress: onStage,
   });
   let enhancedFiles = [];
   let fractionFiles = [];
@@ -3845,13 +3854,14 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           recognitionWarnings,
         },
         files: precisionFiles,
+        onProgress: onStage,
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
         ...baseMetadata,
         recognitionWarnings,
       }, selectedModel);
-      precisionPassCompleted = true;
-      fractionVerificationCompleted = fractionCriterionIds.length > 0;
+      precisionPassCompleted = !precisionResult.hasMissingScores;
+      fractionVerificationCompleted = precisionPassCompleted && fractionCriterionIds.length > 0;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
       result.needsTeacherReview = true;
@@ -4189,7 +4199,7 @@ function resultQuestionRows(result, design) {
       feedback: stored.feedback || (sourceIndex < 0 ? "답안 원본을 확인하여 점수를 입력해 주세요." : ""),
       confidence: sourceIndex < 0 ? "low" : (stored.confidence || "low"),
       sourceIndex,
-      missingResult: sourceIndex < 0,
+      missingResult: sourceIndex < 0 || Boolean(stored.missingResult),
     };
   });
 }
@@ -4241,7 +4251,7 @@ function achievementPerformanceSummaries(design, rows, scores) {
   });
 }
 
-function derivedAchievementResults(design, result, alignedScores = null) {
+function derivedAchievementResults(design, result, alignedScores = null, confirmed = result?.teacherConfirmed) {
   const rows = resultQuestionRows(result, design);
   const scores = Array.isArray(alignedScores)
     ? alignedScores.map(Number)
@@ -4253,7 +4263,8 @@ function derivedAchievementResults(design, result, alignedScores = null) {
       || storedResults.find((item) => group.itemRange && item?.itemRange === group.itemRange)
       || storedResults[summary.index]
       || {};
-    const scoreEvidence = summary.maxScore > 0
+    const awaitingScores = result?.hasMissingScores && !confirmed;
+    const scoreEvidence = awaitingScores ? "누락된 문항을 검토한 뒤 성취수준을 확정해 주세요." : summary.maxScore > 0
       ? `평가요소 합산 ${formatScore(summary.score)} / ${formatScore(summary.maxScore)}점 · ${summary.band.percentage}% · ${summary.band.range}`
       : "연결된 평가요소 배점을 확인해 주세요.";
     return {
@@ -4261,12 +4272,12 @@ function derivedAchievementResults(design, result, alignedScores = null) {
       achievementStandardId: group.id || stored.achievementStandardId || `achievement-${summary.index + 1}`,
       itemRange: group.itemRange || stored.itemRange || "",
       standard: group.standard || stored.standard || "",
-      achievementLevel: summary.band.label,
-      achievementLevelKey: summary.band.key,
+      achievementLevel: awaitingScores ? "산정 전" : summary.band.label,
+      achievementLevelKey: awaitingScores ? "pending" : summary.band.key,
       score: summary.score,
       maxScore: summary.maxScore,
       percentage: summary.band.percentage,
-      range: summary.band.range,
+      range: awaitingScores ? "누락된 문항 확인 필요" : summary.band.range,
       evidence: scoreEvidence,
       feedback: stored.feedback || "",
       confidence: stored.confidence || "high",
@@ -4516,12 +4527,12 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
     })) : [{ ...item, pointLabel: item.questionNumber, exampleIndex, pointIndex: -1 }]);
     return `<section class="question-score-group">
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
-      <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th>문제·배점 항목</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
+      <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th scope="col">문제·배점 항목</th><th scope="col">획득 점수 / 배점</th><th scope="col">채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
-        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th>${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${scoreChoices.map((score) => `<option value="${score}" ${Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label></td><td><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
-      }).join("") || `<tr><td colspan="4" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
+        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${scoreChoices.map((score) => `<option value="${score}" ${Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
+      }).join("") || `<tr><td colspan="3" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
     </section>`;
   }).join("");
   const rubricSubtotal = rows.reduce((sum, item, index) => sum + Number(teacherScores[index] ?? item.score ?? 0), 0);
@@ -4533,7 +4544,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
-        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong><small class="rubric-linked-question">연결 문제 ${escapeHtml(item.questionNumber || String(index + 1))}</small>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">확신도 ${confidence}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
+        return `<article class="${choices.length > 8 ? "has-many-score-choices" : ""}"><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong><small class="rubric-linked-question">연결 문제 ${escapeHtml(item.questionNumber || String(index + 1))}</small>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">확신도 ${confidence}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
       }).join("")}
   </section>`;
   return problemSections + rubricSection;
@@ -4575,7 +4586,13 @@ async function openStudentResult(course, targetStudents, studentId) {
   const initialAchievementResults = derivedAchievementResults(design, result, teacherScores);
   const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
   const alignedAiTotal = alignedAiScores.reduce((sum, value) => sum + value, 0);
-  const initialAchievementBand = achievementBandForScore(initialTeacherTotal, summary.maxScore, design.performanceThresholds);
+  const awaitingScores = result.hasMissingScores && !result.teacherConfirmed;
+  function teacherAchievementBand(score) {
+    return result.hasMissingScores && !result.teacherConfirmed
+      ? { key: "pending", label: "산정 전", range: "누락된 문항 확인 필요" }
+      : achievementBandForScore(score, summary.maxScore, design.performanceThresholds);
+  }
+  const initialAchievementBand = teacherAchievementBand(initialTeacherTotal);
   const fractionVerificationStatus = result.fractionVerificationCompleted
     ? `선별 분수 ${result.fractionTargetCount || 0}개 문항 고해상도 재검토 완료`
     : result.fractionTargetCount ? `선별 분수 ${result.fractionTargetCount}개 문항 교사 검토 필요` : "";
@@ -4587,12 +4604,12 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
-          <div class="teacher-total"><span>교사 확정 총점</span><div class="teacher-total-result"><strong data-teacher-total>${formatScore(initialTeacherTotal)} / ${formatScore(summary.maxScore)}점</strong><em class="performance-level-badge is-${initialAchievementBand.key}" data-teacher-level title="${escapeHtml(`${initialAchievementBand.percentage}% · ${initialAchievementBand.range}`)}">${initialAchievementBand.label}</em></div></div>
+          <div class="teacher-total"><span data-teacher-total-label>${awaitingScores ? "잠정 총점" : "교사 확정 총점"}</span><div class="teacher-total-result"><strong data-teacher-total>${formatScore(initialTeacherTotal)} / ${formatScore(summary.maxScore)}점</strong><em class="performance-level-badge is-${initialAchievementBand.key}" data-teacher-level title="${escapeHtml(awaitingScores ? initialAchievementBand.range : `${initialAchievementBand.percentage}% · ${initialAchievementBand.range}`)}">${initialAchievementBand.label}</em></div></div>
           <div class="teacher-score-list">
             ${renderQuestionScoreGroups(questionRows, teacherScores, design, workingExampleRows)}
           </div>
           <div class="score-bulk-actions"><button class="secondary-action" type="button" data-reset-teacher-scores>점수 초기화</button><button class="primary-action" type="button" data-restore-ai-scores>점수 그대로 적용</button></div>
-          ${questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert"><strong>기존 AI 결과에 빠진 평가요소가 있습니다.</strong><p>빠진 항목을 0점으로 표시했습니다. 답안 원본을 확인하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
+          ${!result.teacherConfirmed && questionRows.some((item) => item.missingResult) ? `<div class="teacher-review-alert" data-missing-rubric-alert><strong>응답에 빠진 채점기준이 있습니다.</strong><p>교사 검토 전까지 점수는 잠정값입니다. 답안 원본에서 확인하고 점수를 수정하거나 AI 채점을 다시 실행해 주세요.</p></div>` : ""}
           ${result.needsTeacherReview && !result.teacherConfirmed ? `<div class="teacher-review-alert" data-teacher-review-alert><strong>교사 확인이 필요한 결과입니다.</strong><ul>${(result.reviewReasons?.length ? result.reviewReasons : ["판독 확신도가 낮은 항목이 있습니다."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
           <label class="feedback-edit-field">AI 피드백<textarea data-teacher-feedback rows="7">${escapeHtml(result.teacherFeedback || result.summary || "")}</textarea><small>배점 항목의 획득점수를 바꾸면 피드백도 자동으로 갱신됩니다. 직접 입력한 뒤에는 교사가 쓴 문장을 덮어쓰지 않습니다.</small></label>
           ${initialAchievementResults.length ? `<div class="student-achievement-feedback"><strong>성취기준별 평가요소 합산 결과</strong>${initialAchievementResults.map((item, index) => `<label data-achievement-result="${index}"><span class="achievement-result-heading"><b>${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)}</b><em class="performance-level-badge is-${escapeHtml(item.achievementLevelKey)}" data-achievement-result-level>${escapeHtml(item.achievementLevel)}</em><small data-achievement-result-score>${formatScore(item.score)} / ${formatScore(item.maxScore)}점 · ${item.percentage}%</small></span><textarea data-achievement-feedback="${index}" rows="3" aria-label="${escapeHtml(item.itemRange || `성취기준 ${index + 1}`)} 피드백">${escapeHtml(item.feedback || "")}</textarea><small>연결된 평가요소 점수 합계로 수준을 자동 결정하며, 피드백 문장은 교사가 수정할 수 있습니다.</small></label>`).join("")}</div>` : ""}
@@ -4627,11 +4644,11 @@ async function openStudentResult(course, targetStudents, studentId) {
   const updateTotal = () => {
     const total = scoreInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
     panel.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(summary.maxScore)}점`;
-    const achievementBand = achievementBandForScore(total, summary.maxScore, design.performanceThresholds);
+    const achievementBand = teacherAchievementBand(total);
     const teacherLevel = panel.querySelector("[data-teacher-level]");
     teacherLevel.textContent = achievementBand.label;
     teacherLevel.className = `performance-level-badge is-${achievementBand.key}`;
-    teacherLevel.title = `${achievementBand.percentage}% · ${achievementBand.range}`;
+    teacherLevel.title = achievementBand.key === "pending" ? achievementBand.range : `${achievementBand.percentage}% · ${achievementBand.range}`;
     const rubricTotal = panel.querySelector("[data-rubric-total]");
     const rubricMaximum = Number(rubricTotal?.dataset.rubricMax || 0) || summary.maxScore;
     if (rubricTotal) rubricTotal.textContent = `${formatScore(total)} / ${formatScore(rubricMaximum)}점`;
@@ -4788,6 +4805,9 @@ async function openStudentResult(course, targetStudents, studentId) {
   });
   const dismissTeacherReviewAlert = () => {
     panel.querySelector("[data-teacher-review-alert]")?.remove();
+    panel.querySelector("[data-missing-rubric-alert]")?.remove();
+    const totalLabel = panel.querySelector("[data-teacher-total-label]");
+    if (totalLabel) totalLabel.textContent = "교사 확정 총점";
     const reviewSaveStatus = panel.querySelector("[data-review-save-status]");
     if (reviewSaveStatus) reviewSaveStatus.textContent = "교사 검토 저장됨";
   };
@@ -4808,7 +4828,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.maxScore = summary.maxScore;
     result.teacherFeedback = feedbackInput.value.trim();
     result.teacherFeedbackManuallyEdited = feedbackManuallyEdited;
-    result.achievementResults = derivedAchievementResults(design, result, result.teacherScores).map((item, index) => ({
+    result.achievementResults = derivedAchievementResults(design, result, result.teacherScores, true).map((item, index) => ({
       ...item,
       feedback: panel.querySelector(`[data-achievement-feedback="${index}"]`)?.value.trim() ?? item.feedback,
       teacherFeedbackManuallyEdited: manuallyEditedAchievementFeedbacks.has(index),
@@ -4816,6 +4836,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     result.teacherConfirmed = true;
     result.teacherReviewedAt = new Date().toISOString();
     await putCourse(course);
+    updateTotal();
     dismissTeacherReviewAlert();
     const resultRow = app.querySelector(`[data-result-row="${CSS.escape(studentId)}"] [data-result-score]`);
     if (resultRow) resultRow.textContent = `${formatScore(result.teacherTotal)} / ${formatScore(result.maxScore)}점`;
