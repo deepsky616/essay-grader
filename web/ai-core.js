@@ -1010,9 +1010,21 @@
     return source.match(/^(\d+)/)?.[1] || source;
   }
 
+  function questionGroupKeys(value) {
+    const parts = text(value).split(/[,;/\n]+/).map(questionGroupKey).filter(Boolean);
+    return [...new Set(parts.length ? parts : [questionGroupKey(value)].filter(Boolean))];
+  }
+
   function exampleAnswersForResponse(metadata = {}) {
     const examples = (Array.isArray(metadata.exampleAnswers) ? metadata.exampleAnswers : []).map((item, index) => {
       const id = text(item?.id) || `example-${index + 1}`;
+      const evaluationElementIds = [...new Set((Array.isArray(item?.evaluationElementIds) ? item.evaluationElementIds : []).map(text).filter(Boolean))];
+      const configuredElementScores = item?.evaluationElementScores && typeof item.evaluationElementScores === "object" && !Array.isArray(item.evaluationElementScores)
+        ? item.evaluationElementScores
+        : {};
+      const evaluationElementScores = Object.fromEntries(evaluationElementIds
+        .filter((criterionId) => Object.prototype.hasOwnProperty.call(configuredElementScores, criterionId))
+        .map((criterionId) => [criterionId, Math.max(0, numeric(configuredElementScores[criterionId]))]));
       const configuredPoints = Array.isArray(item?.pointItems) && item.pointItems.length ? item.pointItems : [{
         id: `${id}-point-1`,
         score: Math.max(0, numeric(item?.maxScore)),
@@ -1028,11 +1040,18 @@
         questionNumber: text(item?.questionNumber) || String(index + 1),
         maxScore: roundScore(pointItems.reduce((sum, point) => sum + point.score, 0)) || Math.max(0, numeric(item?.maxScore)),
         pointItems,
+        evaluationElementIds,
+        evaluationElementScores,
       };
     });
     if (!metadata.precisionReview) return examples;
-    const targetGroups = new Set(rubricCriteriaForResponse(metadata).map((item) => questionGroupKey(item.questionNumber)).filter(Boolean));
-    return targetGroups.size ? examples.filter((item) => targetGroups.has(questionGroupKey(item.questionNumber))) : examples;
+    const targetCriteria = rubricCriteriaForResponse(metadata);
+    const targetIds = new Set(targetCriteria.map((item) => item.id).filter(Boolean));
+    const targetGroups = new Set(targetCriteria.flatMap((item) => questionGroupKeys(item.questionNumber)).filter(Boolean));
+    return targetIds.size || targetGroups.size ? examples.filter((item) => (
+      item.evaluationElementIds.some((criterionId) => targetIds.has(criterionId))
+      || (!item.evaluationElementIds.length && targetGroups.has(questionGroupKey(item.questionNumber)))
+    )) : examples;
   }
 
   function selectPrecisionCriterionIds(result, metadata = {}) {
@@ -1055,12 +1074,18 @@
       if (matched) selected.add(matched.id);
     }
 
-    const uncertainExampleGroups = new Set((Array.isArray(result?.exampleAnswerResults) ? result.exampleAnswerResults : [])
+    const uncertainExamples = (Array.isArray(result?.exampleAnswerResults) ? result.exampleAnswerResults : [])
       .filter((item) => item?.confidence !== "high" || item?.missingResult
-        || (Array.isArray(item?.pointResults) && item.pointResults.some((point) => point?.confidence !== "high" || point?.missingResult)))
-      .map((item) => questionGroupKey(item?.questionNumber)).filter(Boolean));
+        || (Array.isArray(item?.pointResults) && item.pointResults.some((point) => point?.confidence !== "high" || point?.missingResult)));
+    const configuredExamples = exampleAnswersForResponse({ ...metadata, precisionReview: false, precisionCriterionIds: [] });
+    const uncertainExampleGroups = new Set(uncertainExamples.map((item) => questionGroupKey(item?.questionNumber)).filter(Boolean));
+    for (const item of uncertainExamples) {
+      const configured = configuredExamples.find((example) => example.id === text(item?.exampleAnswerId))
+        || configuredExamples.find((example) => example.questionNumber === text(item?.questionNumber));
+      for (const criterionId of configured?.evaluationElementIds || []) selected.add(criterionId);
+    }
     for (const rubric of rubricCriteria) {
-      if (uncertainExampleGroups.has(questionGroupKey(rubric.questionNumber))) selected.add(rubric.id);
+      if (questionGroupKeys(rubric.questionNumber).some((key) => uncertainExampleGroups.has(key))) selected.add(rubric.id);
     }
 
     const uncertainAchievements = (Array.isArray(result?.achievementResults) ? result.achievementResults : [])
@@ -1089,7 +1114,8 @@
       const matchingResult = questionResults.find((item) => text(item?.criterionId) === rubric.id)
         || questionResults.find((item) => text(item?.questionNumber) === rubric.questionNumber
           && text(item?.evaluationElement).toLocaleLowerCase("ko-KR") === rubric.evaluationElement.toLocaleLowerCase("ko-KR"));
-      const matchingExamples = exampleAnswers.filter((item) => text(item?.questionNumber) === rubric.questionNumber);
+      const matchingExamples = exampleAnswers.filter((item) => (Array.isArray(item?.evaluationElementIds) && item.evaluationElementIds.map(text).includes(rubric.id))
+        || questionGroupKeys(rubric.questionNumber).includes(questionGroupKey(item?.questionNumber)));
       const rubricText = [rubric.evaluationElement, ...rubric.scoreLevels.map((level) => level.criterion)].join(" ");
       const resultText = matchingResult
         ? `${text(matchingResult.answerReading)} ${text(matchingResult.evidence)} ${text(matchingResult.feedback)}`
@@ -1326,8 +1352,8 @@ ${JSON.stringify(targets)}
 ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
     ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
     : "8. questionResults에는 rubricCriteria의 모든 평가요소를 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사합니다. 같은 문제 번호에 평가요소가 여러 개여도 합치거나 생략하지 마세요."}
-9. 각 평가요소의 기준 설명은 scoreLevels를 참고합니다. 다만 exampleAnswers에 pointItems가 있는 문제의 최종 점수는 10번의 배점 항목 합계가 우선하며, 그 합계가 scoreLevels의 대표 점수 사이에 있어도 그대로 questionResults에 사용합니다. totalScore는 이번 questionResults에 포함된 점수의 합계여야 합니다.
-10. exampleAnswerResults에는 3 문제별 예시답안의 세부 문제 번호를 합치지 말고 각각 정확히 한 번씩 포함합니다. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 개수와 순서로 넣고 pointItemId와 criterion을 그대로 복사하세요. 각 배점 항목은 기준을 충족하면 설정된 maxScore 전부, 충족하지 못하면 반드시 0점만 부여하는 독립적인 가산 항목입니다. 특히 pointItems가 1개인 문제는 답이 틀리거나 기준을 충족하지 못하면 awardedScore가 반드시 0점입니다. exampleAnswerResults.awardedScore는 pointResults.awardedScore의 합계이며, 같은 상위 문제(예: 1-(1), 1-(2)는 문제 1)의 합계는 questionResults의 같은 상위 문제 점수 합계와 정확히 같아야 합니다. 학생 답안에서 확인한 근거를 각 pointResults.evidence에 구체적으로 작성하세요.${safeMetadata.precisionReview ? " 선별 정밀 재검토에서는 precisionCriterionIds와 같은 상위 문제에 속한 exampleAnswers만 반환하세요." : " 모든 exampleAnswers를 입력 순서대로 반환하세요."}
+9. 각 평가요소의 기준 설명은 scoreLevels를 참고합니다. 다만 exampleAnswers에 pointItems가 있는 문제의 최종 점수는 10번의 배점 항목 합계와 evaluationElementIds·evaluationElementScores 연결이 우선하며, 그 합계가 scoreLevels의 대표 점수 사이에 있어도 그대로 questionResults에 사용합니다. totalScore는 이번 questionResults에 포함된 점수의 합계여야 합니다.
+10. exampleAnswerResults에는 3 문제별 예시답안의 세부 문제 번호를 합치지 말고 각각 정확히 한 번씩 포함합니다. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 개수와 순서로 넣고 pointItemId와 criterion을 그대로 복사하세요. 각 배점 항목은 기준을 충족하면 설정된 maxScore 전부, 충족하지 못하면 반드시 0점만 부여하는 독립적인 가산 항목입니다. 특히 pointItems가 1개인 문제는 답이 틀리거나 기준을 충족하지 못하면 awardedScore가 반드시 0점입니다. exampleAnswerResults.awardedScore는 pointResults.awardedScore의 합계입니다. 각 세부 문항의 점수는 evaluationElementIds에 연결된 채점기준으로만 배분하고 evaluationElementScores의 최대 반영 배점을 넘기지 마세요. 여러 세부 문항이 한 채점기준에 연결되어 있으면 그 반영 점수를 모두 합산해 questionResults 점수로 사용하세요. 학생 답안에서 확인한 근거를 각 pointResults.evidence에 구체적으로 작성하세요.${safeMetadata.precisionReview ? " 선별 정밀 재검토에서는 precisionCriterionIds에 직접 연결된 exampleAnswers만 반환하세요." : " 모든 exampleAnswers를 입력 순서대로 반환하세요."}
 11. 피드백은 한국어로 작성하고, 학생이 실제로 쓴 내용에 근거하여 강점·개선점·다음 학습 행동을 구체적이고 존중하는 문장으로 제시합니다.
 12. 성취기준 세트마다 itemRange에 연결된 questionResults 평가요소의 score와 maxScore를 각각 모두 합산하고, 합산 비율에 performanceThresholds.levels의 최소 비율을 적용하여 교사가 설정한 성취수준 이름 중 하나를 선택합니다. 답안 근거와 개별 피드백도 함께 작성합니다.
 13. studentIdentifier는 제공된 익명 채점번호를 그대로 사용합니다. 답안 본문에 사람이름으로 보이는 글자가 있더라도 신원으로 추정하거나 응답에 옮겨 적지 마세요.
@@ -1386,10 +1412,10 @@ ${JSON.stringify(safeMetadata)}
 필수 규칙:
 1. questionResults는 아래 rubricCriteria와 같은 개수와 순서로 작성합니다.
 2. criterionId, questionNumber, evaluationElement는 아래 값을 정확히 복사합니다.
-3. scoreLevels는 기준 설명에 사용하되, 아래 pointItems의 획득 점수 합계가 대표 점수 사이에 있으면 그 합계를 최종 score로 사용합니다.
+3. scoreLevels는 기준 설명에 사용하되, 아래 pointItems의 획득 점수를 evaluationElementIds·evaluationElementScores에 따라 연결한 합계가 대표 점수 사이에 있으면 그 합계를 최종 score로 사용합니다.
 4. 무응답 또는 판독 불가도 항목을 생략하지 말고 0점 또는 정의된 최저점과 낮은 confidence로 기록합니다.
 5. exampleAnswerResults는 아래 exampleAnswers의 각 세부 문항을 같은 개수와 순서로 작성하고 exampleAnswerId와 questionNumber를 그대로 복사합니다.
-6. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 순서로 작성합니다. 각 항목은 기준 충족 시 설정 배점 전부, 미충족 시 0점만 부여합니다. 배점 항목이 1개이고 답이 틀리면 0점입니다. 세부 문항 awardedScore는 pointResults 합계이며, 같은 상위 문제의 합계는 questionResults의 같은 상위 문제 점수 합계와 일치해야 합니다.
+6. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 순서로 작성합니다. 각 항목은 기준 충족 시 설정 배점 전부, 미충족 시 0점만 부여합니다. 배점 항목이 1개이고 답이 틀리면 0점입니다. 세부 문항 awardedScore는 pointResults 합계이며, evaluationElementIds에 연결된 채점기준에 evaluationElementScores 한도 안에서 반영합니다.
 7. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다. 각 수준은 itemRange에 해당하는 rubricCriteria의 questionResults 점수를 모두 합산한 비율과 performanceThresholds.levels에 설정된 이름·최소 비율로 결정합니다.
 8. totalScore는 questionResults의 score 합계입니다.
 
@@ -1468,7 +1494,9 @@ ${JSON.stringify(roster)}
     const rubricCriteria = rubricCriteriaForResponse(metadata);
     const preReadings = Array.isArray(metadata.preReadings) ? metadata.preReadings : [];
     const rawQuestionResults = Array.isArray(raw.questionResults) ? raw.questionResults : [];
-    const componentScoreGroups = new Set(exampleAnswersForResponse(metadata).map((item) => questionGroupKey(item.questionNumber)).filter(Boolean));
+    const responseExamples = exampleAnswersForResponse(metadata);
+    const componentScoreGroups = new Set(responseExamples.map((item) => questionGroupKey(item.questionNumber)).filter(Boolean));
+    const componentCriterionIds = new Set(responseExamples.flatMap((item) => item.evaluationElementIds || []).filter(Boolean));
     const usedRawIndexes = new Set();
     const resultSeeds = rubricCriteria.length ? rubricCriteria.map((rubric, index) => {
       let rawIndex = rawQuestionResults.findIndex((item, itemIndex) => !usedRawIndexes.has(itemIndex) && text(item?.criterionId) && text(item.criterionId) === rubric.id);
@@ -1491,7 +1519,7 @@ ${JSON.stringify(roster)}
         reviewReasons.push(`${item?.questionNumber || index + 1}번 문항 점수가 허용 범위를 벗어나 자동 보정되었습니다.`);
       }
       const allowedScores = matchedRubric?.scoreLevels?.map((level) => level.score) || [];
-      if (allowedScores.length && !componentScoreGroups.has(questionGroupKey(matchedRubric?.questionNumber)) && !allowedScores.includes(score)) {
+      if (allowedScores.length && !componentCriterionIds.has(matchedRubric?.id) && !componentScoreGroups.has(questionGroupKey(matchedRubric?.questionNumber)) && !allowedScores.includes(score)) {
         const closest = allowedScores.reduce((best, value) => Math.abs(value - score) < Math.abs(best - score) ? value : best, allowedScores[0]);
         reviewReasons.push(`${matchedRubric.questionNumber}번 ‘${matchedRubric.evaluationElement}’ 점수가 입력된 배점 단계와 달라 ${roundScore(closest)}점으로 보정되었습니다.`);
         score = closest;
@@ -1643,31 +1671,68 @@ ${JSON.stringify(roster)}
     });
     if (rawItems.length > usedIndexes.size) reviewReasons.push("Gemini가 3 문제별 예시답안과 연결되지 않는 추가 세부 문항 결과를 반환하여 제외했습니다.");
 
-    const grouped = new Map();
-    rows.forEach((item) => {
-      const key = questionGroupKey(item.questionNumber);
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(item);
+    alignQuestionScoresFromExampleLinks(rows, expected, questionResults, metadata);
+    return rows;
+  }
+
+  function alignQuestionScoresFromExampleLinks(rows, expectedExamples, questionResults, metadata) {
+    const questionIndexById = new Map(questionResults.map((item, index) => [text(item?.criterionId), index]).filter(([id]) => id));
+    const linkedTotals = new Array(questionResults.length).fill(0);
+    const explicitlyLinkedIndexes = new Set();
+    const fallbackAlignedIndexes = new Set();
+    const fallbackGroups = new Map();
+    rows.forEach((row, rowIndex) => {
+      const example = expectedExamples[rowIndex] || {};
+      const linked = (example.evaluationElementIds || [])
+        .map((criterionId) => ({ criterionId, questionIndex: questionIndexById.get(criterionId) }))
+        .filter((item) => Number.isInteger(item.questionIndex));
+      if (!linked.length) {
+        const key = questionGroupKey(row.questionNumber);
+        if (!fallbackGroups.has(key)) fallbackGroups.set(key, []);
+        fallbackGroups.get(key).push(row);
+        return;
+      }
+      const configuredScores = example.evaluationElementScores || {};
+      const hasCompleteScores = linked.every(({ criterionId }) => Object.prototype.hasOwnProperty.call(configuredScores, criterionId));
+      const maximums = hasCompleteScores
+        ? linked.map(({ criterionId }) => Math.max(0, numeric(configuredScores[criterionId])))
+        : linked.map(() => Math.max(0, numeric(example.maxScore)) / Math.max(1, linked.length));
+      const maxUnits = maximums.map((score) => Math.max(0, Math.round(score * 2)));
+      const rawUnits = linked.map(({ questionIndex }, index) => Math.min(maxUnits[index], Math.max(0, Math.round(numeric(questionResults[questionIndex]?.score) * 2))));
+      const targetUnits = Math.min(Math.max(0, Math.round(numeric(row.awardedScore) * 2)), maxUnits.reduce((sum, value) => sum + value, 0));
+      const distributed = distributeSubscoreUnits(rawUnits, maxUnits, targetUnits);
+      linked.forEach(({ questionIndex }, index) => {
+        explicitlyLinkedIndexes.add(questionIndex);
+        linkedTotals[questionIndex] += distributed[index] / 2;
+      });
     });
-    for (const [key, groupRows] of grouped) {
-      const matchingQuestions = questionResults.filter((item) => questionGroupKey(item?.questionNumber) === key);
-      if (!matchingQuestions.length) continue;
-      const targetUnits = Math.max(0, Math.round(groupRows.reduce((sum, item) => sum + item.awardedScore, 0) * 2));
-      const maxUnits = matchingQuestions.map((item) => Math.max(0, Math.round(numeric(item.maxScore) * 2)));
-      const rawUnits = matchingQuestions.map((item, index) => Math.min(maxUnits[index], Math.max(0, Math.round(numeric(item.score) * 2))));
-      const adjustedUnits = distributeSubscoreUnits(rawUnits, maxUnits, Math.min(targetUnits, maxUnits.reduce((sum, value) => sum + value, 0)));
-      const rubrics = rubricCriteriaForResponse(metadata);
-      matchingQuestions.forEach((question, index) => {
-        const newScore = adjustedUnits[index] / 2;
-        const rubric = rubrics.find((item) => item.id === question.criterionId);
-        const levels = rubric?.scoreLevels || [];
-        const nearestLevel = levels.length ? levels.reduce((nearest, level) => Math.abs(level.score - newScore) < Math.abs(nearest.score - newScore) ? level : nearest, levels[0]) : null;
-        if (Math.abs(numeric(question.score) - newScore) > 0.001) question.componentScoreAligned = true;
-        question.score = newScore;
-        if (nearestLevel?.criterion) question.criterion = nearestLevel.criterion;
+
+    for (const [key, groupRows] of fallbackGroups) {
+      const matchingIndexes = questionResults.map((item, index) => ({ item, index }))
+        .filter(({ item, index }) => !explicitlyLinkedIndexes.has(index) && questionGroupKeys(item?.questionNumber).includes(key))
+        .map(({ index }) => index);
+      if (!matchingIndexes.length) continue;
+      const targetUnits = Math.max(0, Math.round(groupRows.reduce((sum, item) => sum + numeric(item.awardedScore), 0) * 2));
+      const maxUnits = matchingIndexes.map((index) => Math.max(0, Math.round(numeric(questionResults[index]?.maxScore) * 2)));
+      const rawUnits = matchingIndexes.map((index, itemIndex) => Math.min(maxUnits[itemIndex], Math.max(0, Math.round(numeric(questionResults[index]?.score) * 2))));
+      const distributed = distributeSubscoreUnits(rawUnits, maxUnits, Math.min(targetUnits, maxUnits.reduce((sum, value) => sum + value, 0)));
+      matchingIndexes.forEach((questionIndex, index) => {
+        fallbackAlignedIndexes.add(questionIndex);
+        linkedTotals[questionIndex] += distributed[index] / 2;
       });
     }
-    return rows;
+
+    const rubrics = rubricCriteriaForResponse(metadata);
+    questionResults.forEach((question, index) => {
+      if (!explicitlyLinkedIndexes.has(index) && !fallbackAlignedIndexes.has(index)) return;
+      const newScore = Math.min(Math.max(0, numeric(question.maxScore)), roundScore(linkedTotals[index]));
+      const rubric = rubrics.find((item) => item.id === question.criterionId);
+      const levels = rubric?.scoreLevels || [];
+      const nearestLevel = levels.length ? levels.reduce((nearest, level) => Math.abs(level.score - newScore) < Math.abs(nearest.score - newScore) ? level : nearest, levels[0]) : null;
+      if (Math.abs(numeric(question.score) - newScore) > 0.001) question.componentScoreAligned = true;
+      question.score = newScore;
+      if (nearestLevel?.criterion) question.criterion = nearestLevel.criterion;
+    });
   }
 
   function distributeSubscoreUnits(rawUnits, maxUnits, targetUnits) {

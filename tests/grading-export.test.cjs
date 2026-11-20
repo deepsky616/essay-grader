@@ -23,6 +23,21 @@ function loadEditablePointHelpers() {
   return new Function("formatScore", "questionScoreGroupKey", `${schoolSource.slice(start, end)}; return { pointScoreChoices, teacherPointEvidenceText, refreshExampleAnswerScore, automaticQuestionFeedback, automaticTeacherFeedback };`)(formatScore, questionScoreGroupKey);
 }
 
+function loadLinkedCriterionScoreHelpers() {
+  const start = schoolSource.indexOf("function distributeLinkedScoreUnits");
+  const end = schoolSource.indexOf("function automaticQuestionFeedback", start);
+  assert.ok(start >= 0 && end > start, "linked criterion score helpers must exist");
+  const allocateQuestionScore = (total, count) => {
+    const units = Math.round(Number(total || 0) * 2);
+    const base = Math.floor(units / Math.max(1, count));
+    const remainder = units % Math.max(1, count);
+    return Array.from({ length: Math.max(1, count) }, (_value, index) => (base + (index < remainder ? 1 : 0)) / 2);
+  };
+  const questionScoreGroupKey = (value) => String(value || "").trim().replace(/^(?:문제|문항)/, "").match(/^\d+/)?.[0] || String(value || "").trim();
+  const questionScoreGroupKeys = (value) => [...new Set(String(value || "").split(/[,;/\n]+/).map(questionScoreGroupKey).filter(Boolean))];
+  return new Function("allocateQuestionScore", "questionScoreGroupKey", "questionScoreGroupKeys", `${schoolSource.slice(start, end)}; return { alignedCriterionScoresFromExamples, exampleRowsForCriterion };`)(allocateQuestionScore, questionScoreGroupKey, questionScoreGroupKeys);
+}
+
 function loadGradingOrderHelpers() {
   const start = schoolSource.indexOf("function gradingResultStudentSort");
   const end = schoolSource.indexOf("function teacherScoreForRow", start);
@@ -247,6 +262,23 @@ test("edited point helpers recalculate score, evidence, and feedback text", () =
   assert.match(example.evidence, /1-\(1\) 항목 1 1 \/ 1점/);
   assert.match(helpers.automaticQuestionFeedback("1", [example]), /일부 배점 항목/);
   assert.match(helpers.automaticTeacherFeedback([example]), /1-\(1\) 1 \/ 2점/);
+});
+
+test("problem 2 points remain linked when a rubric criterion also contains problem 1", () => {
+  const helpers = loadLinkedCriterionScoreHelpers();
+  const questionRows = [
+    { criterionId: "r1", questionNumber: "1-(1), 1-(2)", score: 1, maxScore: 3.5 },
+    { criterionId: "r2", questionNumber: "1-(2), 2", score: 1, maxScore: 5.5 },
+  ];
+  const examples = [
+    { questionNumber: "1-(1)", awardedScore: 2, maxScore: 2, evaluationElementIds: ["r1"], evaluationElementScores: { r1: 2 } },
+    { questionNumber: "1-(2)", awardedScore: 2, maxScore: 3, evaluationElementIds: ["r1", "r2"], evaluationElementScores: { r1: 1.5, r2: 1.5 } },
+    { questionNumber: "2", awardedScore: 2, maxScore: 4, evaluationElementIds: ["r2"], evaluationElementScores: { r2: 4 } },
+  ];
+  assert.deepEqual(helpers.alignedCriterionScoresFromExamples(questionRows, examples), [3, 3]);
+  assert.deepEqual(helpers.exampleRowsForCriterion(questionRows[1], examples).map((item) => item.questionNumber), ["1-(2)", "2"]);
+  assert.match(schoolSource, /data-question-key=/);
+  assert.match(schoolSource, /채점기준별 종합 점수/);
 });
 
 test("course grading uses adaptive workers and selectively rechecks handwritten fractions", () => {

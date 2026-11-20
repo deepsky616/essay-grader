@@ -188,6 +188,45 @@ test("normalizeGradingResult adds only earned problem-point items and makes thei
   assert.match(result.reviewReasons.join(" "), /배점 항목 합계 1점/);
 });
 
+test("normalizeGradingResult follows explicit criterion links when one criterion spans problems 1 and 2", () => {
+  const result = AI.normalizeGradingResult({
+    studentIdentifier: "S-art", totalScore: 2, maxScore: 9, overallAchievementLevel: "보통", summary: "확인",
+    strengths: [], improvements: [], nextSteps: [], achievementResults: [],
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1-(1), 1-(2)", evaluationElement: "소재의 상징 설명", score: 1, maxScore: 3.5, confidence: "high" },
+      { criterionId: "r2", questionNumber: "1-(2), 2", evaluationElement: "소망과 연결하여 감상", score: 1, maxScore: 5.5, confidence: "high" },
+    ],
+    exampleAnswerResults: [
+      { exampleAnswerId: "e1", questionNumber: "1-(1)", awardedScore: 2, pointResults: [{ pointItemId: "p1", earned: true, evidence: "정확", confidence: "high" }] },
+      { exampleAnswerId: "e2", questionNumber: "1-(2)", awardedScore: 2, pointResults: [
+        { pointItemId: "p2", earned: true, evidence: "책", confidence: "high" },
+        { pointItemId: "p3", earned: true, evidence: "불로초", confidence: "high" },
+        { pointItemId: "p4", earned: false, evidence: "수박 미흡", confidence: "high" },
+      ] },
+      { exampleAnswerId: "e3", questionNumber: "2", awardedScore: 2, pointResults: [
+        { pointItemId: "p5", earned: true, evidence: "문방사우", confidence: "high" },
+        { pointItemId: "p6", earned: false, evidence: "의미 미흡", confidence: "high" },
+      ] },
+    ],
+    needsTeacherReview: false, reviewReasons: [],
+  }, {
+    totalScore: 9,
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1-(1), 1-(2)", evaluationElement: "소재의 상징 설명", scoreLevels: [{ score: 3.5, criterion: "충분" }, { score: 0, criterion: "미흡" }] },
+      { id: "r2", questionNumber: "1-(2), 2", evaluationElement: "소망과 연결하여 감상", scoreLevels: [{ score: 5.5, criterion: "충분" }, { score: 0, criterion: "미흡" }] },
+    ],
+    exampleAnswers: [
+      { id: "e1", questionNumber: "1-(1)", evaluationElementIds: ["r1"], evaluationElementScores: { r1: 2 }, pointItems: [{ id: "p1", score: 2, criterion: "소재 찾기" }] },
+      { id: "e2", questionNumber: "1-(2)", evaluationElementIds: ["r1", "r2"], evaluationElementScores: { r1: 1.5, r2: 1.5 }, pointItems: [{ id: "p2", score: 1, criterion: "책" }, { id: "p3", score: 1, criterion: "불로초" }, { id: "p4", score: 1, criterion: "수박" }] },
+      { id: "e3", questionNumber: "2", evaluationElementIds: ["r2"], evaluationElementScores: { r2: 4 }, pointItems: [{ id: "p5", score: 2, criterion: "문방사우" }, { id: "p6", score: 2, criterion: "민화 의미" }] },
+    ],
+  });
+  assert.deepEqual(result.exampleAnswerResults.map((item) => item.awardedScore), [2, 2, 2]);
+  assert.deepEqual(result.questionResults.map((item) => item.score), [3, 3]);
+  assert.equal(result.totalScore, 6);
+  assert.equal(result.questionResults[1].componentScoreAligned, true);
+});
+
 test("normalizeGradingResult gives zero when the only problem-point item is not earned", () => {
   const result = AI.normalizeGradingResult({
     studentIdentifier: "S002", totalScore: 2, maxScore: 2, overallAchievementLevel: "노력요함", summary: "확인",
@@ -236,6 +275,24 @@ test("selective precision review rechecks a parent question when a point item ha
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "계산", scoreLevels: [{ score: 2, criterion: "정확" }, { score: 0, criterion: "오답" }] }],
   });
   assert.deepEqual(selected, ["r1"]);
+});
+
+test("selective precision review follows an explicit problem 2 criterion link", () => {
+  const selected = AI.selectPrecisionCriterionIds({
+    questionResults: [
+      { criterionId: "r1", questionNumber: "1-(1), 1-(2)", confidence: "high", answerReading: "확인", evidence: "확인" },
+      { criterionId: "r2", questionNumber: "1-(2), 2", confidence: "high", answerReading: "확인", evidence: "확인" },
+    ],
+    exampleAnswerResults: [{ exampleAnswerId: "e2", questionNumber: "2", confidence: "low", pointResults: [{ confidence: "low" }] }],
+    achievementResults: [],
+  }, {
+    rubricCriteria: [
+      { id: "r1", questionNumber: "1-(1), 1-(2)", evaluationElement: "소재", scoreLevels: [{ score: 2, criterion: "정확" }] },
+      { id: "r2", questionNumber: "1-(2), 2", evaluationElement: "소망", scoreLevels: [{ score: 4, criterion: "정확" }] },
+    ],
+    exampleAnswers: [{ id: "e2", questionNumber: "2", evaluationElementIds: ["r2"], evaluationElementScores: { r2: 4 }, pointItems: [{ id: "p2", score: 4, criterion: "소망 설명" }] }],
+  });
+  assert.deepEqual(selected, ["r2"]);
 });
 
 test("fraction verification targets ambiguous readings and skips clear high-confidence fractions", () => {

@@ -1146,6 +1146,11 @@ function questionScoreGroupKey(value) {
   return numericPrefix || compact;
 }
 
+function questionScoreGroupKeys(value) {
+  const parts = String(value || "").split(/[,;/\n]+/).map((part) => questionScoreGroupKey(part)).filter(Boolean);
+  return [...new Set(parts.length ? parts : [questionScoreGroupKey(value)].filter(Boolean))];
+}
+
 function rubricQuestionMaxScoreMap(items) {
   const totals = new Map();
   for (const item of normalizeRubricCriteria(items || [])) {
@@ -4326,6 +4331,87 @@ function refreshExampleAnswerScore(exampleRow) {
   return exampleRow;
 }
 
+function distributeLinkedScoreUnits(rawUnits, maxUnits, targetUnits) {
+  const rawTotal = rawUnits.reduce((sum, value) => sum + value, 0);
+  const weights = rawTotal > 0 ? rawUnits : maxUnits;
+  const weightTotal = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
+  const desired = weights.map((weight, index) => Math.min(maxUnits[index], (targetUnits * weight) / weightTotal));
+  const assigned = desired.map((value, index) => Math.min(maxUnits[index], Math.floor(value)));
+  let remaining = targetUnits - assigned.reduce((sum, value) => sum + value, 0);
+  while (remaining > 0) {
+    const candidates = assigned.map((value, index) => ({
+      index,
+      capacity: maxUnits[index] - value,
+      priority: desired[index] - value,
+      fillRatio: maxUnits[index] ? value / maxUnits[index] : 1,
+    })).filter((item) => item.capacity > 0).sort((left, right) => right.priority - left.priority || left.fillRatio - right.fillRatio || left.index - right.index);
+    if (!candidates.length) break;
+    assigned[candidates[0].index] += 1;
+    remaining -= 1;
+  }
+  return assigned;
+}
+
+function alignedCriterionScoresFromExamples(questionRows, exampleRows) {
+  const indexById = new Map(questionRows.map((item, index) => [String(item?.criterionId || ""), index]).filter(([id]) => id));
+  const totals = new Array(questionRows.length).fill(0);
+  const alignedIndexes = new Set();
+  const fallbackGroups = new Map();
+  for (const example of Array.isArray(exampleRows) ? exampleRows : []) {
+    const linked = (Array.isArray(example?.evaluationElementIds) ? example.evaluationElementIds : [])
+      .map((criterionId) => ({ criterionId: String(criterionId), questionIndex: indexById.get(String(criterionId)) }))
+      .filter((item) => Number.isInteger(item.questionIndex));
+    if (!linked.length) {
+      const groupKey = questionScoreGroupKey(example?.questionNumber);
+      if (!fallbackGroups.has(groupKey)) fallbackGroups.set(groupKey, []);
+      fallbackGroups.get(groupKey).push(example);
+      continue;
+    }
+    const configured = example?.evaluationElementScores && typeof example.evaluationElementScores === "object" && !Array.isArray(example.evaluationElementScores)
+      ? example.evaluationElementScores
+      : {};
+    const hasCompleteScores = linked.every(({ criterionId }) => Object.prototype.hasOwnProperty.call(configured, criterionId));
+    const maximums = hasCompleteScores
+      ? linked.map(({ criterionId }) => Math.max(0, Number(configured[criterionId] || 0)))
+      : allocateQuestionScore(Number(example?.maxScore || 0), linked.length);
+    const maxUnits = maximums.map((score) => Math.max(0, Math.round(score * 2)));
+    const rawUnits = linked.map(({ questionIndex }, index) => Math.min(maxUnits[index], Math.max(0, Math.round(Number(questionRows[questionIndex]?.score || 0) * 2))));
+    const targetUnits = Math.min(Math.max(0, Math.round(Number(example?.awardedScore || 0) * 2)), maxUnits.reduce((sum, value) => sum + value, 0));
+    const distributed = distributeLinkedScoreUnits(rawUnits, maxUnits, targetUnits);
+    linked.forEach(({ questionIndex }, index) => {
+      alignedIndexes.add(questionIndex);
+      totals[questionIndex] += distributed[index] / 2;
+    });
+  }
+  for (const [groupKey, examples] of fallbackGroups) {
+    const matchingIndexes = questionRows.map((item, index) => ({ item, index }))
+      .filter(({ item }) => questionScoreGroupKeys(item?.questionNumber).includes(groupKey))
+      .map(({ index }) => index);
+    if (!matchingIndexes.length) continue;
+    const targetUnits = Math.max(0, Math.round(examples.reduce((sum, item) => sum + Number(item?.awardedScore || 0), 0) * 2));
+    const remainingUnits = matchingIndexes.map((index) => Math.max(0, Math.round((Number(questionRows[index]?.maxScore || 0) - totals[index]) * 2)));
+    const rawUnits = matchingIndexes.map((index, itemIndex) => Math.min(remainingUnits[itemIndex], Math.max(0, Math.round(Number(questionRows[index]?.score || 0) * 2))));
+    const distributed = distributeLinkedScoreUnits(rawUnits, remainingUnits, Math.min(targetUnits, remainingUnits.reduce((sum, value) => sum + value, 0)));
+    matchingIndexes.forEach((questionIndex, index) => {
+      alignedIndexes.add(questionIndex);
+      totals[questionIndex] += distributed[index] / 2;
+    });
+  }
+  return questionRows.map((item, index) => alignedIndexes.has(index)
+    ? Math.min(Math.max(0, Number(item?.maxScore || 0)), Math.round(totals[index] * 2) / 2)
+    : Math.max(0, Number(item?.score || 0)));
+}
+
+function exampleRowsForCriterion(questionRow, exampleRows) {
+  const criterionId = String(questionRow?.criterionId || "");
+  const criterionGroups = questionScoreGroupKeys(questionRow?.questionNumber);
+  return (Array.isArray(exampleRows) ? exampleRows : []).filter((example) => {
+    const linkedIds = Array.isArray(example?.evaluationElementIds) ? example.evaluationElementIds.map(String) : [];
+    if (linkedIds.length) return criterionId && linkedIds.includes(criterionId);
+    return criterionGroups.includes(questionScoreGroupKey(example?.questionNumber));
+  });
+}
+
 function automaticQuestionFeedback(questionNumber, exampleRows) {
   const groupKey = questionScoreGroupKey(questionNumber);
   const linkedRows = exampleRows.filter((item) => questionScoreGroupKey(item.questionNumber) === groupKey);
@@ -4341,6 +4427,17 @@ function automaticQuestionFeedback(questionNumber, exampleRows) {
 function automaticTeacherFeedback(exampleRows) {
   const questionNumbers = [...new Set(exampleRows.map((item) => questionScoreGroupKey(item.questionNumber)).filter(Boolean))];
   return questionNumbers.map((questionNumber) => automaticQuestionFeedback(questionNumber, exampleRows)).join("\n");
+}
+
+function automaticCriterionFeedback(questionRow, linkedRows) {
+  const score = linkedRows.reduce((sum, item) => sum + Number(item.awardedScore || 0), 0);
+  const maximum = linkedRows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  const breakdown = linkedRows.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ");
+  const label = questionRow?.evaluationElement || "채점기준";
+  if (!linkedRows.length || maximum <= 0) return `‘${label}’ 채점기준에 연결된 문제 배점을 확인해 주세요.`;
+  if (score >= maximum - 0.001) return `‘${label}’에 연결된 배점 항목을 모두 충족했습니다. (${breakdown})`;
+  if (score > 0) return `‘${label}’에서 일부 배점 항목을 충족했습니다. 남은 조건을 보완해 보세요. (${breakdown})`;
+  return `‘${label}’에 연결된 배점 항목의 풀이 근거를 보완해 보세요. (${breakdown})`;
 }
 
 function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
@@ -4382,26 +4479,31 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       missingResult: !item || Boolean(item.missingResult),
       teacherAdjusted: Boolean(item?.teacherAdjusted),
       pointResults,
+      evaluationElementIds: Array.isArray(example.evaluationElementIds) ? example.evaluationElementIds.map(String) : [],
+      evaluationElementScores: example.evaluationElementScores && typeof example.evaluationElementScores === "object" && !Array.isArray(example.evaluationElementScores)
+        ? Object.fromEntries(Object.entries(example.evaluationElementScores).map(([criterionId, score]) => [String(criterionId), Math.max(0, Number(score || 0))]))
+        : {},
     };
   });
 }
 
 function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
   const groups = new Map();
-  const exampleScores = exampleQuestionScoreMap(design?.exampleAnswers);
-  rows.forEach((item, index) => {
-    const questionNumber = String(item.questionNumber || index + 1);
-    const groupKey = questionScoreGroupKey(questionNumber) || questionNumber;
-    if (!groups.has(groupKey)) groups.set(groupKey, { questionNumber: groupKey, entries: [] });
-    groups.get(groupKey).entries.push({ item, index });
+  exampleRows.forEach((item, exampleIndex) => {
+    const questionNumber = questionScoreGroupKey(item.questionNumber) || String(item.questionNumber || exampleIndex + 1);
+    if (!groups.has(questionNumber)) groups.set(questionNumber, []);
+    groups.get(questionNumber).push({ item, exampleIndex });
   });
-  return Array.from(groups.values()).map(({ questionNumber, entries }, groupIndex) => {
-    const subtotal = entries.reduce((sum, entry) => sum + Number(teacherScores[entry.index] ?? entry.item.score ?? 0), 0);
-    const submax = entries.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0);
-    const exampleMax = exampleScores.get(questionScoreGroupKey(questionNumber)) || submax;
+  if (!groups.size) rows.forEach((item, index) => {
+    const questionNumber = questionScoreGroupKey(item.questionNumber) || String(item.questionNumber || index + 1);
+    if (!groups.has(questionNumber)) groups.set(questionNumber, []);
+  });
+  const problemSections = Array.from(groups.entries()).map(([questionNumber, subQuestionRows], groupIndex) => {
+    const subtotal = subQuestionRows.reduce((sum, entry) => sum + Number(entry.item.awardedScore || 0), 0);
+    const exampleMax = subQuestionRows.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0)
+      || exampleQuestionScoreMap(design?.exampleAnswers).get(questionNumber)
+      || 0;
     const questionBand = achievementBandForScore(subtotal, exampleMax, design?.performanceThresholds);
-    const subQuestionRows = exampleRows.map((item, exampleIndex) => ({ item, exampleIndex }))
-      .filter(({ item }) => questionScoreGroupKey(item.questionNumber) === questionScoreGroupKey(questionNumber));
     const pointRows = subQuestionRows.flatMap(({ item, exampleIndex }) => item.pointResults?.length ? item.pointResults.map((point, pointIndex) => ({
       ...point,
       questionNumber: item.questionNumber,
@@ -4410,21 +4512,28 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       pointIndex,
     })) : [{ ...item, pointLabel: item.questionNumber, exampleIndex, pointIndex: -1 }]);
     return `<section class="question-score-group">
-      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
+      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th>문제·배점 항목</th><th>획득 점수 / 배점</th><th>획득 여부</th><th>채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
-        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" data-score-group="${groupIndex}"><th>${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" data-score-group="${groupIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${scoreChoices.map((score) => `<option value="${score}" ${Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label></td><td><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
+        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th>${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${scoreChoices.map((score) => `<option value="${score}" ${Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label></td><td><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
       }).join("") || `<tr><td colspan="4" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
-      ${entries.map(({ item, index }) => {
+    </section>`;
+  }).join("");
+  const rubricSubtotal = rows.reduce((sum, item, index) => sum + Number(teacherScores[index] ?? item.score ?? 0), 0);
+  const rubricMaximum = rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  const rubricBand = achievementBandForScore(rubricSubtotal, rubricMaximum, design?.performanceThresholds);
+  const rubricSection = `<section class="question-score-group rubric-score-summary">
+    <div class="question-score-group-head"><strong>채점기준별 종합 점수</strong><div class="question-score-group-result"><span>연결 배점 합산 <b data-rubric-total data-rubric-max="${rubricMaximum}">${formatScore(rubricSubtotal)} / ${formatScore(rubricMaximum)}점</b></span><em class="performance-level-badge is-${rubricBand.key}" data-rubric-level title="${escapeHtml(`${rubricBand.percentage}% · ${rubricBand.range}`)}">종합 ${rubricBand.label}</em></div></div>
+    ${rows.map((item, index) => {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
-        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">확신도 ${confidence}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-group="${groupIndex}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
+        return `<article><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong><small class="rubric-linked-question">연결 문제 ${escapeHtml(item.questionNumber || String(index + 1))}</small>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || item.evidence || "판독 불가")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">확신도 ${confidence}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
       }).join("")}
-    </section>`;
-  }).join("");
+  </section>`;
+  return problemSections + rubricSection;
 }
 
 async function openStudentResult(course, targetStudents, studentId) {
@@ -4449,16 +4558,20 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.dataset.previewUrl = previewUrl;
   const summary = resultScoreSummary(result, design);
   const questionRows = summary.rows;
+  const workingExampleRows = resultExampleAnswerRows(result, design);
+  const initialExampleRows = resultExampleAnswerRows(result, design, false);
+  const alignedAiScores = alignedCriterionScoresFromExamples(questionRows, initialExampleRows);
+  questionRows.forEach((item, index) => { item.score = alignedAiScores[index]; });
+  const hasSavedTeacherScores = Array.isArray(result.teacherScores) && result.teacherScores.length > 0;
   const teacherScores = questionRows.map((item) => {
-    const rawScore = item.sourceIndex >= 0
+    const rawScore = hasSavedTeacherScores && item.sourceIndex >= 0
       ? Number(result.teacherScores?.[item.sourceIndex] ?? item.score ?? 0)
       : Number(item.score || 0);
     return nearestScoreChoice(rawScore, scoreChoicesForResultRow(item, design));
   });
   const initialAchievementResults = derivedAchievementResults(design, result, teacherScores);
-  const workingExampleRows = resultExampleAnswerRows(result, design);
-  const initialExampleRows = resultExampleAnswerRows(result, design, false);
   const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
+  const alignedAiTotal = alignedAiScores.reduce((sum, value) => sum + value, 0);
   const initialAchievementBand = achievementBandForScore(initialTeacherTotal, summary.maxScore, design.performanceThresholds);
   const fractionVerificationStatus = result.fractionVerificationCompleted
     ? `선별 분수 ${result.fractionTargetCount || 0}개 문항 고해상도 재검토 완료`
@@ -4466,7 +4579,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.innerHTML = `
     <section class="student-result-inline">
     <div class="student-result-shell">
-      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(result.totalScore)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}${fractionVerificationStatus ? ` · ${escapeHtml(fractionVerificationStatus)}` : ""}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
+      <div class="student-result-top"><div><p class="section-kicker">STUDENT REVIEW ${currentIndex + 1}/${orderedResults.length}</p><h2>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</h2><p>${assignment.pageNumbers.join(", ")}쪽 · AI 총점 ${formatScore(alignedAiTotal)} / ${formatScore(summary.maxScore)}점 · ${result.recognitionEnhanced ? "필기 강조본 사용" : "원본 판독"} · ${result.fastIntegratedPass ? (result.recognitionPassCompleted ? "자동 정밀 재검토 완료" : "빠른 통합 채점") : (result.recognitionPassCompleted ? "기존 2단계 판독" : "기존 방식 채점")}${fractionVerificationStatus ? ` · ${escapeHtml(fractionVerificationStatus)}` : ""}</p></div><button class="inline-detail-close" type="button" data-close-student-result>상세 닫기</button></div>
       <div class="student-review-grid">
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
@@ -4495,7 +4608,6 @@ async function openStudentResult(course, targetStudents, studentId) {
   const pointScoreSelects = Array.from(panel.querySelectorAll("[data-example-point-score]"));
   const feedbackInput = panel.querySelector("[data-teacher-feedback]");
   const achievementFeedbackInputs = Array.from(panel.querySelectorAll("[data-achievement-feedback]"));
-  const questionGroupKeys = [...new Set(questionRows.map((item, index) => questionScoreGroupKey(item.questionNumber || index + 1)))];
   let feedbackManuallyEdited = Boolean(result.teacherFeedbackManuallyEdited);
   const manuallyEditedAchievementFeedbacks = new Set(initialAchievementResults
     .map((item, index) => item.teacherFeedbackManuallyEdited ? index : -1)
@@ -4517,12 +4629,22 @@ async function openStudentResult(course, targetStudents, studentId) {
     teacherLevel.textContent = achievementBand.label;
     teacherLevel.className = `performance-level-badge is-${achievementBand.key}`;
     teacherLevel.title = `${achievementBand.percentage}% · ${achievementBand.range}`;
+    const rubricTotal = panel.querySelector("[data-rubric-total]");
+    const rubricMaximum = Number(rubricTotal?.dataset.rubricMax || 0) || summary.maxScore;
+    if (rubricTotal) rubricTotal.textContent = `${formatScore(total)} / ${formatScore(rubricMaximum)}점`;
+    const rubricBand = achievementBandForScore(total, rubricMaximum, design.performanceThresholds);
+    const rubricLevel = panel.querySelector("[data-rubric-level]");
+    if (rubricLevel) {
+      rubricLevel.textContent = `종합 ${rubricBand.label}`;
+      rubricLevel.className = `performance-level-badge is-${rubricBand.key}`;
+      rubricLevel.title = `${rubricBand.percentage}% · ${rubricBand.range}`;
+    }
     panel.querySelectorAll("[data-question-total]").forEach((label) => {
       const groupIndex = label.dataset.questionTotal;
-      const groupInputs = scoreInputs.filter((input) => input.dataset.scoreGroup === groupIndex);
-      const groupTotal = groupInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
-      const groupMax = Number(label.dataset.questionMax || 0)
-        || groupInputs.reduce((sum, input) => sum + Number(input.max || 0), 0);
+      const groupKey = label.dataset.questionKey;
+      const linkedExamples = workingExampleRows.filter((item) => questionScoreGroupKey(item.questionNumber) === groupKey);
+      const groupTotal = linkedExamples.reduce((sum, item) => sum + Number(item.awardedScore || 0), 0);
+      const groupMax = Number(label.dataset.questionMax || 0) || linkedExamples.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
       label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
       const questionBand = achievementBandForScore(groupTotal, groupMax, design.performanceThresholds);
       const questionLevel = panel.querySelector(`[data-question-level="${groupIndex}"]`);
@@ -4584,21 +4706,15 @@ async function openStudentResult(course, targetStudents, studentId) {
       }
     });
   };
-  const syncQuestionGroupFromPoints = (groupIndex) => {
-    const groupKey = questionGroupKeys[Number(groupIndex)];
-    if (!groupKey) return;
-    const linkedExamples = workingExampleRows.filter((item) => questionScoreGroupKey(item.questionNumber) === groupKey);
-    const pointTotal = linkedExamples.reduce((sum, item) => sum + Number(item.awardedScore || 0), 0);
-    const pointMaximum = linkedExamples.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
-    const groupInputs = scoreInputs.filter((input) => input.dataset.scoreGroup === String(groupIndex));
-    groupInputs.forEach((input) => {
-      const scoreIndex = Number(input.dataset.scoreIndex);
-      const ratio = pointMaximum > 0 ? pointTotal / pointMaximum : 0;
-      const proportionalScore = groupInputs.length === 1 ? pointTotal : Number(input.max || 0) * ratio;
-      input.value = nearestScoreChoice(proportionalScore, scoreChoicesForResultRow(questionRows[scoreIndex], design));
-      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ")}`;
-      const feedback = automaticQuestionFeedback(groupKey, workingExampleRows);
+  const syncQuestionScoresFromPoints = () => {
+    const alignedScores = alignedCriterionScoresFromExamples(questionRows, workingExampleRows);
+    scoreInputs.forEach((input, scoreIndex) => {
+      input.value = nearestScoreChoice(alignedScores[scoreIndex], scoreChoicesForResultRow(questionRows[scoreIndex], design));
+      const linkedExamples = exampleRowsForCriterion(questionRows[scoreIndex], workingExampleRows);
+      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
+      const feedback = automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
       if (questionRows[scoreIndex]) {
+        questionRows[scoreIndex].score = Number(input.value || 0);
         questionRows[scoreIndex].evidence = evidence;
         questionRows[scoreIndex].feedback = feedback;
       }
@@ -4633,7 +4749,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     }
     const pointRow = select.closest("[data-example-point-row]");
     if (pointRow) syncPointRow(pointRow);
-    syncQuestionGroupFromPoints(select.dataset.scoreGroup);
+    syncQuestionScoresFromPoints();
   }));
   scoreButtons.forEach((button) => button.addEventListener("click", () => {
     const input = scoreInputs[Number(button.dataset.scoreIndex)];
@@ -4665,7 +4781,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     panel.querySelectorAll("[data-example-point-row]").forEach(syncPointRow);
     scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(0, scoreChoicesForResultRow(questionRows[index], design)); });
     syncScoreChoiceStates();
-    questionGroupKeys.forEach((_groupKey, groupIndex) => syncQuestionGroupFromPoints(groupIndex));
+    syncQuestionScoresFromPoints();
   });
   const dismissTeacherReviewAlert = () => {
     panel.querySelector("[data-teacher-review-alert]")?.remove();
@@ -4721,7 +4837,7 @@ async function openStudentResult(course, targetStudents, studentId) {
       panel.querySelectorAll("[data-example-point-row]").forEach(syncPointRow);
       scoreInputs.forEach((input, index) => { input.value = nearestScoreChoice(questionRows[index]?.score ?? 0, scoreChoicesForResultRow(questionRows[index], design)); });
       syncScoreChoiceStates();
-      questionGroupKeys.forEach((_groupKey, groupIndex) => syncQuestionGroupFromPoints(groupIndex));
+      syncQuestionScoresFromPoints();
       await saveCurrent();
       showToast("AI가 제안한 점수를 그대로 적용하고 교사 검토를 저장했습니다.");
     } finally {
