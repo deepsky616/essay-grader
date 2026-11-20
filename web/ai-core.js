@@ -20,6 +20,32 @@
   const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
   const inlineFilePartCache = new WeakMap();
 
+  const tableRowsSchema = {
+    type: "array",
+    description: "학생 답안 표를 위에서 아래 행 순서와 왼쪽에서 오른쪽 열 순서 그대로 전사한 결과. 표가 아니면 빈 배열",
+    items: {
+      type: "object",
+      properties: {
+        rowIndex: { type: "integer", description: "머리글을 제외한 학생 답안 행 번호(위에서부터 1)" },
+        cells: {
+          type: "array",
+          description: "같은 행의 셀을 왼쪽에서 오른쪽 순서대로 기록",
+          items: {
+            type: "object",
+            properties: {
+              columnIndex: { type: "integer", description: "왼쪽에서부터 1로 시작하는 열 번호" },
+              columnLabel: { type: "string", description: "인쇄된 열 머리글. 예: 물건, 의미" },
+              value: { type: "string", description: "학생이 이 셀에 실제로 쓴 내용만 그대로 전사" },
+              confidence: { type: "string", enum: ["high", "medium", "low"] },
+            },
+            required: ["columnIndex", "columnLabel", "value", "confidence"],
+          },
+        },
+      },
+      required: ["rowIndex", "cells"],
+    },
+  };
+
   const gradingSchema = {
     type: "object",
     properties: {
@@ -56,6 +82,7 @@
             questionNumber: { type: "string" },
             evaluationElement: { type: "string", description: "적용한 평가요소" },
             answerReading: { type: "string", description: "학생이 실제로 쓴 답·계산식·그림을 읽은 내용. 무응답이면 무응답이라고 기록" },
+            tableRows: tableRowsSchema,
             criterion: { type: "string", description: "적용한 채점기준의 요약" },
             score: { type: "number" },
             maxScore: { type: "number" },
@@ -63,7 +90,7 @@
             feedback: { type: "string", description: "해당 문항에 대한 구체적인 피드백" },
             confidence: { type: "string", enum: ["high", "medium", "low"] },
           },
-          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "criterion", "score", "maxScore", "evidence", "feedback", "confidence"],
+          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "tableRows", "criterion", "score", "maxScore", "evidence", "feedback", "confidence"],
         },
       },
       exampleAnswerResults: {
@@ -133,11 +160,12 @@
             questionNumber: { type: "string" },
             evaluationElement: { type: "string" },
             answerReading: { type: "string", description: "학생이 실제로 쓴 글씨·수식·숫자·표시를 그대로 판독한 내용" },
+            tableRows: tableRowsSchema,
             visualDescription: { type: "string", description: "학생이 그린 점·선분·도형·표시의 위치와 관계를 객관적으로 설명" },
             confidence: { type: "string", enum: ["high", "medium", "low"] },
             reviewReason: { type: "string", description: "흐림·지움·겹침·잘림 등 교사가 원본을 확인해야 할 이유" },
           },
-          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "visualDescription", "confidence", "reviewReason"],
+          required: ["criterionId", "questionNumber", "evaluationElement", "answerReading", "tableRows", "visualDescription", "confidence", "reviewReason"],
         },
       },
       pageNotes: { type: "array", items: { type: "string" } },
@@ -1088,6 +1116,25 @@
       if (questionGroupKeys(rubric.questionNumber).some((key) => uncertainExampleGroups.has(key))) selected.add(rubric.id);
     }
 
+    for (const example of configuredExamples) {
+      if (!example.pointItems.some((point) => parseExactTablePairCriterion(point?.criterion))) continue;
+      const configuredSource = (Array.isArray(metadata?.exampleAnswers) ? metadata.exampleAnswers : [])
+        .find((item) => text(item?.id) === example.id || text(item?.questionNumber) === example.questionNumber);
+      const linkedQuestionHasTable = (Array.isArray(result?.questionResults) ? result.questionResults : [])
+        .some((item) => example.evaluationElementIds.includes(text(item?.criterionId)) && normalizeTableRows(item?.tableRows).length);
+      const tableContext = /표|행|열|첫째\s*칸|둘째\s*칸|물건.{0,12}의미/u.test(`${text(configuredSource?.answerText)} ${text(configuredSource?.visualDescription)}`);
+      if (!linkedQuestionHasTable && !tableContext) continue;
+      const gradedExample = (Array.isArray(result?.exampleAnswerResults) ? result.exampleAnswerResults : [])
+        .find((item) => text(item?.exampleAnswerId) === example.id);
+      const validatedPointIds = new Set((Array.isArray(gradedExample?.pointResults) ? gradedExample.pointResults : [])
+        .filter((point) => point?.tablePairValidated)
+        .map((point) => text(point?.pointItemId)));
+      const missingTableValidation = example.pointItems.some((point) => parseExactTablePairCriterion(point?.criterion)
+        && !validatedPointIds.has(point.id));
+      if (!missingTableValidation) continue;
+      for (const criterionId of example.evaluationElementIds) selected.add(criterionId);
+    }
+
     const uncertainAchievements = (Array.isArray(result?.achievementResults) ? result.achievementResults : [])
       .filter((item) => item?.confidence !== "high");
     for (const achievement of uncertainAchievements) {
@@ -1224,7 +1271,7 @@
       questionNumber: item.questionNumber,
       evaluationElement: item.evaluationElement,
     }));
-    return `첨부된 자료는 학생이 종이에 작성한 수학 답안입니다. 먼저 채점하지 말고 학생이 실제로 쓴 글씨·수식·숫자·그림만 객관적으로 판독하세요.
+    return `첨부된 자료는 학생이 종이에 작성한 답안입니다. 먼저 채점하지 말고 학생이 실제로 쓴 글씨·수식·숫자·그림만 객관적으로 판독하세요.
 
 자료 사용 규칙:
 1. 빈 답안지는 인쇄된 문제·표·격자·도형과 학생이 새로 쓴 내용을 구별하는 기준입니다.
@@ -1234,8 +1281,11 @@
 5. 지운 흔적, 겹친 선, 잘린 글씨, 흐린 숫자는 추측하지 말고 판독 불가 또는 가능한 후보를 명시하세요.
 6. 분수는 분자/분모, 계산식은 기호와 순서를 보이는 그대로 기록하세요.
 7. 도형은 점의 위치, 연결된 선분, 대칭축과의 대응, 격자 칸 수, 학생이 추가한 표시를 구체적으로 설명하세요.
-8. 학생 이름이나 학번은 응답에 기록하지 마세요.
-9. 아래 모든 평가요소를 입력 순서대로 한 번씩 판독하고 criterionId를 그대로 복사하세요.
+8. 표 답안은 인쇄된 열 머리글을 왼쪽부터 확인하고, 학생이 쓴 모든 행을 위에서 아래 순서대로 tableRows에 전사하세요. 각 셀의 내용을 원래 행·열에 고정하고 의미가 비슷하다는 이유로 다른 행이나 다른 열로 옮기지 마세요.
+9. 예를 들어 머리글이 ‘물건 | 의미’이고 한 행이 ‘수박 | 장수’이면 두 셀을 반드시 같은 rowIndex에 보존합니다. ‘수박’과 다른 행의 ‘자손 번창’을 정답처럼 합치지 마세요. 셀 경계가 불확실하면 confidence를 낮추고 reviewReason에 적으세요.
+10. 표가 아닌 답안은 tableRows를 빈 배열로 반환하세요.
+11. 학생 이름이나 학번은 응답에 기록하지 마세요.
+12. 아래 모든 평가요소를 입력 순서대로 한 번씩 판독하고 criterionId를 그대로 복사하세요.
 
 판독 대상(JSON):
 ${JSON.stringify(targets)}
@@ -1264,6 +1314,7 @@ ${JSON.stringify(targets)}
         questionNumber: rubric.questionNumber,
         evaluationElement: rubric.evaluationElement,
         answerReading: text(item?.answerReading) || "판독 불가",
+        tableRows: normalizeTableRows(item?.tableRows),
         visualDescription: text(item?.visualDescription),
         confidence,
         reviewReason,
@@ -1301,6 +1352,7 @@ ${JSON.stringify(targets)}
         questionNumber: item?.questionNumber || "",
         evaluationElement: item?.evaluationElement || "",
         answerReading: item?.answerReading || "",
+        tableRows: normalizeTableRows(item?.tableRows),
         visualDescription: item?.visualDescription || "",
         mathLines: (Array.isArray(item?.mathLines) ? item.mathLines : []).map((line) => ({
           lineLabel: line?.lineLabel || "",
@@ -1347,6 +1399,8 @@ ${JSON.stringify(targets)}
 3. 빈 답안지와 학생 답안은 같은 페이지끼리 비교합니다. 빈 답안지에 이미 인쇄된 문장·격자·선·도형·기호는 학생이 쓴 답으로 간주하지 마세요.
 4. 학생 답안(${answerFileName || "학생 답안"})에 새로 더해진 연필·볼펜 필기, 계산식, 선택 표시, 선, 도형과 지운 흔적만 평가합니다. 상단 신원 영역이 삭제되고 평면화된 부분은 채점에서 무시합니다.
 5. 각 평가요소의 answerReading에는 학생이 실제로 쓴 핵심 답·식·그림을 먼저 객관적으로 옮겨 적으세요. 보이지 않으면 ‘판독 불가’, 쓰지 않았으면 ‘무응답’으로 기록하고 내용을 만들지 마세요.
+5-1. 표 답안은 인쇄된 열 머리글을 확인한 뒤, 학생이 쓴 모든 행을 tableRows에 위에서 아래로, 각 셀은 왼쪽에서 오른쪽으로 전사합니다. 셀 내용을 다른 행·열로 이동하거나 의미가 비슷한 단어끼리 재조합하지 마세요. 표가 아니면 tableRows는 빈 배열입니다.
+5-2. ‘A: B’처럼 첫째 칸과 둘째 칸의 정확한 짝을 요구하는 배점 기준은 같은 행에서 첫째 칸=A이고 둘째 칸=B일 때만 충족합니다. 둘째 칸의 의미만 같거나 서로 다른 행에서 A와 B가 각각 보이면 0점입니다. 예: 정답이 ‘수박: 자손 번창’일 때 ‘공작깃털: 자손 번창’은 오답이며, ‘수박: 장수’와 다른 행의 ‘자손 번창’을 합쳐 정답 처리할 수 없습니다. pointResults.evidence에는 판정한 행 번호와 두 셀 값을 함께 적으세요.
 6. 도형 문항은 점의 위치, 선분의 연결, 대칭축과의 대응, 격자 칸 수를 빈 답안지와 대조해 판정합니다. 흐린 연필선·겹친 선·지운 흔적은 낮은 confidence와 구체적인 교사 검토 사유를 남기세요.
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 needsTeacherReview와 reviewReasons에 기록합니다.
 ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
@@ -1416,8 +1470,9 @@ ${JSON.stringify(safeMetadata)}
 4. 무응답 또는 판독 불가도 항목을 생략하지 말고 0점 또는 정의된 최저점과 낮은 confidence로 기록합니다.
 5. exampleAnswerResults는 아래 exampleAnswers의 각 세부 문항을 같은 개수와 순서로 작성하고 exampleAnswerId와 questionNumber를 그대로 복사합니다.
 6. 각 exampleAnswer의 모든 pointItems를 pointResults에 같은 순서로 작성합니다. 각 항목은 기준 충족 시 설정 배점 전부, 미충족 시 0점만 부여합니다. 배점 항목이 1개이고 답이 틀리면 0점입니다. 세부 문항 awardedScore는 pointResults 합계이며, evaluationElementIds에 연결된 채점기준에 evaluationElementScores 한도 안에서 반영합니다.
-7. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다. 각 수준은 itemRange에 해당하는 rubricCriteria의 questionResults 점수를 모두 합산한 비율과 performanceThresholds.levels에 설정된 이름·최소 비율로 결정합니다.
-8. totalScore는 questionResults의 score 합계입니다.
+7. 표 답안은 모든 행의 각 셀을 원래 행·열 그대로 questionResults.tableRows에 기록합니다. ‘A: B’ 기준은 같은 행의 첫째 칸이 A이고 둘째 칸이 B일 때만 충족하며, 의미 칸만 같거나 서로 다른 행의 셀을 합치면 0점입니다.
+8. achievementResults는 아래 achievementGroups와 같은 개수와 순서로 작성합니다. 각 수준은 itemRange에 해당하는 rubricCriteria의 questionResults 점수를 모두 합산한 비율과 performanceThresholds.levels에 설정된 이름·최소 비율로 결정합니다.
+9. totalScore는 questionResults의 score 합계입니다.
 
 rubricCriteria(JSON):
 ${JSON.stringify(rubricCriteria)}
@@ -1534,12 +1589,14 @@ ${JSON.stringify(roster)}
       const preConfidence = ["high", "medium", "low"].includes(preReading?.confidence) ? preReading.confidence : "high";
       const confidenceOrder = { high: 2, medium: 1, low: 0 };
       const confidence = confidenceOrder[preConfidence] < confidenceOrder[finalConfidence] ? preConfidence : finalConfidence;
+      const itemTableRows = normalizeTableRows(item?.tableRows);
       if (text(preReading?.reviewReason)) reviewReasons.push(`${matchedRubric?.questionNumber || item?.questionNumber || index + 1}번 사전 판독: ${text(preReading.reviewReason)}`);
       return {
         criterionId,
         questionNumber: matchedRubric?.questionNumber || String(item?.questionNumber || index + 1),
         evaluationElement: matchedRubric?.evaluationElement || text(item?.evaluationElement),
         answerReading: text(item?.answerReading) || text(preReading?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가"),
+        tableRows: itemTableRows.length ? itemTableRows : normalizeTableRows(preReading?.tableRows),
         visualDescription: text(preReading?.visualDescription),
         criterion: selectedLevel?.criterion || text(item?.criterion) || (missing ? "AI가 이 평가요소를 반환하지 않음" : ""),
         score,
@@ -1618,6 +1675,97 @@ ${JSON.stringify(roster)}
     };
   }
 
+  function normalizeTableRows(value) {
+    return (Array.isArray(value) ? value : []).map((row, rowIndex) => {
+      const cells = (Array.isArray(row?.cells) ? row.cells : []).map((cell, cellIndex) => ({
+        columnIndex: positiveInteger(cell?.columnIndex) || cellIndex + 1,
+        columnLabel: text(cell?.columnLabel),
+        value: text(cell?.value),
+        confidence: ["high", "medium", "low"].includes(cell?.confidence) ? cell.confidence : "low",
+      })).sort((left, right) => left.columnIndex - right.columnIndex);
+      return {
+        rowIndex: positiveInteger(row?.rowIndex) || rowIndex + 1,
+        cells,
+      };
+    }).filter((row) => row.cells.length).sort((left, right) => left.rowIndex - right.rowIndex);
+  }
+
+  function parseExactTablePairCriterion(value) {
+    const source = text(value).normalize("NFKC");
+    const labeled = source.match(/^(?:물건|대상|항목|소재)\s*[:：]\s*([^|,;\/]+?)\s*(?:[|,;\/]|그리고)\s*(?:의미|상징|설명)\s*[:：]\s*(.+)$/u);
+    const left = text(labeled?.[1]);
+    const right = text(labeled?.[2]);
+    if (left && right) return { left, right };
+    const simple = source.match(/^([^:：\n]{1,40})\s*[:：]\s*([^:：\n]{1,80})$/u);
+    return simple ? { left: text(simple[1]), right: text(simple[2]) } : null;
+  }
+
+  function canonicalTableCell(value) {
+    return text(value).normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}]/gu, "");
+  }
+
+  function exactTablePairDecision(example, point, questionResults) {
+    const expected = parseExactTablePairCriterion(point?.criterion);
+    if (!expected) return null;
+    const expectedLeft = canonicalTableCell(expected.left);
+    const expectedRight = canonicalTableCell(expected.right);
+    if (!expectedLeft || !expectedRight) return null;
+    const linkedIds = new Set((example?.evaluationElementIds || []).map(text).filter(Boolean));
+    let sources = (Array.isArray(questionResults) ? questionResults : []).filter((item) => linkedIds.has(text(item?.criterionId)));
+    if (!sources.length) {
+      const group = questionGroupKey(example?.questionNumber);
+      sources = (Array.isArray(questionResults) ? questionResults : []).filter((item) => questionGroupKeys(item?.questionNumber).includes(group));
+    }
+    const seen = new Set();
+    const rows = [];
+    for (const source of sources) {
+      for (const row of normalizeTableRows(source?.tableRows)) {
+        if (row.cells.length < 2) continue;
+        const pair = row.cells.slice(0, 2);
+        const key = pair.map((cell) => `${cell.columnIndex}:${canonicalTableCell(cell.value)}`).join("|");
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        rows.push({
+          rowIndex: row.rowIndex,
+          first: pair[0],
+          second: pair[1],
+          confidence: source?.confidence === "low" || pair.some((cell) => cell.confidence === "low")
+            ? "low"
+            : source?.confidence === "medium" || pair.some((cell) => cell.confidence === "medium") ? "medium" : "high",
+        });
+      }
+    }
+    const trustedRows = rows.filter((row) => row.confidence !== "low");
+    if (!trustedRows.length) return null;
+    const exact = trustedRows.find((row) => canonicalTableCell(row.first.value) === expectedLeft
+      && canonicalTableCell(row.second.value) === expectedRight);
+    if (exact) {
+      return {
+        earned: true,
+        evidence: `표 ${exact.rowIndex}행의 첫째 칸 ‘${exact.first.value}’과 둘째 칸 ‘${exact.second.value}’이 같은 행에서 기준 ‘${expected.left} | ${expected.right}’과 모두 일치합니다.`,
+        confidence: exact.confidence,
+      };
+    }
+    const leftRows = trustedRows.filter((row) => canonicalTableCell(row.first.value) === expectedLeft);
+    const rightRows = trustedRows.filter((row) => canonicalTableCell(row.second.value) === expectedRight);
+    let evidence;
+    if (leftRows.length && rightRows.length) {
+      evidence = `표에서 첫째 칸 ‘${expected.left}’은 ${leftRows.map((row) => `${row.rowIndex}행`).join("·")}에, 둘째 칸 ‘${expected.right}’은 ${rightRows.map((row) => `${row.rowIndex}행`).join("·")}에 있어 같은 행의 짝이 아닙니다.`;
+    } else if (!leftRows.length && rightRows.length) {
+      evidence = `표의 첫째 칸에서 ‘${expected.left}’을 찾지 못했습니다. 둘째 칸 ‘${expected.right}’만 일치하므로 기준을 충족하지 않습니다.`;
+    } else if (leftRows.length && !rightRows.length) {
+      evidence = `표의 ${leftRows.map((row) => `${row.rowIndex}행`).join("·")} 첫째 칸에 ‘${expected.left}’이 있지만, 같은 행 둘째 칸은 ‘${leftRows.map((row) => row.second.value || "빈칸").join("·")}’이므로 ‘${expected.right}’과 일치하지 않습니다.`;
+    } else {
+      const observed = trustedRows.slice(0, 4).map((row) => `${row.rowIndex}행 ‘${row.first.value} | ${row.second.value}’`).join(", ");
+      evidence = `표에서 같은 행의 ‘${expected.left} | ${expected.right}’ 짝을 찾지 못했습니다.${observed ? ` 확인된 짝: ${observed}.` : ""}`;
+    }
+    return {
+      earned: false,
+      evidence,
+      confidence: trustedRows.some((row) => row.confidence === "medium") ? "medium" : "high",
+    };
+  }
+
   function normalizeExampleAnswerResults(rawResults, metadata, questionResults, reviewReasons) {
     const expected = exampleAnswersForResponse(metadata);
     const rawItems = Array.isArray(rawResults) ? rawResults : [];
@@ -1636,9 +1784,11 @@ ${JSON.stringify(roster)}
         let rawPoint = pointResultIndex >= 0 ? rawPointResults[pointResultIndex] : null;
         if (!rawPoint && example.pointItems.length === 1 && item) rawPoint = item;
         const explicitlyEarned = typeof rawPoint?.earned === "boolean" ? rawPoint.earned : null;
-        const earned = explicitlyEarned == null
+        let earned = explicitlyEarned == null
           ? numeric(rawPoint?.awardedScore ?? rawPoint?.score) >= point.score - 0.001
           : explicitlyEarned;
+        const tableDecision = exactTablePairDecision(example, point, questionResults);
+        if (tableDecision) earned = tableDecision.earned;
         if (!rawPoint) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’ 배점 항목 결과가 없어 0점으로 처리했습니다.`);
         return {
           pointItemId: point.id,
@@ -1646,9 +1796,10 @@ ${JSON.stringify(roster)}
           awardedScore: earned ? point.score : 0,
           maxScore: point.score,
           earned,
-          evidence: text(rawPoint?.evidence) || (rawPoint ? "배점 항목의 근거가 반환되지 않았습니다." : "AI 배점 항목 채점 결과가 없습니다."),
-          confidence: rawPoint && ["high", "medium", "low"].includes(rawPoint?.confidence) ? rawPoint.confidence : "low",
+          evidence: tableDecision?.evidence || text(rawPoint?.evidence) || (rawPoint ? "배점 항목의 근거가 반환되지 않았습니다." : "AI 배점 항목 채점 결과가 없습니다."),
+          confidence: tableDecision?.confidence || (rawPoint && ["high", "medium", "low"].includes(rawPoint?.confidence) ? rawPoint.confidence : "low"),
           missingResult: !rawPoint,
+          tablePairValidated: Boolean(tableDecision),
         };
       });
       const awardedScore = roundScore(pointResults.reduce((sum, point) => sum + point.awardedScore, 0));

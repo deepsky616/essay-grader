@@ -3703,6 +3703,7 @@ function preliminaryReadingsFromResult(result) {
     questionNumber: item.questionNumber || "",
     evaluationElement: item.evaluationElement || "",
     answerReading: item.answerReading || "",
+    tableRows: Array.isArray(item.tableRows) ? item.tableRows : [],
     visualDescription: item.visualDescription || "",
     confidence: item.confidence || "low",
     reviewReason: item.confidence !== "high" ? `1차 통합 채점의 확신도가 ${item.confidence || "low"}였습니다.` : "",
