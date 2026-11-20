@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const Export = require("../web/grading-export.js");
 const schoolSource = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
 
@@ -340,6 +341,61 @@ test("student grading detail gives the scoring panel more horizontal space", () 
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(styles, /\.student-review-grid \{[^}]*grid-template-columns: minmax\(0,\.88fr\) minmax\(520px,1\.12fr\)/);
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.student-review-grid \{ grid-template-columns: 1fr; \}/);
+});
+
+test("individual AI regrading reports real phases, completion, and a failed phase without replacing saved results", async () => {
+  const start = schoolSource.indexOf("const STUDENT_REGRADE_STEPS");
+  const end = schoolSource.indexOf("async function splitStudentPdf", start);
+  assert.ok(start >= 0 && end > start);
+  const previousResult = { studentId: "s1", totalScore: 1 };
+  const nextResult = { studentId: "s1", totalScore: 2 };
+  const submission = { designId: "d1", updatedAt: "sub1", assignments: [{ studentId: "s1", pageNumbers: [1] }] };
+  const designs = [{ id: "d1", updatedAt: "d1-first", blankFile: {} }];
+  const course = { id: "c1", submission, designs, grading: { results: [previousResult], errors: [] } };
+  const events = [];
+  const toasts = [];
+  let stored;
+  let failGrading = false;
+  const context = {
+    studentRegradeRuns: new Map(), activeGradingRun: null,
+    app: { querySelector: () => null },
+    window: { confirm: () => true, setInterval: () => 2, clearInterval: (id) => assert.equal(id, 2) },
+    StudentWorkflow: { rosterIdentity: () => "학생 1" },
+    ChaejeomAI: { MODEL: "test-model" },
+    GEMINI_MODEL_SETTING: "model", GEMINI_STATUS_SETTING: "status",
+    loadGeminiApiKey: async () => "key", getSetting: async (name) => name === "model" ? "test-model" : { generationVerified: true, model: "test-model" },
+    getPdfPageCount: async () => 1, asFile: (file) => file, getCourse: async () => course,
+    showToast: (message) => toasts.push(message), friendlyError: (error) => error.message,
+    putCourse: async (value) => { stored = value; events.push("save"); },
+    gradeStudentAssignment: async ({ onStage }) => {
+      onStage("답안 준비 확인", "prepare");
+      onStage("1차 채점 1/2", "primary");
+      assert.equal(context.studentRegradeRuns.get("c1").phase, "primary");
+      if (failGrading) throw new Error("테스트 연결 오류");
+      onStage("분수 정밀 재판독 중", "review");
+      events.push("review");
+      return nextResult;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(schoolSource.slice(start, end) + "\nthis.regrade = regradeSingleStudent; this.stepState = studentRegradeStepState;", context);
+  await context.regrade(course, [{ id: "s1" }], "s1");
+  assert.deepEqual(events, ["review", "save"]);
+  assert.equal(context.studentRegradeRuns.get("c1").status, "complete");
+  assert.equal(stored.grading.results[0].totalScore, 2);
+  assert.match(toasts.at(-1), /저장했습니다/);
+  assert.equal(context.stepState(2, 3, "complete", false), "skipped");
+  assert.equal(context.stepState(2, 2, "running", true), "active");
+
+  failGrading = true;
+  stored = undefined;
+  await context.regrade(course, [{ id: "s1" }], "s1");
+  const error = context.studentRegradeRuns.get("c1");
+  assert.equal(error.status, "error");
+  assert.equal(error.phase, "primary");
+  assert.equal(stored, undefined);
+  assert.equal(course.grading.results[0].totalScore, 2);
+  assert.match(toasts.at(-1), /테스트 연결 오류/);
 });
 
 test("teacher score choices wrap into rows and the point table fits the panel", () => {
