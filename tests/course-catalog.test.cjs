@@ -207,6 +207,7 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.deepEqual(Array.from(linkedAllocations.allocations.values()), [5, 1, 6]);
   assert.equal(Array.from(linkedAllocations.allocations.values()).reduce((sum, score) => sum + score, 0), 12);
   assert.deepEqual(linkedAllocations.questionLabels.get(0), ["1-(1)", "1-(2)"]);
+  assert.deepEqual(Array.from(linkedAllocations.questionAllocations.entries()), [["1", 6], ["2", 6]]);
   const customLinkedAllocations = rubricAllocationsFromLinkedExamples([
     { id: "r1", questionNumber: "1", evaluationElement: "계산" },
     { id: "r2", questionNumber: "1", evaluationElement: "설명" },
@@ -218,6 +219,15 @@ test("example-answer points drive question totals and derived rubric scores", ()
   ]);
   assert.deepEqual(Array.from(customLinkedAllocations.allocations.values()), [4.5, 1.5, 6]);
   assert.equal(Array.from(customLinkedAllocations.allocations.values()).reduce((sum, score) => sum + score, 0), 12);
+  assert.deepEqual(Array.from(customLinkedAllocations.questionAllocations.entries()), [["1", 6], ["2", 6]]);
+  const crossQuestionAllocations = rubricAllocationsFromLinkedExamples([
+    { id: "shared", questionNumber: "1-(1), 2-(1)", evaluationElement: "공통 문제해결 과정" },
+  ], [
+    { questionNumber: "1-(1)", maxScore: 2, evaluationElementIds: ["shared"], evaluationElementScores: { shared: 2 } },
+    { questionNumber: "2-(1)", maxScore: 3, evaluationElementIds: ["shared"], evaluationElementScores: { shared: 3 } },
+  ]);
+  assert.deepEqual(Array.from(crossQuestionAllocations.allocations.values()), [5]);
+  assert.deepEqual(Array.from(crossQuestionAllocations.questionAllocations.entries()), [["1", 2], ["2", 3]]);
   assert.match(source, /name="exampleEvaluationElement" type="checkbox"/);
   assert.match(source, /name="exampleEvaluationScore" data-rubric-id=/);
   assert.match(source, /<strong>채점기준 연결<\/strong>/);
@@ -227,6 +237,8 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.match(source, /채점기준별 반영 배점 합계가 문제 총 배점과 같아야 합니다/);
   assert.match(source, /syncRubricQuestionNumbersFromExampleLinks\(form\)/);
   assert.match(source, /채점기준 반영 \$\{formatScore\(reflectedTotal\)\}점/);
+  assert.match(source, /const reflectedScores = linkedAllocations\.questionAllocations/);
+  assert.match(source, /const rubricQuestionScores = linkedRubricScores\.questionAllocations/);
   assert.match(styles, /\.example-evaluation-linker \{/);
   assert.match(styles, /\.example-evaluation-score \{/);
   assert.match(styles, /\.example-evaluation-linker\.is-warning/);

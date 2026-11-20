@@ -1268,6 +1268,7 @@ function rubricAllocationsFromElements(elements, questionScores) {
 function rubricAllocationsFromLinkedExamples(elements, examples) {
   const allocations = new Map(elements.map((_item, index) => [index, 0]));
   const questionLabels = new Map(elements.map((_item, index) => [index, []]));
+  const questionAllocations = new Map();
   const indexesById = new Map(elements.map((item, index) => [String(item.id || `rubric-${index + 1}`), index]));
   const indexesByQuestion = new Map();
   elements.forEach((item, index) => {
@@ -1303,6 +1304,7 @@ function rubricAllocationsFromLinkedExamples(elements, examples) {
         allocations.set(index, (allocations.get(index) || 0) + scores[allocationIndex]);
         if (!questionLabels.get(index).includes(questionNumber)) questionLabels.get(index).push(questionNumber);
       });
+      questionAllocations.set(questionKey, (questionAllocations.get(questionKey) || 0) + scores.reduce((sum, value) => sum + value, 0));
       continue;
     }
     const pending = unlinkedByQuestion.get(questionKey) || { score: 0, labels: [] };
@@ -1317,8 +1319,9 @@ function rubricAllocationsFromLinkedExamples(elements, examples) {
       allocations.set(index, (allocations.get(index) || 0) + (scores[allocationIndex] || 0));
       for (const label of pending.labels) if (!questionLabels.get(index).includes(label)) questionLabels.get(index).push(label);
     });
+    if (indexes.length) questionAllocations.set(questionKey, (questionAllocations.get(questionKey) || 0) + indexes.reduce((sum, _index, allocationIndex) => sum + (scores[allocationIndex] || 0), 0));
   }
-  return { allocations, questionLabels };
+  return { allocations, questionLabels, questionAllocations };
 }
 
 function rubricElementsFromForm(form) {
@@ -1484,12 +1487,7 @@ function syncQuestionScoreUI(form) {
   const summary = form.querySelector("[data-question-score-summary]");
   if (summary) {
     const entries = Array.from(questionScores.entries());
-    const reflectedScores = new Map();
-    elements.forEach((item, index) => {
-      const questionNumber = questionScoreGroupKey(item.questionNumber);
-      if (!questionNumber) return;
-      reflectedScores.set(questionNumber, (reflectedScores.get(questionNumber) || 0) + Number(allocations.get(index) || 0));
-    });
+    const reflectedScores = linkedAllocations.questionAllocations;
     const groupedQuestionRows = new Map();
     form.querySelectorAll("[data-example-row]").forEach((row) => {
       const label = row.querySelector('[name="exampleQuestion"]')?.value.trim() || "";
@@ -2401,11 +2399,12 @@ function collectDesignForm(form, existing) {
   if (invalidLinkedScoreExample) throw new Error(`문제 ${invalidLinkedScoreExample.questionNumber}의 채점기준별 반영 배점 합계가 문제 총 배점과 같아야 합니다. 각 배점은 0.5점 단위로 입력해 주세요.`);
   if (new Set(exampleAnswers.map((item) => item.questionNumber)).size !== exampleAnswers.length) throw new Error("예시답안의 문제 번호는 중복되지 않게 한 번씩만 입력해 주세요.");
   const exampleScores = exampleQuestionScoreMap(exampleAnswers);
-  const rubricQuestionScores = rubricQuestionMaxScoreMap(rubricCriteria);
-  const missingRubricQuestions = Array.from(exampleScores.keys()).filter((questionNumber) => !rubricQuestionScores.has(questionNumber));
-  const unscoredRubricQuestions = Array.from(rubricQuestionScores.keys()).filter((questionNumber) => !exampleScores.has(questionNumber));
+  const linkedRubricScores = rubricAllocationsFromLinkedExamples(rubricCriteria, exampleAnswers);
+  const rubricQuestionScores = linkedRubricScores.questionAllocations;
+  const missingRubricQuestions = Array.from(exampleScores.keys()).filter((questionNumber) => !rubricQuestionScores.has(questionNumber) || (rubricQuestionScores.get(questionNumber) || 0) <= 0);
+  const unscoredRubricCriteria = rubricCriteria.map((item, index) => ({ item, index })).filter(({ index }) => (linkedRubricScores.allocations.get(index) || 0) <= 0);
   if (missingRubricQuestions.length) throw new Error(`문제 ${missingRubricQuestions.join(", ")}의 채점기준을 2번에서 입력해 주세요.`);
-  if (unscoredRubricQuestions.length) throw new Error(`문제 ${unscoredRubricQuestions.join(", ")}의 배점을 3번 예시답안에서 입력해 주세요.`);
+  if (unscoredRubricCriteria.length) throw new Error(`${unscoredRubricCriteria.map(({ item, index }) => item.evaluationElement || `채점기준 ${index + 1}`).join(", ")} 채점기준에 연결된 예시답안과 배점을 3번에서 확인해 주세요.`);
   const mismatchedQuestions = Array.from(exampleScores.entries()).filter(([questionNumber, score]) => Math.abs((rubricQuestionScores.get(questionNumber) || 0) - score) > 0.001);
   if (mismatchedQuestions.length) throw new Error(`문제 ${mismatchedQuestions.map(([question]) => question).join(", ")}의 채점기준 만점 합계가 예시답안 배점과 다릅니다. 문제 번호와 평가요소를 확인해 주세요.`);
   const rubricFile = form.elements.removeRubricDocument?.checked ? null : form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
