@@ -207,13 +207,29 @@ test("example-answer points drive question totals and derived rubric scores", ()
   assert.deepEqual(Array.from(linkedAllocations.allocations.values()), [5, 1, 6]);
   assert.equal(Array.from(linkedAllocations.allocations.values()).reduce((sum, score) => sum + score, 0), 12);
   assert.deepEqual(linkedAllocations.questionLabels.get(0), ["1-(1)", "1-(2)"]);
+  const customLinkedAllocations = rubricAllocationsFromLinkedExamples([
+    { id: "r1", questionNumber: "1", evaluationElement: "계산" },
+    { id: "r2", questionNumber: "1", evaluationElement: "설명" },
+    { id: "r3", questionNumber: "2", evaluationElement: "표현" },
+  ], [
+    { questionNumber: "1-(1)", maxScore: 4, evaluationElementIds: ["r1"], evaluationElementScores: { r1: 4 } },
+    { questionNumber: "1-(2)", maxScore: 2, evaluationElementIds: ["r1", "r2"], evaluationElementScores: { r1: 0.5, r2: 1.5 } },
+    { questionNumber: "2", maxScore: 6, evaluationElementIds: [] },
+  ]);
+  assert.deepEqual(Array.from(customLinkedAllocations.allocations.values()), [4.5, 1.5, 6]);
+  assert.equal(Array.from(customLinkedAllocations.allocations.values()).reduce((sum, score) => sum + score, 0), 12);
   assert.match(source, /name="exampleEvaluationElement" type="checkbox"/);
+  assert.match(source, /name="exampleEvaluationScore" data-rubric-id=/);
   assert.match(source, /<strong>채점기준 연결<\/strong>/);
   assert.doesNotMatch(source, /<strong>평가요소 연결<\/strong>/);
   assert.match(source, /evaluationElementIds: Array\.from\(row\.querySelectorAll/);
+  assert.match(source, /evaluationElementScores,/);
+  assert.match(source, /채점기준별 반영 배점 합계가 문제 총 배점과 같아야 합니다/);
   assert.match(source, /syncRubricQuestionNumbersFromExampleLinks\(form\)/);
   assert.match(source, /채점기준 반영 \$\{formatScore\(reflectedTotal\)\}점/);
   assert.match(styles, /\.example-evaluation-linker \{/);
+  assert.match(styles, /\.example-evaluation-score \{/);
+  assert.match(styles, /\.example-evaluation-linker\.is-warning/);
   assert.match(source, /name="examplePointScore" type="number" min="0\.5" step="0\.5"/);
   assert.match(source, /data-add-example-point>＋ 배점 추가/);
   assert.match(source, /data-example-auto-total/);

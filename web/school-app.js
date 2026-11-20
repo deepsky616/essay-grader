@@ -863,9 +863,12 @@ function exampleEditorRow(item, options = {}) {
   const pointItems = normalizedExamplePointItems(item);
   const maxScore = pointItems.reduce((sum, point) => sum + positiveDesignScore(point.score), 0);
   const evaluationElementIds = Array.isArray(item.evaluationElementIds) ? item.evaluationElementIds.map(String) : [];
-  return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}" data-evaluation-element-ids="${escapeHtml(JSON.stringify(evaluationElementIds))}" data-evaluation-links-touched="${Array.isArray(item.evaluationElementIds) ? "true" : "false"}">
+  const evaluationElementScores = item.evaluationElementScores && typeof item.evaluationElementScores === "object" && !Array.isArray(item.evaluationElementScores)
+    ? Object.fromEntries(Object.entries(item.evaluationElementScores).map(([id, score]) => [String(id), positiveDesignScore(score)]))
+    : {};
+  return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}" data-evaluation-element-ids="${escapeHtml(JSON.stringify(evaluationElementIds))}" data-evaluation-element-scores="${escapeHtml(JSON.stringify(evaluationElementScores))}" data-evaluation-links-touched="${Array.isArray(item.evaluationElementIds) ? "true" : "false"}" data-evaluation-scores-touched="${item.evaluationElementScoresManual === true ? "true" : "false"}">
     <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1 또는 1-(1)" required></label><span class="example-total-score">총 <b data-example-point-total>${formatScore(maxScore)}</b>점</span></div><button type="button" data-remove-example>삭제</button></div>
-    <section class="example-evaluation-linker"><div><strong>채점기준 연결</strong><small>이 예시답안의 배점을 반영할 채점기준을 선택하세요. 문제 번호가 자동 입력되고, 여러 개를 선택하면 총 배점이 중복되지 않도록 균등하게 나뉩니다.</small></div><div class="example-evaluation-options" data-example-evaluation-elements></div><p data-example-evaluation-summary>2번의 채점기준을 불러오는 중입니다.</p></section>
+    <section class="example-evaluation-linker"><div><strong>채점기준 연결</strong><small>이 예시답안의 배점을 반영할 채점기준을 하나 이상 선택하세요. 여러 개를 선택하면 먼저 균등 배분되며, 채점기준별 반영 배점을 직접 조정할 수 있습니다.</small></div><div class="example-evaluation-options" data-example-evaluation-elements></div><p data-example-evaluation-summary>2번의 채점기준을 불러오는 중입니다.</p></section>
     <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div class="example-point-auto-builder"><div><strong>부분점수 자동 구성</strong><span>총 배점과 개별 기준 수를 입력하면 0.5점 단위로 균등 배분합니다.</span></div><label>총 합산 배점 <b><input data-example-auto-total type="number" min="0.5" max="1000" step="0.5" value="${maxScore || ""}" placeholder="예: 6"><small>점</small></b></label><label>개별 기준 수 <b><input data-example-auto-count type="number" min="1" max="20" step="1" value="${pointItems.length}"><small>개</small></b></label><button type="button" data-build-example-points>균등 배점 만들기</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>예: 총 6점·기준 3개는 각 2점으로 생성되며 AI가 충족한 점수만 합산합니다. 배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점입니다.</p></section>
     <label>예시 답안 <small>풀이 과정과 정답을 교사가 바로 이해할 수 있는 문장으로 입력하세요.</small><textarea name="exampleText" rows="4" placeholder="예: 책가도에 사용된 물건과 각각의 상징적 의미를 알맞게 설명한다.">${escapeHtml(friendlyAnswerText)}</textarea></label>
     <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>예시 답안 설명 <small>표·그림·도형·그래프 등 글로 보완할 내용을 입력하세요.</small><textarea name="exampleVisual" rows="3" placeholder="예: 표의 물건과 의미가 각 행에 짝지어져 있으며, 그림의 주요 특징이 정확하다.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
@@ -1279,12 +1282,24 @@ function rubricAllocationsFromLinkedExamples(elements, examples) {
     const questionKey = questionScoreGroupKey(questionNumber);
     const score = positiveDesignScore(example?.maxScore);
     if (!questionKey || !score) continue;
-    const linkedIndexes = [...new Set((Array.isArray(example?.evaluationElementIds) ? example.evaluationElementIds : [])
-      .map((id) => indexesById.get(String(id)))
-      .filter(Number.isInteger))];
-    if (linkedIndexes.length) {
-      const scores = allocateQuestionScore(score, linkedIndexes.length);
-      linkedIndexes.forEach((index, allocationIndex) => {
+    const linkedEntries = [];
+    const seenIndexes = new Set();
+    for (const rawId of Array.isArray(example?.evaluationElementIds) ? example.evaluationElementIds : []) {
+      const id = String(rawId);
+      const index = indexesById.get(id);
+      if (!Number.isInteger(index) || seenIndexes.has(index)) continue;
+      seenIndexes.add(index);
+      linkedEntries.push({ id, index });
+    }
+    if (linkedEntries.length) {
+      const providedScores = example?.evaluationElementScores && typeof example.evaluationElementScores === "object" && !Array.isArray(example.evaluationElementScores)
+        ? example.evaluationElementScores
+        : {};
+      const hasCompleteScores = linkedEntries.every(({ id }) => Object.prototype.hasOwnProperty.call(providedScores, id));
+      const scores = hasCompleteScores
+        ? linkedEntries.map(({ id }) => positiveDesignScore(providedScores[id]))
+        : allocateQuestionScore(score, linkedEntries.length);
+      linkedEntries.forEach(({ index }, allocationIndex) => {
         allocations.set(index, (allocations.get(index) || 0) + scores[allocationIndex]);
         if (!questionLabels.get(index).includes(questionNumber)) questionLabels.get(index).push(questionNumber);
       });
@@ -1323,6 +1338,16 @@ function parsedExampleEvaluationElementIds(row) {
   }
 }
 
+function parsedExampleEvaluationElementScores(row) {
+  try {
+    const parsed = JSON.parse(row.dataset.evaluationElementScores || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).map(([id, score]) => [String(id), positiveDesignScore(score)]));
+  } catch {
+    return {};
+  }
+}
+
 function inferredExampleEvaluationElementIds(questionNumber, elements) {
   const exactQuestion = String(questionNumber || "").replace(/\s+/g, "");
   const exact = elements.filter((item) => String(item.questionNumber || "").replace(/\s+/g, "") === exactQuestion);
@@ -1338,38 +1363,55 @@ function syncExampleEvaluationElementOptions(form) {
     const container = row.querySelector("[data-example-evaluation-elements]");
     if (!container) return;
     const currentInputs = Array.from(container.querySelectorAll('[name="exampleEvaluationElement"]'));
+    const currentScoreInputs = Array.from(container.querySelectorAll('[name="exampleEvaluationScore"]'));
     const currentIds = currentInputs.length
       ? currentInputs.filter((input) => input.checked).map((input) => input.value)
       : parsedExampleEvaluationElementIds(row);
+    const currentScores = currentScoreInputs.length
+      ? Object.fromEntries(currentScoreInputs.map((input) => [String(input.dataset.rubricId || ""), positiveDesignScore(input.value)]))
+      : parsedExampleEvaluationElementScores(row);
     const selectedIds = row.dataset.evaluationLinksTouched === "true"
       ? currentIds
       : inferredExampleEvaluationElementIds(row.querySelector('[name="exampleQuestion"]')?.value, elements);
     const selected = new Set(selectedIds);
     const total = Array.from(row.querySelectorAll('[name="examplePointScore"]')).reduce((sum, input) => sum + positiveDesignScore(input.value), 0);
     const selectedElementIds = elements.filter((item) => selected.has(item.id)).map((item) => item.id);
-    const selectedScores = allocateQuestionScore(total, selectedElementIds.length || 1);
+    const keepManualScores = row.dataset.evaluationScoresTouched === "true"
+      && selectedElementIds.every((id) => Object.prototype.hasOwnProperty.call(currentScores, id));
+    const selectedScores = keepManualScores
+      ? selectedElementIds.map((id) => positiveDesignScore(currentScores[id]))
+      : allocateQuestionScore(total, selectedElementIds.length || 1);
     const scoreById = new Map(selectedElementIds.map((id, index) => [id, selectedScores[index] || 0]));
     container.innerHTML = elements.length
       ? elements.map((item) => {
         const questionLabel = item.questionNumber ? `연결 문제 ${escapeHtml(item.questionNumber)}` : "문제 번호 자동 입력";
         const scoreLabel = selected.has(item.id) ? ` · ${formatScore(scoreById.get(item.id) || 0)}점 반영` : "";
-        return `<label class="example-evaluation-option"><input name="exampleEvaluationElement" type="checkbox" value="${escapeHtml(item.id)}" ${selected.has(item.id) ? "checked" : ""}><span><strong>${escapeHtml(item.evaluationElement)}</strong><small>${questionLabel}${scoreLabel}</small></span></label>`;
+        const scoreInput = selected.has(item.id)
+          ? `<label class="example-evaluation-score"><span>반영 배점</span><b><input name="exampleEvaluationScore" data-rubric-id="${escapeHtml(item.id)}" type="number" min="0.5" step="0.5" value="${scoreById.get(item.id) || ""}" required><small>점</small></b></label>`
+          : "";
+        return `<div class="example-evaluation-option-card ${selected.has(item.id) ? "is-selected" : ""}"><label class="example-evaluation-option"><input name="exampleEvaluationElement" type="checkbox" value="${escapeHtml(item.id)}" ${selected.has(item.id) ? "checked" : ""}><span><strong>${escapeHtml(item.evaluationElement)}</strong><small>${questionLabel}${scoreLabel}</small></span></label>${scoreInput}</div>`;
       }).join("")
       : '<span class="example-evaluation-empty">2번에서 채점기준을 먼저 추가해 주세요.</span>';
     const checkedIds = Array.from(container.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value);
+    const checkedScores = Object.fromEntries(Array.from(container.querySelectorAll('[name="exampleEvaluationScore"]')).map((input) => [String(input.dataset.rubricId || ""), positiveDesignScore(input.value)]));
     row.dataset.evaluationElementIds = JSON.stringify(checkedIds);
+    row.dataset.evaluationElementScores = JSON.stringify(checkedScores);
     const summary = row.querySelector("[data-example-evaluation-summary]");
+    const linker = row.querySelector(".example-evaluation-linker");
     if (!summary) return;
     if (!checkedIds.length) {
+      linker?.classList.remove("is-warning");
       summary.textContent = "채점기준을 선택하지 않으면 문제 번호가 같은 채점기준에 배점이 자동 배분됩니다.";
       return;
     }
-    const scores = allocateQuestionScore(total, checkedIds.length);
-    const names = checkedIds.map((id, index) => {
+    const reflectedTotal = checkedIds.reduce((sum, id) => sum + positiveDesignScore(checkedScores[id]), 0);
+    const scoresMatch = total > 0 && Math.abs(reflectedTotal - total) <= 0.001;
+    linker?.classList.toggle("is-warning", !scoresMatch);
+    const names = checkedIds.map((id) => {
       const name = elements.find((item) => item.id === id)?.evaluationElement || "평가요소";
-      return `${name} ${formatScore(scores[index] || 0)}점`;
+      return `${name} ${formatScore(checkedScores[id] || 0)}점`;
     });
-    summary.textContent = `${names.join(" · ")}으로 반영됩니다.`;
+    summary.textContent = `${names.join(" · ")} · 합계 ${formatScore(reflectedTotal)}점 / 문제 총 ${formatScore(total)}점${scoresMatch ? " · 일치" : " · 배점 합계를 맞춰 주세요"}`;
   });
 }
 
@@ -1413,6 +1455,7 @@ function syncQuestionScoreUI(form) {
     questionNumber: row.querySelector('[name="exampleQuestion"]')?.value.trim() || "",
     maxScore: Array.from(row.querySelectorAll('[name="examplePointScore"]')).reduce((sum, input) => sum + positiveDesignScore(input.value), 0),
     evaluationElementIds: Array.from(row.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value),
+    evaluationElementScores: Object.fromEntries(Array.from(row.querySelectorAll('[name="exampleEvaluationScore"]')).map((input) => [String(input.dataset.rubricId || ""), positiveDesignScore(input.value)])),
   }));
   const linkedAllocations = rubricAllocationsFromLinkedExamples(elements, linkedExamples);
   const allocations = linkedAllocations.allocations;
@@ -1531,9 +1574,17 @@ function bindDesignTab(course) {
     handleAchievementCurriculumChange(event, form, course);
     if (event.target.matches('[name="exampleEvaluationElement"]')) {
       const row = event.target.closest("[data-example-row]");
-      if (row) row.dataset.evaluationLinksTouched = "true";
+      if (row) {
+        row.dataset.evaluationLinksTouched = "true";
+        row.dataset.evaluationScoresTouched = "false";
+      }
       const linkedGroup = Array.from(form.querySelectorAll("[data-rubric-group]")).find((group, index) => (group.dataset.groupId || `rubric-${index + 1}`) === event.target.value);
       if (linkedGroup) linkedGroup.dataset.exampleQuestionAuto = "true";
+      syncQuestionScoreUI(form);
+    }
+    if (event.target.matches('[name="exampleEvaluationScore"]')) {
+      const row = event.target.closest("[data-example-row]");
+      if (row) row.dataset.evaluationScoresTouched = "true";
       syncQuestionScoreUI(form);
     }
     if (event.target.matches("[data-design-file-input]")) {
@@ -2321,12 +2372,16 @@ function collectDesignForm(form, existing) {
       score: positiveDesignScore(point.querySelector('[name="examplePointScore"]').value),
       criterion: point.querySelector('[name="examplePointCriterion"]').value.trim(),
     }));
+    const evaluationElementIds = Array.from(row.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value);
+    const evaluationElementScores = Object.fromEntries(Array.from(row.querySelectorAll('[name="exampleEvaluationScore"]')).map((input) => [String(input.dataset.rubricId || ""), positiveDesignScore(input.value)]));
     return {
       id,
       questionNumber: row.querySelector('[name="exampleQuestion"]').value.trim(),
       maxScore: pointItems.reduce((sum, point) => sum + point.score, 0),
       pointItems,
-      evaluationElementIds: Array.from(row.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value),
+      evaluationElementIds,
+      evaluationElementScores,
+      evaluationElementScoresManual: row.dataset.evaluationScoresTouched === "true",
       answerText: toTeacherFriendlyMath(row.querySelector('[name="exampleText"]').value),
       mathNotation: toTeacherFriendlyMath(row.querySelector('[name="exampleMath"]').value),
       visualDescription: toTeacherFriendlyMath(row.querySelector('[name="exampleVisual"]').value),
@@ -2339,6 +2394,11 @@ function collectDesignForm(form, existing) {
   if (rubricCriteria.some((item) => new Set(item.scoreLevels.map((level) => String(level.score))).size !== item.scoreLevels.length)) throw new Error("같은 평가요소 안에서는 서로 다른 배점을 입력해 주세요.");
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");
   if (exampleAnswers.some((item) => !item.pointItems.length || item.pointItems.some((point) => !point.score || !point.criterion || Math.abs(point.score * 2 - Math.round(point.score * 2)) > 0.001))) throw new Error("각 예시답안의 모든 배점 항목에 0.5점 단위의 점수와 획득 기준을 입력해 주세요.");
+  const invalidLinkedScoreExample = exampleAnswers.find((item) => item.evaluationElementIds.length && (
+    item.evaluationElementIds.some((id) => !item.evaluationElementScores[id] || Math.abs(item.evaluationElementScores[id] * 2 - Math.round(item.evaluationElementScores[id] * 2)) > 0.001)
+    || Math.abs(item.evaluationElementIds.reduce((sum, id) => sum + positiveDesignScore(item.evaluationElementScores[id]), 0) - item.maxScore) > 0.001
+  ));
+  if (invalidLinkedScoreExample) throw new Error(`문제 ${invalidLinkedScoreExample.questionNumber}의 채점기준별 반영 배점 합계가 문제 총 배점과 같아야 합니다. 각 배점은 0.5점 단위로 입력해 주세요.`);
   if (new Set(exampleAnswers.map((item) => item.questionNumber)).size !== exampleAnswers.length) throw new Error("예시답안의 문제 번호는 중복되지 않게 한 번씩만 입력해 주세요.");
   const exampleScores = exampleQuestionScoreMap(exampleAnswers);
   const rubricQuestionScores = rubricQuestionMaxScoreMap(rubricCriteria);
