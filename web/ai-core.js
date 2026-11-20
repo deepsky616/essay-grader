@@ -104,6 +104,7 @@
             awardedScore: { type: "number", description: "이 세부 문항에서 획득한 점수" },
             maxScore: { type: "number", description: "3 문제별 예시답안에 입력된 이 세부 문항의 배점" },
             scoreStatus: { type: "string", enum: ["full", "partial", "none"] },
+            answerReading: { type: "string", description: "이 세부 문항에 학생이 실제로 쓴 답과 계산 단계. 인쇄된 문제식은 좌변으로 붙일 수 있으나 학생의 우변은 그대로 전사" },
             evidence: { type: "string", description: "학생 답안에서 확인한 이 세부 문항의 채점 근거" },
             confidence: { type: "string", enum: ["high", "medium", "low"] },
             pointResults: {
@@ -124,7 +125,7 @@
               },
             },
           },
-          required: ["exampleAnswerId", "questionNumber", "awardedScore", "maxScore", "scoreStatus", "evidence", "confidence", "pointResults"],
+          required: ["exampleAnswerId", "questionNumber", "awardedScore", "maxScore", "scoreStatus", "answerReading", "evidence", "confidence", "pointResults"],
         },
       },
       needsTeacherReview: { type: "boolean" },
@@ -767,12 +768,12 @@
       delete parsed.achievementResults;
     }
     const result = normalizeGradingResult(parsed, { ...metadata, summarizeGradingLocally: true }, selectedModel);
-    if (result.hasMissingScores) {
+    if (result.hasMissingScores && !result.fractionMathIssues.length) {
       result.summary = "확인된 문항의 채점 결과를 저장했습니다. 채점 결과를 받지 못한 항목은 교사가 답안 원본을 확인해 주세요.";
       result.strengths = [];
       result.improvements = [];
       result.nextSteps = [];
-    } else if (!result.summary || missing.length) {
+    } else if (!result.fractionMathIssues.length && (!result.summary || missing.length)) {
       result.summary = result.questionResults.map((row) => row.feedback).filter(Boolean).slice(0, 3).join(" ")
         || "문항별 배점과 채점 근거를 확인해 주세요.";
     }
@@ -1088,6 +1089,8 @@
         pointItems,
         evaluationElementIds,
         evaluationElementScores,
+        answerText: text(item?.answerText),
+        mathNotation: text(item?.mathNotation),
       };
     });
     if (!metadata.precisionReview) return examples;
@@ -1198,7 +1201,7 @@
     const answerReading = text(result.answerReading);
     const evidence = text(result.evidence);
     const suspicious = /판독 불가|확인 불가|식별 불가|결과 없음|잘림|흐림|겹친|추정|불확실/;
-    if (result.confidence !== "high" || result.missingResult || result.scoreAdjusted) return true;
+    if (result.confidence !== "high" || result.missingResult || result.scoreAdjusted || result.fractionMathIssue) return true;
     if (!answerReading || suspicious.test(`${answerReading} ${evidence}`)) return true;
     const clearNoResponse = /무응답|미응답|답안 없음|작성하지 않|빈칸/.test(`${answerReading} ${evidence}`);
     if (clearNoResponse) return !evidence;
@@ -1226,6 +1229,232 @@
     return /분수|대분수|가분수|진분수|분자|분모|약분|통분|분수선|몫을\s*분수|\\frac\s*\{|\d+\s*분의\s*\d+|\d+\s*[\/⁄]\s*\d+|[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]/.test(source);
   }
 
+  function normalizeArithmetic(value) {
+    return text(value).replace(/(\d)(?=[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])/g, "$1 ")
+      .normalize("NFKC")
+      .replace(/\\(?:d|t)?frac\s*\{(\d+)\}\s*\{(\d+)\}/g, "$1/$2")
+      .replace(/\\times\b/g, "×").replace(/\\div\b/g, "÷")
+      .replace(/(\d+)\s*분의\s*(\d+)/g, "$2/$1")
+      .replace(/(\d+)\s*(?:와|과)\s*(?=\d+\s*[\/⁄])/g, "$1 ")
+      .replace(/[⁄∕]/g, "/").replace(/[−–]/g, "-").replace(/[✕⨯·]/g, "×")
+      .replace(/(?<=[0-9)])\s*[xX]\s*(?=[0-9(])/g, "×");
+  }
+
+  function rational(numerator, denominator = 1n) {
+    if (denominator === 0n) throw new Error("zero denominator");
+    if (denominator < 0n) return rational(-numerator, -denominator);
+    let left = numerator < 0n ? -numerator : numerator;
+    let right = denominator;
+    while (right) [left, right] = [right, left % right];
+    return { n: numerator / left, d: denominator / left };
+  }
+
+  function rationalLabel({ n, d }) { return d === 1n ? String(n) : `${n}/${d}`; }
+
+  // Parse only elementary numeric expressions. Never evaluate text as JavaScript.
+  function parseArithmetic(source) {
+    if (!source || source.length > 96) return null;
+    let rest = source.trim();
+    const consume = (pattern) => {
+      const match = rest.match(pattern);
+      if (match) rest = rest.slice(match[0].length).trimStart();
+      return match;
+    };
+    function atom() {
+      if (consume(/^\+/)) return atom();
+      if (consume(/^-/)) {
+        const child = atom();
+        return { ...child, value: rational(-child.value.n, child.value.d), key: `-${child.key}` };
+      }
+      if (consume(/^\(/)) {
+        const inner = expression(0);
+        if (!consume(/^\)/)) throw new Error("unclosed group");
+        return inner;
+      }
+      const fraction = consume(/^(?:(\d{1,12})[ \t]+)?(\d{1,12})[ \t]*\/[ \t]*(\d{1,12})(?!\d)/);
+      const number = fraction ? null : consume(/^(\d{1,12})(?:\.(\d{1,12}))?(?![\d.])/);
+      if (!fraction && !number) throw new Error("expected number");
+      let value;
+      if (fraction) {
+        const denominator = BigInt(fraction[3]);
+        value = rational(BigInt(fraction[1] || 0) * denominator + BigInt(fraction[2]), denominator);
+      } else {
+        const decimals = number[2] || "";
+        value = rational(BigInt(number[1] + decimals), 10n ** BigInt(decimals.length));
+      }
+      if (consume(/^%/)) value = rational(value.n, value.d * 100n);
+      return { value, key: rationalLabel(value), multiply: false, fraction: Boolean(fraction) };
+    }
+    function expression(minimumPrecedence) {
+      let left = atom();
+      const precedence = { "+": 1, "-": 1, "×": 2, "*": 2, "÷": 2, "/": 2 };
+      while (precedence[rest[0]] >= minimumPrecedence) {
+        const operator = rest[0];
+        rest = rest.slice(1).trimStart();
+        const right = expression(precedence[operator] + 1);
+        const { n: a, d: b } = left.value;
+        const { n: c, d: e } = right.value;
+        const multiply = operator === "×" || operator === "*";
+        const value = multiply ? rational(a * c, b * e) : operator === "÷" || operator === "/" ? rational(a * e, b * c)
+          : rational(a * e + (operator === "-" ? -b * c : b * c), b * e);
+        const keys = [left.key, right.key];
+        if (multiply) keys.sort();
+        left = {
+          value, key: `(${keys.join(multiply ? "×" : operator)})`,
+          multiply: multiply || left.multiply || right.multiply,
+          fraction: left.fraction || right.fraction,
+        };
+      }
+      return left;
+    }
+    try {
+      const result = expression(1);
+      return rest ? null : result;
+    } catch {
+      return null;
+    }
+  }
+
+  function arithmeticChains(value) {
+    if (!/[=＝]/.test(text(value))) return [];
+    const source = normalizeArithmetic(value).slice(0, 4000)
+      .replace(/^[ \t]*(?:\d{1,3}[ \t]*[.-][ \t]*)?\([ \t]*\d{1,3}[ \t]*\)[ \t]+(?=\d)/gm, "")
+      .replace(/[\r\n]+[ \t]*(?==)|(?<==)[ \t]*[\r\n]+/g, " ");
+    return (source.match(/[\d+\-×*÷=/().% \t]+/g) || []).flatMap((part) => {
+      const written = part.trim().replace(/^[.]+|[.]+$/g, "").trim();
+      if (!written.includes("=")) return [];
+      const pieces = written.split("=").map((value) => value.trim());
+      if (pieces.length > 12) return [];
+      const sides = pieces.map(parseArithmetic);
+      if (!sides.every(Boolean)) return [];
+      const labels = sides.map((side) => rationalLabel(side.value));
+      const falseStep = labels.findIndex((label, index) => index > 0 && label !== labels[index - 1]);
+      return [{ written, pieces, first: sides[0], initial: labels[0], final: labels.at(-1), falseStep }];
+    });
+  }
+
+  function isFractionProduct(chain) {
+    return chain.first.multiply && chain.first.fraction;
+  }
+
+  function looksLikeFractionProduct(value) {
+    const source = normalizeArithmetic(value);
+    return source.includes("=") && /[×*]/.test(source) && /\d\s*\//.test(source);
+  }
+
+  function answerNumber(value) {
+    const source = normalizeArithmetic(value)
+      .replace(/^(?:최종\s*답|답안|정답|답|결과)\s*[:：]?\s*/, "")
+      .replace(/(?:입니다|이다|임)\.?$|\.$/g, "").trim();
+    const parsed = parseArithmetic(source);
+    return parsed && /^[+-]?(?:\d+(?:[ \t]+\d+)?\s*\/\s*\d+|\d+(?:\.\d+)?)$/.test(source)
+      ? rationalLabel(parsed.value) : null;
+  }
+
+  function fractionReference(example) {
+    const references = arithmeticChains(`${example.mathNotation}\n${example.answerText}`).filter(isFractionProduct);
+    const unique = new Map(references.map((chain) => [chain.first.key, chain]));
+    if (!unique.size) {
+      const left = normalizeArithmetic(example.mathNotation);
+      const expression = parseArithmetic(left);
+      if (expression?.multiply && expression.fraction) return { key: expression.key, value: rationalLabel(expression.value), left };
+      const finalAnswers = [example.mathNotation, example.answerText]
+        .filter((value) => /\d\s*\//.test(normalizeArithmetic(value)))
+        .map(answerNumber).filter(Boolean);
+      return finalAnswers.length && finalAnswers.every((value) => value === finalAnswers[0])
+        ? { key: null, value: finalAnswers[0], left: "" } : null;
+    }
+    if (unique.size > 1) return null;
+    const reference = unique.values().next().value;
+    return { key: reference.first.key, value: reference.initial, left: reference.pieces[0] };
+  }
+
+  function evaluateFractionAnswer(value, reference, allowResultOnly) {
+    const chains = arithmeticChains(value);
+    const matched = reference ? chains.filter((chain) => chain.first.key === reference.key) : [];
+    const candidates = matched.length ? matched : chains.filter((chain) => isFractionProduct(chain) || (reference && allowResultOnly));
+    const unique = new Map(candidates.map((chain) => [chain.written, chain]));
+    if (unique.size > 1) return { pending: true, message: "서로 다른 계산식이 읽혔습니다. 이 세부 문항의 학생 필기를 확인해 주세요." };
+    const chain = unique.values().next().value;
+    if (reference && !reference.key && chain && isFractionProduct(chain) && chain.initial !== reference.value) {
+      return { pending: true, observed: chain.written, message: "읽힌 문제 식의 계산값과 등록된 예시답이 다릅니다. 문제 식과 예시답을 확인해 주세요." };
+    }
+    const expected = reference?.value || chain?.initial;
+    const final = chain?.final ?? (allowResultOnly ? answerNumber(value) : null);
+    if (expected == null || final == null) return looksLikeFractionProduct(value)
+      ? { pending: true, message: "분수 계산식의 일부를 검산할 수 없습니다. 학생이 쓴 수와 기호를 확인해 주세요." } : null;
+    const finalCorrect = final === expected;
+    const processCorrect = chain ? chain.falseStep < 0 && (!reference || chain.initial === expected) : null;
+    const observed = chain?.written || normalizeArithmetic(value);
+    if (finalCorrect && processCorrect !== false) return { finalCorrect, processCorrect, observed };
+    const badStep = chain?.falseStep > 0 ? `‘${chain.pieces[chain.falseStep - 1]} = ${chain.pieces[chain.falseStep]}’은 양쪽 값이 다릅니다. ` : "";
+    const left = reference?.left || chain?.pieces[0] || "문제 식";
+    const resultMessage = finalCorrect ? "최종 답은 맞지만 중간 등식에 오류가 있습니다."
+      : `${left}의 정확한 값은 ${expected}이며, 학생의 최종 답 ${final}과 일치하지 않습니다.`;
+    return { finalCorrect, processCorrect, observed, message: `${badStep}${resultMessage}` };
+  }
+
+  function isIndependentFractionCriterion(criterion) {
+    const label = text(criterion);
+    return /원리|정의|서술|설명|단위|식을?\s*(?:바르게\s*)?(?:세우|세움|만들|쓰|작성)|식\s*세우기/.test(label)
+      && !/정답|최종\s*값|계산\s*결과|풀이\s*과정/.test(label);
+  }
+
+  function fractionScoreKind(criterion) {
+    const label = text(criterion);
+    if (isIndependentFractionCriterion(label)) return "";
+    const process = /풀이|과정|중간|등식|약분|계산법/.test(label);
+    const final = /최종|결과|정답|핵심\s*답|답을/.test(label);
+    if (process) return final ? "both" : "process";
+    if (/계산/.test(label) && !final) return "both";
+    return final || /정확|계산|구했|구함|구하기/.test(label) ? "final" : "";
+  }
+
+  function fractionMathFails(check, kind) {
+    if (kind === "both") return check.finalCorrect === false || check.processCorrect === false;
+    if (kind === "process") return check.processCorrect === false;
+    return kind === "final" && check.finalCorrect === false;
+  }
+
+  function studentEquationEvidence(evidence) {
+    return text(evidence).split(/올바른\s*답은|정확한\s*값은|정답은/, 1)[0];
+  }
+
+  function exampleMatchesQuestion(example, question) {
+    return example.evaluationElementIds.length ? example.evaluationElementIds.includes(question.criterionId)
+      : questionGroupKeys(question.questionNumber).includes(questionGroupKey(example.questionNumber));
+  }
+
+  function checkExampleFractionAnswer(example, item, questions, examples) {
+    const reference = fractionReference(example);
+    const directReadings = [text(item?.answerReading), studentEquationEvidence(item?.evidence),
+      ...(Array.isArray(item?.pointResults) ? item.pointResults.map((point) => studentEquationEvidence(point?.evidence)) : [])];
+    for (const [index, reading] of directReadings.entries()) {
+      // Only the explicitly transcribed answer may be checked as a bare number.
+      const check = evaluateFractionAnswer(reading, reference, index === 0);
+      if (check) {
+        return {
+          ...check,
+          pending: Boolean(check.pending) || Boolean(check.message && item?.confidence && item.confidence !== "high"),
+        };
+      }
+    }
+    for (const question of questions.filter((row) => exampleMatchesQuestion(example, row))) {
+      const reading = question.fractionMathReading;
+      const matching = reference ? arithmeticChains(reading).filter((chain) => chain.first.key === reference.key) : [];
+      const singleExample = examples.filter((other) => exampleMatchesQuestion(other, question)).length === 1;
+      const sameQuestion = singleExample || (text(question.questionNumber) === text(example.questionNumber)
+        && /[()]/.test(example.questionNumber));
+      if (!matching.length && !sameQuestion) continue;
+      const check = evaluateFractionAnswer(matching.length ? matching.map((chain) => chain.written).join("\n") : reading, reference, sameQuestion);
+      if (check) return { ...check, pending: Boolean(check.pending) || Boolean(check.message && question.confidence !== "high") };
+    }
+    if (reference && !/무응답|미응답|빈칸/.test(text(item?.answerReading)) && !item?.missingResult) {
+      return { pending: true, message: "분수 계산식 또는 최종 답을 이 세부 문항에서 확인하지 못했습니다. 학생 답안을 확인해 주세요." };
+    }
+    return null;
+  }
+
   function mergePrecisionGradingResult(baseResult, precisionResult, criterionIds, metadata = {}, model = MODEL) {
     const targetIds = new Set(textList(criterionIds));
     if (!targetIds.size) return baseResult;
@@ -1235,9 +1464,14 @@
     const precisionRows = new Map((Array.isArray(precisionResult?.questionResults) ? precisionResult.questionResults : [])
       .map((item) => [text(item?.criterionId), item]));
     const questionResults = rubricCriteria.map((rubric) => {
+      const previous = baseRows.get(rubric.id);
       const reviewed = precisionRows.get(rubric.id);
-      return targetIds.has(rubric.id) && reviewed && !reviewed.missingResult
-        ? reviewed : baseRows.get(rubric.id);
+      if (!targetIds.has(rubric.id) || !reviewed || reviewed.missingResult) return previous;
+      const hadInvalidChain = previous?.fractionMathIssue
+        && arithmeticChains(previous.fractionMathReading).some((chain) => isFractionProduct(chain) && chain.falseStep > 0);
+      return hadInvalidChain && !reviewed.fractionMathIssue ? {
+        ...reviewed, fractionMathPending: true,
+      } : reviewed;
     }).filter(Boolean);
     const baseExampleRows = new Map((Array.isArray(baseResult?.exampleAnswerResults) ? baseResult.exampleAnswerResults : [])
       .map((item) => [text(item?.exampleAnswerId), item]));
@@ -1248,6 +1482,12 @@
       const base = baseExampleRows.get(id);
       const reviewed = precisionExampleRows.get(id);
       if (!reviewed || reviewed.missingResult) return base;
+      const observedBefore = base?.fractionMathCheck?.observed;
+      const observedAfter = reviewed.fractionMathCheck?.observed;
+      if ((base?.fractionMathCheck?.finalCorrect === false || base?.fractionMathCheck?.processCorrect === false)
+        && (!observedAfter || (observedBefore !== observedAfter && !reviewed.fractionMathCheck?.message))) {
+        return { ...base, fractionMathPending: true };
+      }
       if (!base || !reviewed.pointResults?.some((point) => point.missingResult)) return reviewed;
       const previousPoints = new Map((base.pointResults || []).map((point) => [point.pointItemId, point]));
       const pointResults = reviewed.pointResults.map((point) => point.missingResult ? previousPoints.get(point.pointItemId) || point : point);
@@ -1451,6 +1691,7 @@ ${JSON.stringify(targets)}
 5-2. ‘A: B’처럼 첫째 칸과 둘째 칸의 정확한 짝을 요구하는 배점 기준은 같은 행에서 첫째 칸=A이고 둘째 칸=B일 때만 충족합니다. 둘째 칸의 의미만 같거나 서로 다른 행에서 A와 B가 각각 보이면 0점입니다. 예: 정답이 ‘수박: 자손 번창’일 때 ‘공작깃털: 자손 번창’은 오답이며, ‘수박: 장수’와 다른 행의 ‘자손 번창’을 합쳐 정답 처리할 수 없습니다. pointResults.evidence에는 판정한 행 번호와 두 셀 값을 함께 적으세요.
 6. 도형 문항은 점의 위치, 선분의 연결, 대칭축과의 대응, 격자 칸 수를 빈 답안지와 대조해 판정합니다. 흐린 연필선·겹친 선·지운 흔적은 낮은 confidence와 구체적인 교사 검토 사유를 남기세요.
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 낮은 confidence와 구체적인 근거를 기록합니다.
+7-1. 분수 계산은 세부 문항별 answerReading에 학생의 중간 계산과 최종 답을 등호 순서대로 전사하세요. 학생이 우변만 썼다면 평가지에 인쇄된 원래 식을 첫 등호의 좌변으로 붙이세요. 보이는 수를 정답에 맞춰 바꾸지 말고, 교사 예시의 등식은 학생 답안으로 옮기지 마세요. 각 등호의 값과 최종 답을 각각 검산하고, 식 세우기·풀이 과정·최종 답의 배점 기준을 구분하세요.
 ${batch ? buildGradingBatchInstructions(batch, safeMetadata) : `
 ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
     ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
@@ -1488,7 +1729,7 @@ ${JSON.stringify(safeMetadata)}
     }
     return `8. 아래 대상 ID만 각각 한 번씩 반환하세요. 다른 문항은 참고자료입니다. ID를 그대로 복사하고, 무응답·판독 불가도 항목을 생략하지 마세요.
 9. criterionIds가 있으면 questionResults에 criterionId, answerReading, tableRows(표가 아니면 []), score, evidence, feedback, confidence를 반환하세요. 교사의 채점기준을 적용하고 연결된 예시답안의 배점과 배분 한도를 참고하세요.
-10. pointItems가 있으면 exampleAnswerResults에 exampleAnswerId와 pointResults를 반환하세요. 각 배점 항목에는 pointItemId, earned(배점 기준을 충족했으면 true), evidence, confidence를 적으세요. 답이나 근거를 검증할 수 없으면 추측하지 마세요.
+10. pointItems가 있으면 exampleAnswerResults에 exampleAnswerId, 세부 문항별 answerReading, pointResults를 반환하세요. 각 배점 항목에는 pointItemId, earned(배점 기준을 충족했으면 true), evidence, confidence를 적으세요. 답이나 근거를 검증할 수 없으면 추측하지 마세요.
 11. 분수는 분자·분모·대분수의 자연수와 필기된 식을 확인하세요. 입력에 확대본 또는 사전 판독이 있으면 원본 및 빈 답안지와 함께 대조하세요.
 12. 학생 신원은 응답하지 마세요. 근거와 피드백은 한국어로 간결하게 쓰세요. 총점 및 성취수준은 프로그램이 계산합니다.
 채점 대상(JSON): ${JSON.stringify({ criterionIds, pointItems })}
@@ -1508,7 +1749,7 @@ ${metadata.precisionReview ? "정밀 재검토 요청입니다. 지정 문항의
     }
     if (batch.some((target) => target.point)) {
       const example = gradingSchema.properties.exampleAnswerResults.items;
-      const item = compactObject(example, ["exampleAnswerId", "pointResults"]);
+      const item = compactObject(example, ["exampleAnswerId", "answerReading", "pointResults"]);
       item.properties.pointResults = { type: "array", items: compactObject(example.properties.pointResults.items,
         ["pointItemId", "earned", "evidence", "confidence"]) };
       properties.exampleAnswerResults = { type: "array", items: item };
@@ -1661,11 +1902,16 @@ ${JSON.stringify(roster)}
       const confidence = confidenceOrder[preConfidence] < confidenceOrder[finalConfidence] ? preConfidence : finalConfidence;
       const itemTableRows = normalizeTableRows(item?.tableRows);
       if (text(preReading?.reviewReason)) reviewReasons.push(`${matchedRubric?.questionNumber || item?.questionNumber || index + 1}번 사전 판독: ${text(preReading.reviewReason)}`);
+      const answerReading = text(item?.answerReading) || text(preReading?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가");
+      const fractionMathReading = [text(item?.answerReading), studentEquationEvidence(item?.evidence), text(item?.fractionMathReading)]
+        .find(looksLikeFractionProduct) || answerReading;
       return {
         criterionId,
         questionNumber: matchedRubric?.questionNumber || String(item?.questionNumber || index + 1),
         evaluationElement: matchedRubric?.evaluationElement || text(item?.evaluationElement),
-        answerReading: text(item?.answerReading) || text(preReading?.answerReading) || text(item?.evidence) || (missing ? "AI 판독 결과 없음" : "판독 불가"),
+        answerReading,
+        fractionMathReading,
+        fractionMathPending: Boolean(item?.fractionMathPending),
         tableRows: itemTableRows.length ? itemTableRows : normalizeTableRows(preReading?.tableRows),
         visualDescription: text(preReading?.visualDescription),
         criterion: selectedLevel?.criterion || text(item?.criterion) || (missing ? "AI가 이 평가요소를 반환하지 않음" : ""),
@@ -1679,6 +1925,7 @@ ${JSON.stringify(roster)}
       };
     });
     const exampleAnswerResults = normalizeExampleAnswerResults(raw.exampleAnswerResults, metadata, questionResults, reviewReasons);
+    const issueMessages = applyRubricFractionChecks(questionResults, rubricCriteria, responseExamples, exampleAnswerResults, reviewReasons);
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
     const rawAchievementResults = Array.isArray(raw.achievementResults) ? raw.achievementResults : [];
     const achievementResults = achievementGroups.map((group, index) => {
@@ -1698,7 +1945,7 @@ ${JSON.stringify(roster)}
         standard: text(group?.standard),
         achievementLevel: achievementLevel || "검토 필요",
         evidence: text(matched?.evidence),
-        feedback: text(matched?.feedback),
+        feedback: issueMessages.length ? "" : text(matched?.feedback),
         confidence: ["high", "medium", "low"].includes(matched?.confidence) ? matched.confidence : metadata.summarizeGradingLocally ? "high" : "low",
       };
     });
@@ -1727,15 +1974,16 @@ ${JSON.stringify(roster)}
       totalScore,
       maxScore: assessmentMax,
       overallAchievementLevel: text(raw.overallAchievementLevel) || "검토 필요",
-      summary: text(raw.summary),
-      strengths: textList(raw.strengths),
-      improvements: textList(raw.improvements),
-      nextSteps: textList(raw.nextSteps),
+      summary: issueMessages.length ? issueMessages.join("\n") : text(raw.summary),
+      strengths: issueMessages.length ? [] : textList(raw.strengths),
+      improvements: issueMessages.length ? [] : textList(raw.improvements),
+      nextSteps: issueMessages.length ? [] : textList(raw.nextSteps),
       achievementResults,
       questionResults,
       exampleAnswerResults,
-      hasMissingScores: questionResults.some((row) => row.missingResult)
-        || exampleAnswerResults.some((row) => row.missingResult || row.pointResults.some((point) => point.missingResult)),
+      hasMissingScores: questionResults.some((row) => row.missingResult || row.fractionMathPending)
+        || exampleAnswerResults.some((row) => row.missingResult || row.fractionMathCheck?.pending || row.pointResults.some((point) => point.missingResult)),
+      fractionMathIssues: issueMessages,
       needsTeacherReview: Boolean(raw.needsTeacherReview)
         || reviewReasons.length > 0
         || questionResults.some((item) => item.confidence !== "high" || /판독 불가/.test(item.answerReading))
@@ -1847,6 +2095,10 @@ ${JSON.stringify(roster)}
       if (rawIndex < 0) rawIndex = rawItems.findIndex((item, index) => !usedIndexes.has(index) && text(item?.questionNumber) === example.questionNumber);
       if (rawIndex >= 0) usedIndexes.add(rawIndex);
       const item = rawIndex >= 0 ? rawItems[rawIndex] : null;
+      const mathCheck = item?.fractionMathPending
+        ? { pending: true, observed: text(item.answerReading), message: "1차 판독과 정밀 재판독의 분수 식 또는 답이 다릅니다. 학생 필기를 확인해 주세요." }
+        : checkExampleFractionAnswer(example, item, questionResults, expected);
+      if (mathCheck?.message) reviewReasons.push(`${example.questionNumber} 검산: ${mathCheck.message}`);
       const rawPointResults = Array.isArray(item?.pointResults) ? item.pointResults : [];
       const usedPointIndexes = new Set();
       const pointResults = example.pointItems.map((point, pointIndex) => {
@@ -1862,6 +2114,13 @@ ${JSON.stringify(roster)}
           : explicitlyEarned);
         const tableDecision = exactTablePairDecision(example, point, questionResults);
         if (tableDecision) earned = tableDecision.earned;
+        const mathPointKind = mathCheck && !tableDecision && (fractionScoreKind(point.criterion)
+          || (example.pointItems.length === 1 && !isIndependentFractionCriterion(point.criterion) ? "both" : ""));
+        const missingProcess = earned && mathCheck?.processCorrect === null && (mathPointKind === "process" || mathPointKind === "both");
+        const checkPending = mathPointKind && (mathCheck.pending || missingProcess);
+        if (missingProcess) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’의 풀이 과정을 확인할 수 없습니다.`);
+        const blockedMathPoint = mathPointKind && (checkPending || fractionMathFails(mathCheck, mathPointKind));
+        if (blockedMathPoint) earned = false;
         if (missing && !tableDecision) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’ 배점 항목 결과를 받지 못했습니다. 교사가 답안 원본을 확인해 주세요.`);
         return {
           pointItemId: point.id,
@@ -1869,9 +2128,11 @@ ${JSON.stringify(roster)}
           awardedScore: earned ? point.score : 0,
           maxScore: point.score,
           earned,
-          evidence: tableDecision?.evidence || text(rawPoint?.evidence) || (rawPoint ? "배점 항목의 근거가 반환되지 않았습니다." : "AI 배점 항목 채점 결과가 없습니다."),
-          confidence: tableDecision?.confidence || (rawPoint && ["high", "medium", "low"].includes(rawPoint?.confidence) ? rawPoint.confidence : "low"),
-          missingResult: missing && !tableDecision,
+          evidence: tableDecision?.evidence || (missingProcess ? "최종 답과 별개로 계산 과정은 원본에서 확인해 주세요." : mathPointKind ? mathCheck.message : "")
+            || text(rawPoint?.evidence) || (rawPoint ? "배점 항목의 근거가 반환되지 않았습니다." : "AI 배점 항목 채점 결과가 없습니다."),
+          confidence: tableDecision?.confidence || (checkPending ? "low"
+            : rawPoint && ["high", "medium", "low"].includes(rawPoint?.confidence) ? rawPoint.confidence : "low"),
+          missingResult: (missing && !tableDecision) || Boolean(checkPending),
           tablePairValidated: Boolean(tableDecision),
         };
       });
@@ -1887,7 +2148,9 @@ ${JSON.stringify(roster)}
         awardedScore,
         maxScore: example.maxScore,
         scoreStatus: awardedScore >= example.maxScore - 0.001 ? "full" : awardedScore > 0 ? "partial" : "none",
-        evidence: text(item?.evidence) || pointResults.map((point) => point.evidence).filter(Boolean).join(" / ") || (item ? "세부 문항의 채점 근거가 반환되지 않았습니다." : "AI 세부 문항 채점 결과가 없습니다."),
+        evidence: mathCheck?.message || text(item?.evidence) || pointResults.map((point) => point.evidence).filter(Boolean).join(" / ") || (item ? "세부 문항의 채점 근거가 반환되지 않았습니다." : "AI 세부 문항 채점 결과가 없습니다."),
+        answerReading: text(item?.answerReading) || mathCheck?.observed || "",
+        fractionMathCheck: mathCheck,
         confidence: pointResults.some((point) => point.confidence === "low") ? "low" : pointResults.some((point) => point.confidence === "medium") ? "medium" : "high",
         pointResults,
         missingResult,
@@ -1898,6 +2161,52 @@ ${JSON.stringify(roster)}
 
     alignQuestionScoresFromExampleLinks(rows, expected, questionResults, metadata);
     return rows;
+  }
+
+  function applyRubricFractionChecks(questions, rubrics, examples, exampleResults, reviewReasons) {
+    const messages = new Set();
+    for (const row of exampleResults) {
+      if (row.fractionMathCheck?.message) messages.add(`${row.questionNumber} 검산: ${row.fractionMathCheck.message}`);
+    }
+    for (const row of questions) {
+      const linked = exampleResults.filter((_example, index) => exampleMatchesQuestion(examples[index], row));
+      const linkedChecks = linked.map((example) => example.fractionMathCheck).filter(Boolean);
+      const linkedIssues = linked.filter((example) => example.fractionMathCheck?.message);
+      const productChains = arithmeticChains(row.fractionMathReading).filter(isFractionProduct);
+      const badChains = productChains.filter((chain) => chain.falseStep > 0);
+      const unmatched = badChains.filter((chain) => !linkedChecks.some((check) => arithmeticChains(check.observed).some((item) => item.written === chain.written)));
+      const checks = unmatched.map((chain) => evaluateFractionAnswer(chain.written, null, false));
+      if (!productChains.length && !linkedChecks.length && looksLikeFractionProduct(row.fractionMathReading)) {
+        checks.push(evaluateFractionAnswer(row.fractionMathReading, null, false));
+      }
+      if (row.fractionMathPending) {
+        checks.push({ pending: true, message: "1차 판독과 정밀 재판독의 분수 식 또는 답이 다릅니다. 학생 필기를 확인해 주세요." });
+      }
+      if (!linkedIssues.length && !checks.length) continue;
+      const byExample = linkedIssues.map((example) => `${example.questionNumber} 검산: ${example.fractionMathCheck.message}`);
+      const byRubric = checks.map((check) => `${row.questionNumber}번 검산: ${check.message}`);
+      row.fractionMathIssue = true;
+      if (checks.length) {
+        const rubric = rubrics.find((item) => item.id === row.criterionId);
+        const kind = [row.evaluationElement, row.criterion, ...(rubric?.scoreLevels || []).map((level) => level.criterion)].join(" ");
+        const calculationScope = linked.length || badChains.length > 1 || row.confidence !== "high";
+        if (!calculationScope && checks.length === 1 && !checks[0].pending && fractionMathFails(checks[0], fractionScoreKind(kind))) {
+          row.score = 0;
+          row.criterion = rubric?.scoreLevels?.find((level) => level.score === 0)?.criterion || "검산 결과 계산 기준 미충족";
+          row.scoreAdjusted = true;
+        } else if (calculationScope || checks.some((check) => check.pending)) {
+          row.fractionMathPending = true;
+        }
+      }
+      if (linkedIssues.some((example) => example.fractionMathCheck.pending)) row.fractionMathPending = true;
+      row.evidence = [...byExample, ...byRubric].join("\n");
+      row.feedback = row.fractionMathPending ? "분수 식과 답을 학생이 쓴 원본에서 확인해 주세요." : "분수의 각 등호 양쪽 값과 최종 답을 다시 확인해 보세요.";
+      for (const note of byRubric) {
+        messages.add(note);
+        reviewReasons.push(note);
+      }
+    }
+    return Array.from(messages);
   }
 
   function alignQuestionScoresFromExampleLinks(rows, expectedExamples, questionResults, metadata) {

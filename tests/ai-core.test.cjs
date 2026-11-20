@@ -1044,6 +1044,92 @@ test("truncated grading JSON recovers through a compact request without acceptin
   assert.equal(result.hasMissingScores, false);
 });
 
+test("exact fraction checking corrects both false equations in grouped Gemini evidence", () => {
+  const metadata = {
+    totalScore: 6,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 곱셈 계산", maxScore: 6 }],
+    exampleAnswers: [
+      { id: "a", questionNumber: "1-(3)", mathNotation: "2 5/14 × 7 = 33/2", evaluationElementIds: ["r1"],
+        pointItems: [{ id: "a1", score: 2, criterion: "계산 결과가 정확함" }] },
+      { id: "b", questionNumber: "1-(4)", mathNotation: "12 × 2/9 = 8/3", evaluationElementIds: ["r1"],
+        pointItems: [
+          { id: "b1", score: 1, criterion: "곱셈식을 세움" },
+          { id: "b2", score: 2, criterion: "정확하게 계산함" },
+        ] },
+      { id: "c", questionNumber: "1-(5)", mathNotation: "6 × 2 1/4 = 13.5", evaluationElementIds: ["r1"],
+        pointItems: [{ id: "c1", score: 1, criterion: "답을 맞게 구함" }] },
+    ],
+  };
+  const evidence = "2와 5/14 × 7 = 32/2 = 16으로 정확하게 계산함. 12 × 2/9 = 12/3 = 4로 정확하게 계산함.";
+  const result = AI.normalizeGradingResult({
+    totalScore: 6, summary: evidence, strengths: ["분수의 곱셈 결과가 모두 정확함."],
+    questionResults: [{ criterionId: "r1", score: 6, answerReading: "풀이 작성", evidence, feedback: "모두 정확함", confidence: "high" }],
+    exampleAnswerResults: [
+      { exampleAnswerId: "a", confidence: "high", pointResults: [{ pointItemId: "a1", earned: true, confidence: "high" }] },
+      { exampleAnswerId: "b", confidence: "high", pointResults: [
+        { pointItemId: "b1", earned: true, confidence: "high" }, { pointItemId: "b2", earned: true, confidence: "high" },
+      ] },
+      { exampleAnswerId: "c", confidence: "high", answerReading: "6 × 2¼ = 27/2 = 13.5",
+        pointResults: [{ pointItemId: "c1", earned: true, confidence: "high" }] },
+    ],
+  }, metadata);
+  assert.equal(result.totalScore, 2);
+  assert.equal(result.hasMissingScores, false);
+  assert.equal(result.needsTeacherReview, true);
+  assert.deepEqual(result.exampleAnswerResults.map((row) => row.pointResults.map((p) => p.awardedScore)), [[0], [1, 0], [1]]);
+  assert.match(result.summary, /1-\(3\).*33\/2/);
+  assert.match(result.summary, /1-\(4\).*8\/3/);
+  assert.doesNotMatch(result.summary, /정확하게 계산함/);
+  assert.doesNotMatch(result.questionResults[0].feedback, /모두 정확함/);
+  assert.deepEqual(result.strengths, []);
+  assert.deepEqual(AI.selectFractionCriterionIds(result, metadata), ["r1"]);
+});
+
+test("fraction checking separates an equivalent final answer from an invalid intermediate equality", () => {
+  const metadata = {
+    totalScore: 2,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 계산", maxScore: 2 }],
+    exampleAnswers: [{ id: "a", questionNumber: "1", mathNotation: "12 × 2/9 = 8/3",
+      pointItems: [{ id: "final", score: 1, criterion: "최종 답이 정확함" }, { id: "steps", score: 1, criterion: "계산 과정이 정확함" }] }],
+  };
+  const grade = (answerReading, confidence = "high") => AI.normalizeGradingResult({
+    questionResults: [{ criterionId: "r1", score: 2, confidence, answerReading }],
+    exampleAnswerResults: [{ exampleAnswerId: "a", confidence, answerReading, pointResults: [
+      { pointItemId: "final", earned: true, confidence }, { pointItemId: "steps", earned: true, confidence },
+    ] }],
+  }, metadata);
+  const incorrectStep = grade("12 × 2/9 = 4 = 2와 2/3");
+  assert.deepEqual(incorrectStep.exampleAnswerResults[0].pointResults.map((item) => item.awardedScore), [1, 0]);
+  assert.match(incorrectStep.summary, /최종 답은 맞지만 중간 등식에 오류/);
+  assert.equal(grade("12×2/9 = 24/9 = 2⅔").totalScore, 2);
+  const uncertain = grade("12 × 2/9 = 4", "low");
+  assert.equal(uncertain.hasMissingScores, true);
+  assert.match(uncertain.summary, /8\/3/);
+  const bareAnswer = grade("답: 4");
+  assert.equal(bareAnswer.totalScore, 0);
+  assert.equal(bareAnswer.exampleAnswerResults[0].pointResults[0].awardedScore, 0);
+  assert.equal(bareAnswer.exampleAnswerResults[0].pointResults[1].missingResult, true);
+  assert.equal(grade("흐려서 읽을 수 없음").hasMissingScores, true);
+});
+
+test("a conflicting precision reread does not silently restore a rejected fraction score", () => {
+  const metadata = {
+    totalScore: 2,
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "분수 곱셈 계산", maxScore: 2 }],
+    exampleAnswers: [{ id: "a", questionNumber: "1", mathNotation: "12 × 2/9 = 8/3",
+      pointItems: [{ id: "p1", score: 2, criterion: "정확하게 계산함" }] }],
+  };
+  const grade = (answerReading) => AI.normalizeGradingResult({
+    questionResults: [{ criterionId: "r1", score: 2, confidence: "high", answerReading }],
+    exampleAnswerResults: [{ exampleAnswerId: "a", confidence: "high", answerReading,
+      pointResults: [{ pointItemId: "p1", earned: true, confidence: "high" }] }],
+  }, metadata);
+  const merged = AI.mergePrecisionGradingResult(grade("12 × 2/9 = 4"), grade("12 × 2/9 = 8/3"), ["r1"], metadata);
+  assert.equal(merged.totalScore, 0);
+  assert.equal(merged.hasMissingScores, true);
+  assert.match(merged.summary, /1차 판독과 정밀 재판독/);
+});
+
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
   const bytes = new TextEncoder().encode("pdf");
   const file = { name: "combined.pdf", type: "application/pdf", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
