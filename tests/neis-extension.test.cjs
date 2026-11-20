@@ -11,6 +11,7 @@ const bridge = fs.readFileSync(path.join(root, "web", "neis-extension", "webapp-
 const background = fs.readFileSync(path.join(root, "web", "neis-extension", "background.js"), "utf8");
 const school = fs.readFileSync(path.join(root, "web", "school-app.js"), "utf8");
 const install = fs.readFileSync(path.join(root, "web", "neis-extension-install.html"), "utf8");
+const sidePanel = fs.readFileSync(path.join(root, "web", "neis-extension", "side-panel.js"), "utf8");
 
 function loadPayloadValidator() {
   const start = background.indexOf("const ACHIEVEMENT_LEVELS");
@@ -28,7 +29,8 @@ function loadFrameOperation() {
 
 test("NEIS helper extension has only the minimum web-app and NEIS permissions", () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions, ["scripting", "tabs"]);
+  assert.deepEqual(manifest.permissions, ["scripting", "tabs", "sidePanel"]);
+  assert.equal(manifest.side_panel.default_path, "side-panel.html");
   assert.deepEqual(manifest.host_permissions, [
     "https://deepsky616.github.io/essay-grader/*",
     "https://*.neis.go.kr/*",
@@ -62,6 +64,20 @@ test("NEIS helper preflights every frame before applying to exactly one frame", 
   assert.match(background, /withOperationTimeout\(chrome\.scripting\.executeScript/);
   assert.match(background, /NEIS 표 대조 단계가 10초 안에 끝나지 않았습니다/);
   assert.match(background, /NEIS 단계 입력이 10초 안에 끝나지 않았습니다/);
+});
+
+test("NEIS helper stages a right-side panel and fills one verified student at a time", () => {
+  assert.match(background, /chrome\.sidePanel\.setOptions\(\{ tabId: tab\.id, path: "side-panel\.html", enabled: true \}\)/);
+  assert.match(background, /chrome\.sidePanel\.open\(\{ tabId: tab\.id \}\)/);
+  assert.match(background, /staged: true/);
+  assert.match(background, /for \(let index = 0; index < job\.payload\.records\.length; index \+= 1\)/);
+  assert.match(background, /const singlePayload = \{ \.\.\.job\.payload, records: \[record\] \}/);
+  assert.match(background, /waitForVisibleProgress\(450\)/);
+  assert.match(sidePanel, /NEIS_SIDE_PANEL_START/);
+  assert.match(sidePanel, /NEIS_SIDE_PANEL_CANCEL/);
+  assert.match(sidePanel, /scrollIntoView/);
+  assert.ok(fs.existsSync(path.join(root, "web", "neis-extension", "side-panel.html")));
+  assert.ok(fs.existsSync(path.join(root, "web", "neis-extension", "side-panel.css")));
 });
 
 test("NEIS helper matches student names and levels despite display-only spacing", async () => {
@@ -232,14 +248,15 @@ test("NEIS helper never sends data to a server or presses the NEIS save button",
 
 test("the grading web app detects the extension and keeps copy and Excel fallbacks", () => {
   assert.match(school, /function detectNeisExtension\(\)/);
-  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.0\.4"/);
+  assert.match(school, /const NEIS_EXTENSION_MIN_VERSION = "1\.1\.0"/);
   assert.match(school, /확장 도우미 \$\{extension\.version\} 업데이트 필요/);
   assert.match(school, /NEIS_AUTO_FILL_REQUEST/);
   assert.match(school, /data-auto-fill-neis disabled>NEIS 단계 자동 입력/);
   assert.match(school, /저장은 자동으로 누르지 않습니다/);
+  assert.match(school, /오른쪽 입력 패널 준비 완료/);
   assert.match(school, /data-copy-neis-transfer/);
   assert.match(school, /data-download-neis-transfer/);
-  assert.match(install, /href="\.\/neis-extension\.zip" download/);
+  assert.match(install, /href="\.\/neis-extension\.zip\?version=1\.1\.0" download/);
   assert.match(bridge, /chrome\.runtime\.getManifest\(\)\.version/);
   assert.ok(fs.existsSync(path.join(root, "web", "neis-extension.zip")), "extension ZIP must be packaged");
 });

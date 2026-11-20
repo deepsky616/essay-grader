@@ -29,7 +29,7 @@ function loadQuestionScoreHelpers() {
   const achievementScoresStart = source.indexOf("function achievementRangeQuestionKeys");
   const achievementScoresEnd = source.indexOf("function derivedAchievementResults", achievementScoresStart);
   assert.ok(bandsStart >= 0 && bandsEnd > bandsStart && achievementLevelsStart >= 0 && achievementLevelsEnd > achievementLevelsStart && start >= 0 && end > start && alignStart >= 0 && alignEnd > alignStart && normalizeStart >= 0 && normalizeEnd > normalizeStart && achievementScoresStart >= 0 && achievementScoresEnd > achievementScoresStart, "question score helpers must exist");
-  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(achievementLevelsStart, achievementLevelsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}\n${source.slice(achievementScoresStart, achievementScoresEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, alignGeneratedRubrics, normalizeRubricCriteria, normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries };`)();
+  return new Function(`${source.slice(bandsStart, bandsEnd)}\n${source.slice(achievementLevelsStart, achievementLevelsEnd)}\n${source.slice(start, end)}\n${source.slice(alignStart, alignEnd)}\n${source.slice(normalizeStart, normalizeEnd)}\n${source.slice(achievementScoresStart, achievementScoresEnd)}; return { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, designFilePickerState, normalizePerformanceThresholds, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, rubricAllocationsFromLinkedExamples, alignGeneratedRubrics, normalizeRubricCriteria, normalizeAchievementLevels, achievementRangeQuestionKeys, achievementPerformanceSummaries };`)();
 }
 
 test("grades 1 and 2 offer the five lower-primary subjects", () => {
@@ -106,7 +106,7 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.doesNotMatch(source, /<strong>성취기준 입력<\/strong>/);
   assert.match(source, /normalizeAchievementLevels/);
   assert.match(source, /data-achievement-band-range/);
-  assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>성취수준 입력<\/strong>[\s\S]*?<strong>문제별 채점기준 입력<\/strong>/);
+  assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>성취수준 입력<\/strong>[\s\S]*?<strong>문제별 평가요소 기준 입력<\/strong>/);
   assert.match(source, /성취기준과 \$\{levels\.length\}개 성취수준을 자동 입력/);
   assert.match(source, /data-open-rubric-ai>채점기준 AI 생성/);
   assert.match(source, /name="rubricAiBandCount"/);
@@ -124,7 +124,7 @@ test("assessment design selects curriculum standards by domain and can generate 
 });
 
 test("example-answer points drive question totals and derived rubric scores", () => {
-  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, normalizeRubricCriteria } = loadQuestionScoreHelpers();
+  const { questionScoreGroupKey, exampleQuestionScoreMap, allocateQuestionScore, buildEqualExamplePointItems, prepareExtractedExampleAnswers, performanceThresholdsAreValid, performanceBandDefinitions, achievementBandForScore, performanceBandScores, rubricPerformanceLevels, derivedBandScores, rubricAllocationsFromElements, rubricAllocationsFromLinkedExamples, normalizeRubricCriteria } = loadQuestionScoreHelpers();
   assert.equal(questionScoreGroupKey("1-(1)"), "1");
   assert.equal(questionScoreGroupKey("1-(2)"), "1");
   assert.equal(questionScoreGroupKey("문항 2-①"), "2");
@@ -192,6 +192,21 @@ test("example-answer points drive question totals and derived rubric scores", ()
     { questionNumber: "2" },
   ], new Map([["1", 10], ["2", 6]]));
   assert.deepEqual(Array.from(allocations.values()), [5, 5, 6]);
+  const linkedAllocations = rubricAllocationsFromLinkedExamples([
+    { id: "r1", questionNumber: "1", evaluationElement: "계산" },
+    { id: "r2", questionNumber: "1", evaluationElement: "설명" },
+    { id: "r3", questionNumber: "2", evaluationElement: "표현" },
+  ], [
+    { questionNumber: "1-(1)", maxScore: 4, evaluationElementIds: ["r1"] },
+    { questionNumber: "1-(2)", maxScore: 2, evaluationElementIds: ["r1", "r2"] },
+    { questionNumber: "2", maxScore: 6, evaluationElementIds: [] },
+  ]);
+  assert.deepEqual(Array.from(linkedAllocations.allocations.values()), [5, 1, 6]);
+  assert.deepEqual(linkedAllocations.questionLabels.get(0), ["1-(1)", "1-(2)"]);
+  assert.match(source, /name="exampleEvaluationElement" type="checkbox"/);
+  assert.match(source, /evaluationElementIds: Array\.from\(row\.querySelectorAll/);
+  assert.match(source, /syncRubricQuestionNumbersFromExampleLinks\(form\)/);
+  assert.match(styles, /\.example-evaluation-linker \{/);
   assert.match(source, /name="examplePointScore" type="number" min="0\.5" step="0\.5"/);
   assert.match(source, /data-add-example-point>＋ 배점 추가/);
   assert.match(source, /data-example-auto-total/);

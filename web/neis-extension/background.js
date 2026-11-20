@@ -440,9 +440,7 @@ function withOperationTimeout(promise, milliseconds, message) {
   ]);
 }
 
-async function executeAutoFill(rawPayload) {
-  const payload = validatePayload(rawPayload);
-  const tab = await findSingleNeisTab();
+async function preflightNeisTable(payload, tab) {
   const inspected = await withOperationTimeout(chrome.scripting.executeScript({
     target: { tabId: tab.id, allFrames: true },
     world: "MAIN",
@@ -456,7 +454,18 @@ async function executeAutoFill(rawPayload) {
       .sort((left, right) => Number(right.matched || 0) - Number(left.matched || 0))[0];
     throw new Error(friendlyOperationError(best));
   }
-  const frameId = readyFrames[0].frameId;
+  return { frameId: readyFrames[0].frameId, method: readyFrames[0].result?.method || "unknown" };
+}
+
+async function focusNeisTab(tab) {
+  await chrome.tabs.update(tab.id, { active: true });
+  if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
+}
+
+async function executeAutoFillDirect(rawPayload) {
+  const payload = validatePayload(rawPayload);
+  const tab = await findSingleNeisTab();
+  const { frameId } = await preflightNeisTable(payload, tab);
   const applied = await withOperationTimeout(chrome.scripting.executeScript({
     target: { tabId: tab.id, frameIds: [frameId] },
     world: "MAIN",
@@ -465,8 +474,7 @@ async function executeAutoFill(rawPayload) {
   }), 10000, "NEIS 단계 입력이 10초 안에 끝나지 않았습니다. 아직 저장되지 않았으므로 화면의 단계 값을 확인해 주세요.");
   const result = applied[0]?.result;
   if (result?.status !== "ok") throw new Error(friendlyOperationError(result));
-  await chrome.tabs.update(tab.id, { active: true });
-  if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
+  await focusNeisTab(tab);
   return {
     ok: true,
     total: payload.records.length,
@@ -477,13 +485,179 @@ async function executeAutoFill(rawPayload) {
   };
 }
 
+let stagedSidePanelJob = null;
+const sidePanelPorts = new Set();
+
+function sidePanelState() {
+  if (!stagedSidePanelJob) {
+    return {
+      type: "NEIS_SIDE_PANEL_STATE",
+      status: "idle",
+      message: "평가지원시스템에서 학생을 선택하고 ‘NEIS 단계 자동 입력’을 눌러 주세요.",
+      records: [],
+      total: 0,
+      processed: 0,
+    };
+  }
+  const job = stagedSidePanelJob;
+  return {
+    type: "NEIS_SIDE_PANEL_STATE",
+    status: job.status,
+    classLabel: job.payload.classLabel,
+    course: job.payload.course,
+    assessment: job.payload.assessment,
+    records: job.payload.records,
+    total: job.payload.records.length,
+    verified: job.payload.records.length,
+    processed: job.processed,
+    updated: job.updated,
+    already: job.already,
+    current: job.current,
+    message: job.message,
+  };
+}
+
+function publishSidePanelState() {
+  const state = sidePanelState();
+  for (const port of sidePanelPorts) {
+    try { port.postMessage(state); } catch { sidePanelPorts.delete(port); }
+  }
+}
+
+async function openSidePanelForTab(tab) {
+  if (!chrome.sidePanel?.setOptions || !chrome.sidePanel?.open) return false;
+  await chrome.sidePanel.setOptions({ tabId: tab.id, path: "side-panel.html", enabled: true });
+  try {
+    await chrome.sidePanel.open({ tabId: tab.id });
+    return true;
+  } catch {
+    try {
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function stageAutoFill(rawPayload) {
+  if (stagedSidePanelJob?.status === "running") throw new Error("오른쪽 패널에서 NEIS 자동 입력이 진행 중입니다.");
+  if (!chrome.sidePanel?.setOptions || !chrome.sidePanel?.open) return executeAutoFillDirect(rawPayload);
+  const payload = validatePayload(rawPayload);
+  const tab = await findSingleNeisTab();
+  const preflight = await preflightNeisTable(payload, tab);
+  stagedSidePanelJob = {
+    payload,
+    tabId: tab.id,
+    windowId: tab.windowId,
+    frameId: preflight.frameId,
+    method: preflight.method,
+    status: "ready",
+    processed: 0,
+    updated: 0,
+    already: 0,
+    current: null,
+    cancelRequested: false,
+    message: `${payload.records.length}명의 번호·이름·단계를 모두 대조했습니다. ‘자동 입력 시작’을 눌러 주세요.`,
+  };
+  await focusNeisTab(tab);
+  const panelOpened = await openSidePanelForTab(tab);
+  publishSidePanelState();
+  return {
+    ok: true,
+    staged: true,
+    panelOpened,
+    total: payload.records.length,
+    method: preflight.method,
+    message: panelOpened
+      ? "NEIS 탭 오른쪽에 입력 패널을 열었습니다. 패널에서 ‘자동 입력 시작’을 눌러 주세요."
+      : "입력 준비를 마쳤습니다. NEIS 탭에서 확장 도우미 아이콘을 눌러 오른쪽 패널을 연 뒤 ‘자동 입력 시작’을 눌러 주세요.",
+  };
+}
+
+function waitForVisibleProgress(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function runStagedSidePanelJob() {
+  const job = stagedSidePanelJob;
+  if (!job || job.status !== "ready") return;
+  job.status = "running";
+  job.cancelRequested = false;
+  job.processed = 0;
+  job.updated = 0;
+  job.already = 0;
+  job.message = "NEIS 단계 칸을 학생 번호 순서대로 입력하고 있습니다.";
+  publishSidePanelState();
+  try {
+    await focusNeisTab({ id: job.tabId, windowId: job.windowId });
+    for (let index = 0; index < job.payload.records.length; index += 1) {
+      if (job.cancelRequested) {
+        job.status = "cancelled";
+        job.current = null;
+        job.message = `${job.processed}명 입력 후 중단했습니다. NEIS 저장은 누르지 않았습니다.`;
+        publishSidePanelState();
+        return;
+      }
+      const record = job.payload.records[index];
+      job.current = { ...record, index: index + 1 };
+      job.message = `${record.number}번 ${record.name} 학생의 ‘${record.level}’ 단계를 입력하고 있습니다.`;
+      publishSidePanelState();
+      const singlePayload = { ...job.payload, records: [record] };
+      const applied = await withOperationTimeout(chrome.scripting.executeScript({
+        target: { tabId: job.tabId, frameIds: [job.frameId] },
+        world: "MAIN",
+        func: neisAssessmentFrameOperation,
+        args: [singlePayload, true],
+      }), 10000, `${record.number}번 학생 입력이 10초 안에 끝나지 않았습니다.`);
+      const result = applied[0]?.result;
+      if (result?.status !== "ok") throw new Error(`${record.number}번 ${record.name}: ${friendlyOperationError(result)}`);
+      job.updated += Number(result.updated || 0);
+      job.already += Number(result.already || 0);
+      job.processed = index + 1;
+      job.message = `${record.number}번 ${record.name} 학생 입력 완료 · ${job.processed}/${job.payload.records.length}명`;
+      publishSidePanelState();
+      if (index < job.payload.records.length - 1) await waitForVisibleProgress(450);
+    }
+    job.status = "complete";
+    job.current = null;
+    job.message = `${job.payload.records.length}명의 단계 입력을 마쳤습니다. 왼쪽 NEIS 표를 확인한 뒤 NEIS에서 직접 저장해 주세요.`;
+    publishSidePanelState();
+  } catch (error) {
+    job.status = "error";
+    job.current = null;
+    job.message = `${job.processed}명 입력 후 중단했습니다. ${error?.message || "NEIS 자동 입력을 완료하지 못했습니다."} 화면 값을 확인하고 저장 여부를 결정해 주세요.`;
+    publishSidePanelState();
+  }
+}
+
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "neis-side-panel") return;
+  sidePanelPorts.add(port);
+  port.postMessage(sidePanelState());
+  port.onMessage.addListener((message) => {
+    if (message?.type === "NEIS_SIDE_PANEL_GET_STATE") publishSidePanelState();
+    if (message?.type === "NEIS_SIDE_PANEL_START") runStagedSidePanelJob();
+    if (message?.type === "NEIS_SIDE_PANEL_CANCEL" && stagedSidePanelJob?.status === "running") {
+      stagedSidePanelJob.cancelRequested = true;
+      stagedSidePanelJob.message = "현재 학생 입력을 마친 뒤 중단합니다.";
+      publishSidePanelState();
+    }
+  });
+  port.onDisconnect.addListener(() => sidePanelPorts.delete(port));
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "NEIS_AUTO_FILL_REQUEST" || message.version !== 1) return false;
   if (!sender.tab?.url?.startsWith(WEBAPP_URL_PREFIX)) {
     sendResponse({ ok: false, message: "허용된 평가 웹앱에서만 실행할 수 있습니다." });
     return false;
   }
-  executeAutoFill(message.payload)
+  stageAutoFill(message.payload)
     .then(sendResponse)
     .catch((error) => sendResponse({ ok: false, message: error?.message || "NEIS 자동 입력을 완료하지 못했습니다." }));
   return true;

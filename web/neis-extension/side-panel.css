@@ -1,0 +1,127 @@
+:root {
+  color-scheme: light;
+  --ink: #182138;
+  --muted: #657087;
+  --line: #dce2ee;
+  --paper: #f4f7fb;
+  --blue: #3154d6;
+  --blue-soft: #edf1ff;
+  --green: #14764a;
+  --green-soft: #e9f8f0;
+  --amber: #9a6208;
+  --amber-soft: #fff7df;
+  --red: #ae2f3f;
+  --red-soft: #fff0f2;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+main { padding: 20px 16px 30px; }
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 3px;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+h1 { margin: 0; font-size: 24px; line-height: 1.25; }
+h2 { margin: 0; font-size: 17px; }
+
+.version {
+  margin-top: 3px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-card,
+.context-card,
+.progress-card,
+.student-section,
+.safety-note {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: white;
+}
+
+.status-card { padding: 14px; }
+.status-heading { display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #8a94a8; box-shadow: 0 0 0 4px #edf0f5; }
+.status-card p { margin: 7px 0 0; color: var(--muted); }
+.status-card.is-ready { border-color: #b9c6f5; background: var(--blue-soft); }
+.status-card.is-ready .status-dot,
+.status-card.is-running .status-dot { background: var(--blue); box-shadow: 0 0 0 4px #dce4ff; }
+.status-card.is-complete { border-color: #aad8bf; background: var(--green-soft); }
+.status-card.is-complete .status-dot { background: var(--green); box-shadow: 0 0 0 4px #ccebd9; }
+.status-card.is-error,
+.status-card.is-cancelled { border-color: #efc1c7; background: var(--red-soft); }
+.status-card.is-error .status-dot,
+.status-card.is-cancelled .status-dot { background: var(--red); box-shadow: 0 0 0 4px #f7d9dd; }
+
+.context-card { padding: 5px 14px; }
+dl, dd { margin: 0; }
+dl > div { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf0f5; }
+dl > div:last-child { border-bottom: 0; }
+dt { color: var(--muted); font-size: 14px; font-weight: 800; }
+dd { font-weight: 800; overflow-wrap: anywhere; }
+
+.progress-card { padding: 14px; }
+.progress-copy { display: flex; justify-content: space-between; gap: 12px; }
+.progress-copy span { color: var(--blue); font-weight: 900; }
+.progress-track { height: 10px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: #e7ebf2; }
+.progress-track > span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #3154d6, #6783ec); transition: width .2s ease; }
+.current-student { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 11px; border-radius: 9px; background: var(--blue-soft); }
+.current-student span { color: var(--muted); font-size: 12px; font-weight: 800; }
+.current-student strong { text-align: right; }
+
+.actions { display: grid; gap: 8px; margin-top: 14px; }
+button { min-height: 46px; padding: 10px 14px; border-radius: 10px; font: inherit; font-weight: 900; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+button.primary { border: 1px solid var(--blue); background: var(--blue); color: white; }
+button.secondary { border: 1px solid #d5a5ac; background: white; color: var(--red); }
+
+.safety-note { padding: 13px 14px; border-color: #ead29c; background: var(--amber-soft); }
+.safety-note strong { color: var(--amber); }
+.safety-note p { margin: 5px 0 0; color: #69552d; font-size: 14px; }
+
+.student-section { padding: 14px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.section-heading span { color: var(--green); font-size: 12px; font-weight: 900; }
+.student-list { display: grid; gap: 7px; margin: 12px 0 0; padding: 0; list-style: none; }
+.student-item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; min-height: 42px; padding: 7px 9px; border: 1px solid #e4e8f0; border-radius: 9px; background: #fbfcfe; }
+.student-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #edf0f5; color: var(--muted); font-size: 13px; font-weight: 900; }
+.student-name { min-width: 0; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.student-level { padding: 3px 7px; border-radius: 99px; background: #eef1f7; color: #4d5970; font-size: 14px; font-weight: 900; white-space: nowrap; }
+.student-item.is-current { border-color: #7990e8; background: var(--blue-soft); box-shadow: 0 0 0 2px #dfe6ff; }
+.student-item.is-done .student-number { background: var(--green); color: white; }
+.student-item.is-done .student-level { background: var(--green-soft); color: var(--green); }
+
+[hidden] { display: none !important; }
+
+@media (min-width: 500px) {
+  main { padding-right: 22px; padding-left: 22px; }
+}

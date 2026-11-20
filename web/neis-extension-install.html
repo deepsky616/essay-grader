@@ -37,8 +37,8 @@
     <header class="hero">
       <p class="kicker">ONE-TIME BROWSER SETUP</p>
       <h1>NEIS 입력 도우미 설치</h1>
-      <p class="lead">AI 서·논술형 평가지원시스템에서 확정한 학생별 성취수준을 현재 열린 NEIS 성취기준별 평가 화면의 <strong>단계 칸</strong>에 입력하는 로컬 확장 도우미입니다.</p>
-      <div class="actions"><a class="button primary" href="./neis-extension.zip" download>확장 도우미 ZIP 내려받기</a><a class="button" href="./">평가지원시스템으로 돌아가기</a></div>
+      <p class="lead">AI 서·논술형 평가지원시스템에서 확정한 학생별 성취수준을 현재 열린 NEIS 성취기준별 평가 화면의 <strong>단계 칸</strong>에 입력합니다. NEIS 표는 왼쪽에 그대로 보이고, 자동 입력 진행 상황은 오른쪽 패널에서 확인할 수 있습니다.</p>
+      <div class="actions"><a class="button primary" href="./neis-extension.zip?version=1.1.0" download>확장 도우미 ZIP 내려받기</a><a class="button" href="./">평가지원시스템으로 돌아가기</a></div>
       <div class="notice"><strong>개인정보 보호</strong><br>학생 명단과 성취수준은 이 컴퓨터의 두 탭 사이에서만 전달됩니다. 외부 서버 저장·전송 기능이 없고 NEIS의 저장 버튼도 누르지 않습니다.</div>
     </header>
 
@@ -61,12 +61,24 @@
 
     <section>
       <h2>3. 사용 전 체크</h2>
-      <ul class="checklist"><li>평가지원시스템 페이지를 새로고침했습니다.</li><li>NEIS 탭은 입력할 화면 하나만 열었습니다.</li><li>NEIS에서 학년·반·교과·영역·성취기준을 조회했습니다.</li><li>교사 확정 결과와 학생 수를 확인했습니다.</li></ul>
+      <ul class="checklist"><li>평가지원시스템과 NEIS를 같은 Chrome 또는 Edge에서 열었습니다.</li><li>평가지원시스템 페이지를 새로고침했습니다.</li><li>NEIS 탭은 입력할 화면 하나만 열었습니다.</li><li>NEIS에서 학년·반·교과·영역·성취기준을 조회했습니다.</li><li>교사 확정 결과와 학생 수를 확인했습니다.</li></ul>
+    </section>
+
+    <section>
+      <h2>4. NEIS 화면을 보면서 입력</h2>
+      <ol>
+        <li>평가지원시스템의 <strong>NEIS 교과평가 입력 도우미</strong>에서 학생을 선택하고 <strong>NEIS 단계 자동 입력</strong>을 누릅니다.</li>
+        <li>번호·이름·단계 대조가 끝나면 브라우저가 NEIS 탭으로 이동하고, 화면 <strong>오른쪽에 입력 패널</strong>이 열립니다.</li>
+        <li>오른쪽 패널의 학급·교과·평가·학생 수를 확인하고 <strong>자동 입력 시작</strong>을 누릅니다.</li>
+        <li>오른쪽 진행률과 현재 학생을 확인하면서 왼쪽 NEIS 표의 단계가 번호 순서대로 채워지는지 봅니다.</li>
+        <li>완료 후 단계와 평가결과를 확인하고 NEIS의 <strong>저장</strong>을 직접 누릅니다.</li>
+      </ol>
+      <p><strong>오른쪽 패널이 자동으로 열리지 않으면</strong> NEIS 탭에서 브라우저 도구 모음의 확장 프로그램 아이콘을 누른 뒤 ‘AI 서·논술형 NEIS 입력 도우미’를 선택하세요. Chrome 창을 두 개 열 필요는 없습니다.</p>
     </section>
 
     <section class="warning">
       <h2>안전하게 동작하는 방식</h2>
-      <p>도우미는 먼저 모든 학생의 <strong>번호 + 이름 + 단계 선택값</strong>이 정확히 한 번씩 일치하는지 검사합니다. 한 명이라도 찾지 못하거나 입력 표가 여러 개이면 아무 값도 입력하지 않고 중단합니다. 성공 후에는 NEIS 화면을 교사가 직접 확인하고 저장해야 합니다.</p>
+      <p>도우미는 먼저 모든 학생의 <strong>번호 + 이름 + 단계 선택값</strong>이 정확히 한 번씩 일치하는지 검사합니다. 대조가 끝난 뒤에만 오른쪽 패널의 시작 버튼이 활성화되며, 학생 번호 순서대로 한 명씩 입력합니다. 진행 중 중단할 수 있고 NEIS의 저장 버튼은 누르지 않습니다.</p>
       <p><strong>기관별 NEIS 화면 구조가 달라 자동 입력이 중단되면</strong> 평가지원시스템의 ‘번호·성취수준 복사’ 또는 ‘NEIS 확인용 Excel’을 사용해 주세요.</p>
     </section>
     <footer>AI 서·논술형 평가지원시스템 · NEIS 단계 입력 보조 기능</footer>
