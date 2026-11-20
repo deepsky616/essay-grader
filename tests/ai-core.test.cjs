@@ -1145,7 +1145,7 @@ test("fraction grading reads ink without teacher materials and rejects a copied 
     { role: "blank", file: file("blank-printed-worksheet") }, { role: "studentAnswer", file: file("student-ink") },
   ];
   const confident = (finalAnswer, status = "readable") => [{ exampleAnswerId: "a", questionNumber: "2-(3)", confidence: "high", status,
-    finalAnswer, work: "",
+    finalAnswer, lastAnswerLine: finalAnswer, answerPosition: "single_value", work: "",
     ...(finalAnswer === "8과 1/8" ? { fractionLayout: "whole_left", wholeNumber: "8", numerator: "1", denominator: "8" }
       : { fractionLayout: "plain_number", wholeNumber: "", numerator: "", denominator: "" }),
   }];
@@ -1222,7 +1222,9 @@ test("mixed number positions correct a collapsed display and trigger an enlarged
           assert.doesNotMatch(body.contents[0].parts[0].text, /27\/4/);
         }
         const payload = transcription ? { readings: [{
-          exampleAnswerId: "e", questionNumber: "1-(1)", status: "readable", confidence: "high", finalAnswer, work: "", ...layout,
+          exampleAnswerId: "e", questionNumber: "1-(1)", status: "readable", confidence: "high", finalAnswer,
+          lastAnswerLine: layout.fractionLayout === "whole_left" && finalAnswer === "63/4" ? "6과 3/4" : finalAnswer,
+          answerPosition: "single_value", work: "", ...layout,
         }] } : {
           totalScore: modelGivesPoints ? 2 : 0,
           questionResults: [{ criterionId: "r", score: modelGivesPoints ? 2 : 0, answerReading: "63/4", confidence: "high" }],
@@ -1311,6 +1313,67 @@ test("equivalent fractions earn value-only points even when Gemini marks their n
   assert.equal(evaluate({ finalAnswer: "63/4" }).totalScore, 0);
   const partial = evaluate({ multiple: true, returnedPoints: [{ pointItemId: "p", earned: false, confidence: "high" }, { pointItemId: "process", earned: false, confidence: "high" }] });
   assert.deepEqual(partial.exampleAnswerResults[0].pointResults.map((item) => item.awardedScore), [2, 0]);
+});
+
+test("final-answer grading uses the end of a written equality and independently rejects a wrong unknown value", async () => {
+  const file = (text) => new Blob([text], { type: "application/pdf" });
+  async function grade(mathNotation, observed, modelAnswer = "65/8") {
+    let reads = 0;
+    const result = await AI.gradeAnswer({
+      apiKey: VALID_KEY,
+      metadata: {
+        totalScore: 3, requireBlankComparison: true,
+        rubricCriteria: [{ id: "r", questionNumber: "3-(1)", evaluationElement: "분수 계산", maxScore: 3 }],
+        exampleAnswers: [{ id: "e", questionNumber: "3-(1)", mathNotation, evaluationElementIds: ["r"],
+          pointItems: [{ id: "final", criterion: "최종 답이 정확함", score: 2 }, { id: "work", criterion: "풀이 과정이 정확함", score: 1 }] }],
+      },
+      files: [{ role: "blank", file: file("blank form") }, { role: "studentAnswer", file: file("student scan") }],
+      fetchImpl: async (_url, options) => {
+        const request = JSON.parse(options.body);
+        const reading = request.generationConfig.responseSchema.properties.readings;
+        if (reading) {
+          reads += 1;
+          assert.ok(reading.items.required.includes("lastAnswerLine"));
+          assert.ok(reading.items.required.includes("answerPosition"));
+          assert.doesNotMatch(request.contents[0].parts[0].text, /2\/3|65\/8/);
+        }
+        const payload = reading ? { readings: [{
+          exampleAnswerId: "e", questionNumber: "3-(1)", status: "readable", confidence: "high",
+          fractionLayout: "full_numerator", wholeNumber: "", numerator: "65", denominator: "8", work: "", ...observed,
+        }] } : {
+          totalScore: 3, summary: "정확히 구함",
+          questionResults: [{ criterionId: "r", score: 3, answerReading: modelAnswer, evidence: modelAnswer, confidence: "high" }],
+          exampleAnswerResults: [{ exampleAnswerId: "e", answerReading: modelAnswer, evidence: "정확히 구함",
+            pointResults: [{ pointItemId: "final", earned: true, confidence: "high" }, { pointItemId: "work", earned: true, confidence: "high" }] }],
+        };
+        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+      },
+    });
+    assert.equal(reads, 1);
+    return result;
+  }
+  const product = "2 1/6 × 3 3/4 = 65/8";
+  const chain = await grade(product, { finalAnswer: "65/8", lastAnswerLine: "65/8\n= 7", answerPosition: "chain_end", work: product });
+  assert.equal(chain.totalScore, 0);
+  assert.match(chain.questionResults[0].answerReading, /65\/8 = 7\n최종 답 7$/);
+  assert.match(chain.summary, /65\/8 = 7/);
+  const separate = await grade(product, { finalAnswer: "65/8", lastAnswerLine: "답: 65/8", answerPosition: "explicit_label", work: "65/8 = 7" });
+  assert.deepEqual(separate.exampleAnswerResults[0].pointResults.map((point) => point.awardedScore), [2, 0]);
+  const missingLine = await grade(product, { finalAnswer: "65/8", lastAnswerLine: "", answerPosition: "uncertain" });
+  assert.equal(missingLine.totalScore, 0);
+  assert.equal(missingLine.hasMissingScores, true);
+  const ambiguous = await grade(product, { finalAnswer: "65/8", lastAnswerLine: "65/8", answerPosition: "single_value", work: "65/8 = 7" });
+  assert.equal(ambiguous.totalScore, 0);
+  assert.equal(ambiguous.hasMissingScores, true);
+  for (const equation of ["어떤 수 네모 + 1/4 = 11/12", "□ + 1/4 = 11/12 ⇒ □ = 2/3"]) {
+    const unknown = await grade(equation, { finalAnswer: "23/48", lastAnswerLine: "□ = 23/48", answerPosition: "explicit_label",
+      numerator: "23", denominator: "48", work: "□ + 1/4 = 11/12" }, "어떤 수는 2/3");
+    assert.equal(unknown.totalScore, 0);
+    assert.equal(unknown.exampleAnswerResults[0].pointResults[0].missingResult, false);
+    assert.match(unknown.questionResults[0].answerReading, /최종 답 23\/48$/);
+    assert.match(unknown.summary, /2\/3.*23\/48/);
+    assert.doesNotMatch(unknown.summary, /양쪽 값이 다릅니다/);
+  }
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
