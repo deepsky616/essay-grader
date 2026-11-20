@@ -707,7 +707,7 @@
       const canonical = `${whole} ${numerator}/${denominator}`;
       const collapsed = recordedValue !== answerNumber(canonical);
       if (collapsed && compact(finalAnswer) !== `${whole}${numerator}/${denominator}`) return layoutUncertain;
-      return { ...base, status: "readable", finalAnswer: canonical, correctedFromCollapsed: collapsed };
+      return { ...base, status: "readable", finalAnswer: canonical };
     }
     if (layout === "full_numerator") {
       if (!hasParts || whole || recordedValue !== answerNumber(`${numerator}/${denominator}`)) return layoutUncertain;
@@ -891,12 +891,12 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
       delete parsed.achievementResults;
     }
     const result = normalizeGradingResult(parsed, { ...gradingMetadata, summarizeGradingLocally: true }, selectedModel);
-    if (result.hasMissingScores && !result.fractionMathIssues.length) {
+    if (result.hasMissingScores && !result.fractionMathIssues.length && !result.fractionAnswerCorrections.length) {
       result.summary = "확인된 문항의 채점 결과를 저장했습니다. 채점 결과를 받지 못한 항목은 교사가 답안 원본을 확인해 주세요.";
       result.strengths = [];
       result.improvements = [];
       result.nextSteps = [];
-    } else if (!result.fractionMathIssues.length && (!result.summary || missing.length)) {
+    } else if (!result.fractionMathIssues.length && !result.fractionAnswerCorrections.length && (!result.summary || missing.length)) {
       result.summary = result.questionResults.map((row) => row.feedback).filter(Boolean).slice(0, 3).join(" ")
         || "문항별 배점과 채점 근거를 확인해 주세요.";
     }
@@ -1591,7 +1591,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
       : "";
     return {
       ...base, ...final,
-      observed: [reading.work, `최종 답 ${reading.finalAnswer}`].filter(Boolean).join("\n"),
+      observed: [reading.work, `최종 답 ${displayKoreanMixedNumber(reading.finalAnswer)}`].filter(Boolean).join("\n"),
       processCorrect,
       message: [final.message, processMessage].filter(Boolean).join(" "),
     };
@@ -1620,14 +1620,25 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
 
   function pureNumericAnswerCriterion(value) {
     const label = text(value).replace(/\s+/g, "").replace(/[.!。]$/, "");
-    return /^(?:최종)?(?:정답|답|계산결과|계산값|값|수치)(?:이|가|을|를)?(?:맞음|정확함|정확하게구함|바르게구함|일치함)?$/.test(label);
+    return /^(?:최종)?(?:정답|답|계산결과|계산값|값|수치)(?:이|가|을|를)?(?:맞음|정확함|정확히구함|정확하게구함|바르게구함|일치함|구함|구하기)?$/.test(label);
   }
 
-  function graderCollapsedMixedNumber(reading, modelAnswer) {
-    if (reading?.layout !== "whole_left" || reading.status !== "readable") return false;
-    if (reading.correctedFromCollapsed) return true;
-    const parts = normalizeArithmetic(reading.finalAnswer).match(/^(-?\d+)\s+(\d+)\/(\d+)$/);
-    return parts && answerNumber(modelAnswer) === answerNumber(`${parts[1]}${parts[2]}/${parts[3]}`);
+  function displayKoreanMixedNumber(value) {
+    const parts = normalizeArithmetic(value).match(/^(-?\d+)\s+(\d+)\/(\d+)$/);
+    if (!parts) return text(value);
+    const [, whole, numerator, denominator] = parts;
+    const particle = /[013678]$/.test(whole) ? "과" : "와";
+    return `${whole}${particle} ${numerator}/${denominator}`;
+  }
+
+  function valueOnlyFractionPoint(example, point, rubrics) {
+    const defaultPoint = example.pointItems.length === 1 && point.criterion === "예시답안의 핵심 답과 풀이가 정확함";
+    if (!defaultPoint && !pureNumericAnswerCriterion(point.criterion)) return false;
+    const relatedRubrics = rubrics.filter((rubric) => exampleMatchesQuestion(example, { ...rubric, criterionId: rubric.id }));
+    const designText = [example.answerText, example.mathNotation, point.criterion,
+      ...relatedRubrics.flatMap((rubric) => [rubric.evaluationElement, ...rubric.scoreLevels.map((level) => level.criterion)])].join(" ");
+    if (/(?:대분수|가분수|기약분수|진분수|소수|분수)\s*(?:의?\s*형태로|로)|소수점\s*(?:아래|이하)|단위\s*(?:를|까지|포함)/.test(designText)) return false;
+    return !defaultPoint || !/풀이\s*과정|계산\s*과정|중간\s*(?:계산|식|단계)|식\s*세우기|계산식\s*(?:을|과)|근거를\s*(?:적|쓰|제시)|이유를\s*(?:적|쓰|설명)/.test(designText);
   }
 
   function mergePrecisionGradingResult(baseResult, precisionResult, criterionIds, metadata = {}, model = MODEL) {
@@ -2108,6 +2119,10 @@ ${JSON.stringify(roster)}
     });
     const exampleAnswerResults = normalizeExampleAnswerResults(raw.exampleAnswerResults, metadata, questionResults, reviewReasons);
     const issueMessages = applyRubricFractionChecks(questionResults, rubricCriteria, responseExamples, exampleAnswerResults, reviewReasons);
+    const fractionAnswerCorrections = exampleAnswerResults
+      .filter((row) => row.pointResults.some((point) => point.numericValueAdjusted))
+      .map((row) => `${row.questionNumber} 검산: 학생의 최종 답과 예시답은 값이 같습니다. 최종 답 배점을 반영했습니다.`);
+    const fractionFeedback = [...issueMessages, ...fractionAnswerCorrections];
     const achievementGroups = Array.isArray(metadata.achievementGroups) ? metadata.achievementGroups : [];
     const rawAchievementResults = Array.isArray(raw.achievementResults) ? raw.achievementResults : [];
     const achievementResults = achievementGroups.map((group, index) => {
@@ -2127,14 +2142,19 @@ ${JSON.stringify(roster)}
         standard: text(group?.standard),
         achievementLevel: achievementLevel || "검토 필요",
         evidence: text(matched?.evidence),
-        feedback: issueMessages.length ? "" : text(matched?.feedback),
+        feedback: fractionFeedback.length ? "" : text(matched?.feedback),
         confidence: ["high", "medium", "low"].includes(matched?.confidence) ? matched.confidence : metadata.summarizeGradingLocally ? "high" : "low",
       };
     });
 
     const questionTotal = roundScore(questionResults.reduce((sum, item) => sum + item.score, 0));
     const reportedTotal = roundScore(numeric(raw.totalScore));
-    if (questionResults.length && raw.totalScore != null && reportedTotal !== questionTotal) reviewReasons.push("Gemini가 제시한 총점과 문항별 점수 합계가 달라 문항별 합계로 수정되었습니다.");
+    const verifiedIncrease = roundScore(exampleAnswerResults.reduce((sum, row) => sum
+      + row.pointResults.reduce((subtotal, point) => subtotal + (point.numericValueAdjusted ? point.awardedScore : 0), 0), 0));
+    if (questionResults.length && raw.totalScore != null && reportedTotal !== questionTotal
+      && roundScore(questionTotal - reportedTotal) !== verifiedIncrease) {
+      reviewReasons.push("Gemini가 제시한 총점과 문항별 점수 합계가 달라 문항별 합계로 수정되었습니다.");
+    }
     if (assessmentMax > 0 && questionTotal > assessmentMax) reviewReasons.push("문항별 점수 합계가 평가 총점을 초과하여 교사 검토가 필요합니다.");
     const scoreForTotal = questionResults.length ? questionTotal : reportedTotal;
     const totalScore = assessmentMax > 0 ? clamp(scoreForTotal, 0, assessmentMax) : Math.max(0, scoreForTotal);
@@ -2156,10 +2176,10 @@ ${JSON.stringify(roster)}
       totalScore,
       maxScore: assessmentMax,
       overallAchievementLevel: text(raw.overallAchievementLevel) || "검토 필요",
-      summary: issueMessages.length ? issueMessages.join("\n") : text(raw.summary),
-      strengths: issueMessages.length ? [] : textList(raw.strengths),
-      improvements: issueMessages.length ? [] : textList(raw.improvements),
-      nextSteps: issueMessages.length ? [] : textList(raw.nextSteps),
+      summary: fractionFeedback.length ? fractionFeedback.join("\n") : text(raw.summary),
+      strengths: fractionFeedback.length ? [] : textList(raw.strengths),
+      improvements: fractionFeedback.length ? [] : textList(raw.improvements),
+      nextSteps: fractionFeedback.length ? [] : textList(raw.nextSteps),
       achievementResults,
       questionResults,
       exampleAnswerResults,
@@ -2167,6 +2187,7 @@ ${JSON.stringify(roster)}
       hasMissingScores: questionResults.some((row) => row.missingResult || row.fractionMathPending)
         || exampleAnswerResults.some((row) => row.missingResult || row.fractionMathCheck?.pending || row.pointResults.some((point) => point.missingResult)),
       fractionMathIssues: issueMessages,
+      fractionAnswerCorrections,
       needsTeacherReview: Boolean(raw.needsTeacherReview)
         || reviewReasons.length > 0
         || questionResults.some((item) => item.confidence !== "high" || /판독 불가/.test(item.answerReading))
@@ -2271,6 +2292,7 @@ ${JSON.stringify(roster)}
 
   function normalizeExampleAnswerResults(rawResults, metadata, questionResults, reviewReasons) {
     const expected = exampleAnswersForResponse(metadata);
+    const rubrics = rubricCriteriaForResponse(metadata);
     const independent = new Map((metadata.independentFractionReadings || []).map((reading) => [reading.exampleAnswerId, reading]));
     const rawItems = Array.isArray(rawResults) ? rawResults : [];
     const usedIndexes = new Set();
@@ -2299,38 +2321,46 @@ ${JSON.stringify(roster)}
           : explicitlyEarned);
         const tableDecision = exactTablePairDecision(example, point, questionResults);
         if (tableDecision) earned = tableDecision.earned;
-        const mathPointKind = mathCheck && !tableDecision && (fractionScoreKind(point.criterion)
+        const valueOnly = Boolean(mathCheck?.independent && !tableDecision && valueOnlyFractionPoint(example, point, rubrics));
+        const canVerifyValue = Boolean(valueOnly && !mathCheck.pending && typeof mathCheck.finalCorrect === "boolean");
+        const numericValueAdjusted = canVerifyValue && mathCheck.finalCorrect && (!earned || Boolean(rawPoint?.numericValueAdjusted));
+        const mathPointKind = mathCheck && !tableDecision && (valueOnly ? "final" : fractionScoreKind(point.criterion)
           || ((mathCheck.independent || example.pointItems.length === 1) && !isIndependentFractionCriterion(point.criterion) ? "both" : ""));
         const missingProcess = earned && mathCheck?.processCorrect === null
           && (mathPointKind === "process" || (mathPointKind === "both" && mathCheck.finalCorrect !== false));
         const checkPending = mathPointKind && (mathCheck.pending || missingProcess);
         if (missingProcess) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’의 풀이 과정을 확인할 수 없습니다.`);
         const blockedMathPoint = mathPointKind && (checkPending || fractionMathFails(mathCheck, mathPointKind));
-        if (blockedMathPoint || mathCheck?.blank) earned = false;
-        else if (!missing && mathPointKind === "final" && mathCheck.finalCorrect === true
-          && pureNumericAnswerCriterion(point.criterion) && graderCollapsedMixedNumber(independentReading, item?.answerReading)) earned = true;
-        if (missing && !tableDecision) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’ 배점 항목 결과를 받지 못했습니다. 교사가 답안 원본을 확인해 주세요.`);
+        if (canVerifyValue) earned = mathCheck.finalCorrect;
+        else if (blockedMathPoint || mathCheck?.blank) earned = false;
+        if (missing && !tableDecision && !canVerifyValue) reviewReasons.push(`${example.questionNumber} ‘${point.criterion}’ 배점 항목 결과를 받지 못했습니다. 교사가 답안 원본을 확인해 주세요.`);
+        const numericEvidence = canVerifyValue && earned
+          ? `값 비교 · 학생의 최종 답 ‘${displayKoreanMixedNumber(independentReading.finalAnswer)}’의 값이 예시답과 같습니다.` : "";
         return {
           pointItemId: point.id,
           criterion: point.criterion,
           awardedScore: earned ? point.score : 0,
           maxScore: point.score,
           earned,
-          evidence: tableDecision?.evidence || (missingProcess ? "최종 답과 별개로 계산 과정은 원본에서 확인해 주세요." : mathPointKind || mathCheck?.blank ? mathCheck.message : "")
+          evidence: tableDecision?.evidence || numericEvidence || (missingProcess ? "최종 답과 별개로 계산 과정은 원본에서 확인해 주세요." : mathPointKind || mathCheck?.blank ? mathCheck.message : "")
             || (mathPointKind && mathCheck.independent ? `독립 판독 · ${mathCheck.observed}` : "")
             || text(rawPoint?.evidence) || (rawPoint ? "배점 항목의 근거가 반환되지 않았습니다." : "AI 배점 항목 채점 결과가 없습니다."),
-          confidence: tableDecision?.confidence || (checkPending ? "low"
+          confidence: tableDecision?.confidence || (canVerifyValue ? "high" : checkPending ? "low"
             : rawPoint && ["high", "medium", "low"].includes(rawPoint?.confidence) ? rawPoint.confidence : "low"),
-          missingResult: (missing && !tableDecision) || Boolean(checkPending),
+          missingResult: (missing && !tableDecision && !canVerifyValue) || Boolean(checkPending),
           tablePairValidated: Boolean(tableDecision),
+          numericValueAdjusted,
         };
       });
       const awardedScore = roundScore(pointResults.reduce((sum, point) => sum + point.awardedScore, 0));
       const returnedScore = numeric(item?.awardedScore ?? item?.score);
       const scoreAdjusted = item?.awardedScore != null && Math.abs(awardedScore - returnedScore) > 0.001;
+      const verifiedIncrease = roundScore(pointResults.reduce((sum, point) => sum + (point.numericValueAdjusted ? point.awardedScore : 0), 0));
       const missingResult = pointResults.every((point) => point.missingResult);
       if (missingResult) reviewReasons.push(`${example.questionNumber} 세부 문항의 배점 획득 결과가 없어 교사 확인이 필요합니다.`);
-      else if (scoreAdjusted) reviewReasons.push(`${example.questionNumber} 세부 문항 점수를 배점 항목 합계 ${roundScore(awardedScore)}점으로 보정했습니다.`);
+      else if (scoreAdjusted && roundScore(awardedScore - returnedScore) !== verifiedIncrease) {
+        reviewReasons.push(`${example.questionNumber} 세부 문항 점수를 배점 항목 합계 ${roundScore(awardedScore)}점으로 보정했습니다.`);
+      }
       return {
         exampleAnswerId: example.id,
         questionNumber: example.questionNumber,
@@ -2380,6 +2410,9 @@ ${JSON.stringify(roster)}
       }
       if (!linkedIssues.length && !checks.length) {
         if (verifiedReadings.length) row.evidence = verifiedReadings.map((example) => `${example.questionNumber}: ${example.evidence}`).join("\n");
+        if (linked.some((example) => example.pointResults.some((point) => point.numericValueAdjusted))) {
+          row.feedback = "분수 표기를 같은 값으로 환산해 최종 답 배점에 반영했습니다.";
+        }
         continue;
       }
       const byExample = linkedIssues.map((example) => `${example.questionNumber} 검산: ${example.fractionMathCheck.message}`);

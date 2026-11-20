@@ -1237,7 +1237,7 @@ test("mixed number positions correct a collapsed display and trigger an enlarged
   }
   const split = await grade(mixed);
   assert.equal(split.totalScore, 2);
-  assert.match(split.questionResults[0].answerReading, /최종 답 6 3\/4$/);
+  assert.match(split.questionResults[0].answerReading, /최종 답 6과 3\/4$/);
   assert.equal(split.exampleAnswerResults[0].pointResults[1].awardedScore, 0);
   const needsReread = await grade(improper, { modelGivesPoints: true });
   assert.equal(needsReread.hasMissingScores, true);
@@ -1278,6 +1278,39 @@ test("calculation evidence alone never fills an empty student transcription or q
   assert.equal(result.totalScore, 0);
   assert.equal(result.questionResults[0].answerReading, "판독 불가");
   assert.equal(result.hasMissingScores, true);
+});
+
+test("equivalent fractions earn value-only points even when Gemini marks their notation wrong", () => {
+  const correct = "9/16 × 12 = 27/4";
+  const evaluate = ({ finalAnswer = "6 3/4", work = "27/4", criterion = "최종 답이 정확함",
+    element = "분수 곱셈", returnedPoints = [{ pointItemId: "p", earned: false, awardedScore: 0, confidence: "high" }], multiple = false } = {}) => {
+    const pointItems = [{ id: "p", criterion, score: 2 }, ...(multiple ? [{ id: "process", criterion: "풀이 과정이 정확함", score: 1 }] : [])];
+    return AI.normalizeGradingResult({
+      totalScore: 0, summary: "27/4가 아니어서 오답입니다.",
+      questionResults: [{ criterionId: "r", score: 0, answerReading: finalAnswer, evidence: "표기가 달라 오답", feedback: "오답", confidence: "high" }],
+      exampleAnswerResults: [{ exampleAnswerId: "e", answerReading: finalAnswer, awardedScore: 0, evidence: "표기가 달라 오답", pointResults: returnedPoints }],
+    }, {
+      totalScore: multiple ? 3 : 2,
+      rubricCriteria: [{ id: "r", questionNumber: "1-(1)", evaluationElement: element, maxScore: multiple ? 3 : 2 }],
+      exampleAnswers: [{ id: "e", questionNumber: "1-(1)", mathNotation: correct, evaluationElementIds: ["r"], pointItems }],
+      independentFractionReadings: [{ exampleAnswerId: "e", questionNumber: "1-(1)", status: "readable", finalAnswer, work }],
+    });
+  };
+  const mixed = evaluate();
+  assert.equal(mixed.totalScore, 2);
+  assert.equal(mixed.needsTeacherReview, false);
+  assert.match(mixed.questionResults[0].answerReading, /27\/4\n최종 답 6과 3\/4$/);
+  assert.match(mixed.exampleAnswerResults[0].pointResults[0].evidence, /‘6과 3\/4’의 값이 예시답과 같습니다/);
+  assert.match(mixed.summary, /값이 같습니다/);
+  assert.doesNotMatch(mixed.summary + mixed.questionResults[0].feedback, /오답/);
+  assert.equal(evaluate({ finalAnswer: "27/4", work: "" }).totalScore, 2);
+  assert.equal(evaluate({ returnedPoints: [] }).hasMissingScores, false);
+  assert.equal(evaluate({ criterion: "예시답안의 핵심 답과 풀이가 정확함" }).totalScore, 2);
+  assert.equal(evaluate({ criterion: "예시답안의 핵심 답과 풀이가 정확함", element: "곱셈의 계산 과정을 쓰기" }).totalScore, 0);
+  assert.equal(evaluate({ finalAnswer: "27/4", criterion: "대분수로 정확히 나타냄" }).totalScore, 0);
+  assert.equal(evaluate({ finalAnswer: "63/4" }).totalScore, 0);
+  const partial = evaluate({ multiple: true, returnedPoints: [{ pointItemId: "p", earned: false, confidence: "high" }, { pointItemId: "process", earned: false, confidence: "high" }] });
+  assert.deepEqual(partial.exampleAnswerResults[0].pointResults.map((item) => item.awardedScore), [2, 0]);
 });
 
 test("matchAnswerPages sends the combined PDF and normalizes roster assignments", async () => {
