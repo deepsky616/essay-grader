@@ -1144,7 +1144,11 @@ test("fraction grading reads ink without teacher materials and rejects a copied 
     { role: "rubric", file: file("rubric-text") }, { role: "example", file: file(leakedKey) },
     { role: "blank", file: file("blank-printed-worksheet") }, { role: "studentAnswer", file: file("student-ink") },
   ];
-  const confident = (finalAnswer, status = "readable") => [{ exampleAnswerId: "a", questionNumber: "2-(3)", confidence: "high", status, finalAnswer, work: "" }];
+  const confident = (finalAnswer, status = "readable") => [{ exampleAnswerId: "a", questionNumber: "2-(3)", confidence: "high", status,
+    finalAnswer, work: "",
+    ...(finalAnswer === "8과 1/8" ? { fractionLayout: "whole_left", wholeNumber: "8", numerator: "1", denominator: "8" }
+      : { fractionLayout: "plain_number", wholeNumber: "", numerator: "", denominator: "" }),
+  }];
   async function grade(readings, overrides = {}) {
     const requests = [];
     const result = await AI.gradeAnswer({
@@ -1188,7 +1192,68 @@ test("fraction grading reads ink without teacher materials and rejects a copied 
   const merged = AI.mergePrecisionGradingResult(wrong, precision, ["r1"], metadata);
   assert.equal(merged.totalScore, 0);
   assert.equal(merged.hasMissingScores, true);
-  assert.match(merged.questionResults[0].answerReading, /1차 7 · 재판독 8과 1\/8/);
+  assert.match(merged.questionResults[0].answerReading, /1차 7 · 재판독 8 1\/8/);
+});
+
+test("mixed number positions correct a collapsed display and trigger an enlarged reread for a plausible mistaken numerator", async () => {
+  const file = (label, type = "application/pdf") => new Blob([label], { type });
+  const metadata = {
+    totalScore: 3, requireBlankComparison: true,
+    rubricCriteria: [{ id: "r", questionNumber: "1-(1)", evaluationElement: "분수 곱셈", maxScore: 3 }],
+    exampleAnswers: [{ id: "e", questionNumber: "1-(1)", mathNotation: "9/16 × 12 = 27/4", evaluationElementIds: ["r"],
+      pointItems: [{ id: "final", criterion: "계산 결과가 정확함", score: 2 }, { id: "steps", criterion: "풀이 과정이 정확함", score: 1 }] }],
+  };
+  const baseFiles = [{ role: "blank", file: file("blank") }, { role: "studentAnswer", file: file("student") }];
+  const mixed = { fractionLayout: "whole_left", wholeNumber: "6", numerator: "3", denominator: "4" };
+  const improper = { fractionLayout: "full_numerator", wholeNumber: "", numerator: "63", denominator: "4" };
+  async function grade(layout, { precision = false, enlarge = precision, finalAnswer = "63/4", modelGivesPoints = false } = {}) {
+    const stages = [];
+    const result = await AI.gradeAnswer({
+      apiKey: VALID_KEY,
+      metadata: { ...metadata, precisionReview: precision, precisionCriterionIds: precision ? ["r"] : [] },
+      files: enlarge ? [...baseFiles, { role: "fractionAnswer", file: file("enlarged", "image/jpeg") }] : baseFiles,
+      onProgress: (message) => stages.push(message),
+      fetchImpl: async (_url, options) => {
+        const body = JSON.parse(options.body);
+        const transcription = body.generationConfig.responseSchema.properties.readings;
+        if (transcription) {
+          const schema = transcription.items;
+          assert.ok(schema.required.includes("fractionLayout") && schema.required.includes("wholeNumber"));
+          assert.doesNotMatch(body.contents[0].parts[0].text, /27\/4/);
+        }
+        const payload = transcription ? { readings: [{
+          exampleAnswerId: "e", questionNumber: "1-(1)", status: "readable", confidence: "high", finalAnswer, work: "", ...layout,
+        }] } : {
+          totalScore: modelGivesPoints ? 2 : 0,
+          questionResults: [{ criterionId: "r", score: modelGivesPoints ? 2 : 0, answerReading: "63/4", confidence: "high" }],
+          exampleAnswerResults: [{ exampleAnswerId: "e", answerReading: "63/4", confidence: "high",
+            pointResults: [{ pointItemId: "final", earned: modelGivesPoints, confidence: "high" }, { pointItemId: "steps", earned: false, confidence: "high" }] }],
+        };
+        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
+      },
+    });
+    if (enlarge && precision) assert.match(stages[0], /확대본에서 분수선과 자연수 위치/);
+    return result;
+  }
+  const split = await grade(mixed);
+  assert.equal(split.totalScore, 2);
+  assert.match(split.questionResults[0].answerReading, /최종 답 6 3\/4$/);
+  assert.equal(split.exampleAnswerResults[0].pointResults[1].awardedScore, 0);
+  const needsReread = await grade(improper, { modelGivesPoints: true });
+  assert.equal(needsReread.hasMissingScores, true);
+  assert.equal(needsReread.totalScore, 0);
+  assert.match(needsReread.summary, /분수선의 경계/);
+  assert.deepEqual(AI.selectFractionCriterionIds(needsReread, metadata), ["r"]);
+  const rechecked = await grade(mixed, { precision: true, finalAnswer: "6과 3/4" });
+  const merged = AI.mergePrecisionGradingResult(needsReread, rechecked, ["r"], metadata);
+  assert.equal(merged.totalScore, 2);
+  assert.equal(merged.hasMissingScores, false);
+  const actualImproper = await grade(improper, { precision: true, modelGivesPoints: true });
+  assert.equal(actualImproper.totalScore, 0);
+  assert.equal(actualImproper.hasMissingScores, false);
+  assert.match(actualImproper.questionResults[0].answerReading, /최종 답 63\/4$/);
+  assert.equal((await grade(improper, { precision: true, enlarge: false })).hasMissingScores, true);
+  assert.equal((await grade(mixed, { finalAnswer: "73/4" })).hasMissingScores, true);
 });
 
 test("calculation evidence alone never fills an empty student transcription or qualifies for points", () => {
