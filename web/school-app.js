@@ -730,7 +730,7 @@ function designEditor(design, course) {
       </section>
 
       <section class="design-editor-section">
-        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 평가요소를 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
+        <div class="editor-section-title rubric-section-title"><div><span>2</span><strong>문제별 채점기준 입력</strong><p>각 평가요소마다 위에서 설정한 성취수준을 작성합니다. 3번 예시답안에서 채점기준을 선택하면 문제 번호와 배점이 자동으로 연결됩니다.</p></div><button type="button" data-add-rubric>＋ 평가요소 추가</button></div>
         <div class="question-score-summary" data-question-score-summary aria-live="polite"></div>
         <div class="rubric-ai-launch">
           <div><strong>채점기준을 AI로 만들기</strong><span>문제별 평가요소와 채점수준 수를 확인하면 예시답안 배점에 맞춰 기준을 한 번에 생성합니다.</span></div>
@@ -865,7 +865,7 @@ function exampleEditorRow(item, options = {}) {
   const evaluationElementIds = Array.isArray(item.evaluationElementIds) ? item.evaluationElementIds.map(String) : [];
   return `<article class="example-editor-card" data-example-row data-row-id="${escapeHtml(item.id || "")}" data-evaluation-element-ids="${escapeHtml(JSON.stringify(evaluationElementIds))}" data-evaluation-links-touched="${Array.isArray(item.evaluationElementIds) ? "true" : "false"}">
     <div class="example-editor-head"><div class="example-score-fields"><label>문제 번호<input name="exampleQuestion" value="${escapeHtml(item.questionNumber || "")}" placeholder="예: 1 또는 1-(1)" required></label><span class="example-total-score">총 <b data-example-point-total>${formatScore(maxScore)}</b>점</span></div><button type="button" data-remove-example>삭제</button></div>
-    <section class="example-evaluation-linker"><div><strong>평가요소 연결</strong><small>이 예시답안을 평가하는 요소를 선택하세요. 문제 번호가 자동 입력되고, 여러 개를 선택하면 배점이 균등하게 나뉩니다.</small></div><div class="example-evaluation-options" data-example-evaluation-elements></div><p data-example-evaluation-summary>2번의 평가요소를 불러오는 중입니다.</p></section>
+    <section class="example-evaluation-linker"><div><strong>채점기준 연결</strong><small>이 예시답안의 배점을 반영할 채점기준을 선택하세요. 문제 번호가 자동 입력되고, 여러 개를 선택하면 총 배점이 중복되지 않도록 균등하게 나뉩니다.</small></div><div class="example-evaluation-options" data-example-evaluation-elements></div><p data-example-evaluation-summary>2번의 채점기준을 불러오는 중입니다.</p></section>
     <section class="example-point-editor"><div class="example-point-editor-head"><div><strong>문제 배점 항목</strong><small>각 항목은 충족하면 입력 점수, 충족하지 못하면 0점입니다.</small></div><button type="button" data-add-example-point>＋ 배점 추가</button></div><div class="example-point-auto-builder"><div><strong>부분점수 자동 구성</strong><span>총 배점과 개별 기준 수를 입력하면 0.5점 단위로 균등 배분합니다.</span></div><label>총 합산 배점 <b><input data-example-auto-total type="number" min="0.5" max="1000" step="0.5" value="${maxScore || ""}" placeholder="예: 6"><small>점</small></b></label><label>개별 기준 수 <b><input data-example-auto-count type="number" min="1" max="20" step="1" value="${pointItems.length}"><small>개</small></b></label><button type="button" data-build-example-points>균등 배점 만들기</button></div><div data-example-points>${pointItems.map(examplePointEditorRow).join("")}</div><p>예: 총 6점·기준 3개는 각 2점으로 생성되며 AI가 충족한 점수만 합산합니다. 배점 항목이 1개뿐이면 답이 틀렸을 때 해당 문제는 0점입니다.</p></section>
     <label>예시 답안 <small>풀이 과정과 정답을 교사가 바로 이해할 수 있는 문장으로 입력하세요.</small><textarea name="exampleText" rows="4" placeholder="예: 책가도에 사용된 물건과 각각의 상징적 의미를 알맞게 설명한다.">${escapeHtml(friendlyAnswerText)}</textarea></label>
     <div class="example-detail-grid"><details class="example-math-disclosure" data-example-math-disclosure ${options.mathOpen ? "open" : ""}><summary><strong>쉬운 수식 입력</strong><span>${friendlyMath ? "입력된 수식 있음" : "예: 180 ÷ 720 × 100 = 25%"}</span><b aria-hidden="true">열기</b></summary><div class="example-math-field"><div class="fraction-builder"><div class="fraction-stack"><input data-fraction-numerator aria-label="분자" placeholder="분자 예: 1"><i></i><input data-fraction-denominator aria-label="분모" placeholder="분모 예: 2"></div><button type="button" data-build-fraction>1/2 형태로 추가</button></div><div class="math-quick-buttons" aria-label="수학 기호 빠른 입력"><button type="button" data-insert-math="+">+ 덧셈</button><button type="button" data-insert-math="−">− 뺄셈</button><button type="button" data-insert-math="×">× 곱하기</button><button type="button" data-insert-math="÷">÷ 나누기</button><button type="button" data-insert-math="=">= 같음</button><button type="button" data-insert-math="%">% 백분율</button></div><label class="latex-helper">수식 내용 <small>+, −, ×, ÷, %, 1/2처럼 그대로 입력하세요.</small><textarea name="exampleMath" rows="3" placeholder="예: 180 ÷ 720 × 100 = 25%">${escapeHtml(friendlyMath)}</textarea></label><div class="math-preview" data-math-preview aria-label="수식 미리보기"></div></div></details><label>예시 답안 설명 <small>표·그림·도형·그래프 등 글로 보완할 내용을 입력하세요.</small><textarea name="exampleVisual" rows="3" placeholder="예: 표의 물건과 의미가 각 행에 짝지어져 있으며, 그림의 주요 특징이 정확하다.">${escapeHtml(friendlyVisualDescription)}</textarea></label></div>
@@ -1345,16 +1345,23 @@ function syncExampleEvaluationElementOptions(form) {
       ? currentIds
       : inferredExampleEvaluationElementIds(row.querySelector('[name="exampleQuestion"]')?.value, elements);
     const selected = new Set(selectedIds);
+    const total = Array.from(row.querySelectorAll('[name="examplePointScore"]')).reduce((sum, input) => sum + positiveDesignScore(input.value), 0);
+    const selectedElementIds = elements.filter((item) => selected.has(item.id)).map((item) => item.id);
+    const selectedScores = allocateQuestionScore(total, selectedElementIds.length || 1);
+    const scoreById = new Map(selectedElementIds.map((id, index) => [id, selectedScores[index] || 0]));
     container.innerHTML = elements.length
-      ? elements.map((item) => `<label class="example-evaluation-option"><input name="exampleEvaluationElement" type="checkbox" value="${escapeHtml(item.id)}" ${selected.has(item.id) ? "checked" : ""}><span><strong>${escapeHtml(item.evaluationElement)}</strong><small>${item.questionNumber ? `현재 문제 ${escapeHtml(item.questionNumber)}` : "문제 번호 자동 입력"}</small></span></label>`).join("")
-      : '<span class="example-evaluation-empty">2번에서 평가요소를 먼저 추가해 주세요.</span>';
+      ? elements.map((item) => {
+        const questionLabel = item.questionNumber ? `연결 문제 ${escapeHtml(item.questionNumber)}` : "문제 번호 자동 입력";
+        const scoreLabel = selected.has(item.id) ? ` · ${formatScore(scoreById.get(item.id) || 0)}점 반영` : "";
+        return `<label class="example-evaluation-option"><input name="exampleEvaluationElement" type="checkbox" value="${escapeHtml(item.id)}" ${selected.has(item.id) ? "checked" : ""}><span><strong>${escapeHtml(item.evaluationElement)}</strong><small>${questionLabel}${scoreLabel}</small></span></label>`;
+      }).join("")
+      : '<span class="example-evaluation-empty">2번에서 채점기준을 먼저 추가해 주세요.</span>';
     const checkedIds = Array.from(container.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value);
     row.dataset.evaluationElementIds = JSON.stringify(checkedIds);
-    const total = Array.from(row.querySelectorAll('[name="examplePointScore"]')).reduce((sum, input) => sum + positiveDesignScore(input.value), 0);
     const summary = row.querySelector("[data-example-evaluation-summary]");
     if (!summary) return;
     if (!checkedIds.length) {
-      summary.textContent = "평가요소를 선택하지 않으면 문제 번호가 같은 요소에 배점이 자동 배분됩니다.";
+      summary.textContent = "채점기준을 선택하지 않으면 문제 번호가 같은 채점기준에 배점이 자동 배분됩니다.";
       return;
     }
     const scores = allocateQuestionScore(total, checkedIds.length);
@@ -1425,8 +1432,8 @@ function syncQuestionScoreUI(form) {
     const linkedLabels = linkedAllocations.questionLabels.get(index) || [];
     if (summary) summary.textContent = questionScore
       ? linkedLabels.length
-        ? `예시답안 ${linkedLabels.join(", ")} 연결 · 이 평가요소 ${formatScore(targetMax)}점`
-        : `문제 ${questionNumber} 배점 ${formatScore(questionScore)}점 중 이 평가요소 ${formatScore(targetMax)}점`
+        ? `예시답안 ${linkedLabels.join(", ")} 연결 · 이 채점기준 ${formatScore(targetMax)}점`
+        : `문제 ${questionNumber} 배점 ${formatScore(questionScore)}점 중 이 채점기준 ${formatScore(targetMax)}점`
       : "3번 예시답안에서 같은 문제 번호의 배점을 입력해 주세요.";
     group.classList.toggle("is-score-unlinked", !questionScore || targetMax <= 0);
   });
@@ -1434,6 +1441,12 @@ function syncQuestionScoreUI(form) {
   const summary = form.querySelector("[data-question-score-summary]");
   if (summary) {
     const entries = Array.from(questionScores.entries());
+    const reflectedScores = new Map();
+    elements.forEach((item, index) => {
+      const questionNumber = questionScoreGroupKey(item.questionNumber);
+      if (!questionNumber) return;
+      reflectedScores.set(questionNumber, (reflectedScores.get(questionNumber) || 0) + Number(allocations.get(index) || 0));
+    });
     const groupedLabels = new Map();
     form.querySelectorAll("[data-example-row]").forEach((row) => {
       const label = row.querySelector('[name="exampleQuestion"]')?.value.trim() || "";
@@ -1443,9 +1456,11 @@ function syncQuestionScoreUI(form) {
       groupedLabels.get(key).push(label);
     });
     const total = entries.reduce((sum, [, score]) => sum + score, 0);
-    summary.classList.toggle("is-warning", !entries.length);
+    const reflectedTotal = Array.from(reflectedScores.values()).reduce((sum, score) => sum + score, 0);
+    const totalsMatch = Math.abs(total - reflectedTotal) <= 0.001;
+    summary.classList.toggle("is-warning", !entries.length || !totalsMatch);
     summary.innerHTML = entries.length
-      ? `<div><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b></div><ul>${entries.map(([question, score]) => { const labels = groupedLabels.get(question) || []; const detail = labels.length > 1 ? `<span>${escapeHtml(labels.join(" + "))} 합산</span>` : ""; return `<li>문제 ${escapeHtml(question)} <strong>${formatScore(score)}점</strong>${detail}</li>`; }).join("")}</ul>`
+      ? `<div><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b><span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span></div><ul>${entries.map(([question, score]) => { const labels = groupedLabels.get(question) || []; const reflected = reflectedScores.get(question) || 0; const details = [labels.length > 1 ? `${labels.join(" + ")} 합산` : "", `채점기준 반영 ${formatScore(reflected)}점${Math.abs(score - reflected) <= 0.001 ? "" : " · 확인 필요"}`].filter(Boolean); return `<li>문제 ${escapeHtml(question)} <strong>${formatScore(score)}점</strong>${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</li>`; }).join("")}</ul>`
       : `<div><strong>문제별 배점을 먼저 입력해 주세요.</strong><span>3번 예시답안의 문제 번호와 배점을 입력하면 이곳에 총점이 표시됩니다.</span></div>`;
   }
   syncRubricAiScoreSummaries(form);
