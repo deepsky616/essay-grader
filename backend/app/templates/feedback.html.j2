@@ -1,0 +1,46 @@
+<section class="feedback">
+  <header>
+    <h1>{{ context.subject }} 평가 결과</h1>
+    <p class="meta">
+      {{ context.grade }}학년 · {{ context.student_number }}번 · {{ context.student_name }}
+    </p>
+  </header>
+
+  <div class="score-line">
+    <strong>{{ context.total_points }}점 만점에 {{ context.total_score }}점</strong>
+    <span class="level">성취수준 {{ context.level }}수준</span>
+  </div>
+
+  {% if context.level_description %}
+    <p class="level-desc">{{ context.level_description }}</p>
+  {% endif %}
+
+  {% if generated.degraded %}
+    <p class="warning">일부 문장은 외부 생성 대신 확정된 채점 기준으로 만든 대체 문장입니다.</p>
+  {% endif %}
+
+  <table>
+    <thead>
+      <tr><th>문항</th><th>점수</th><th>선생님 말씀</th></tr>
+    </thead>
+    <tbody>
+      {% for comment in generated.item_comments %}
+        <tr>
+          <td>{{ comment.item_no }}번</td>
+          <td>{{ comment.score }} / {{ comment.max }}</td>
+          <td>{{ personalize(comment.comment, context.student_name) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="summary">
+    <h2>총평</h2>
+    <p>{{ personalize(generated.summary, context.student_name, true) }}</p>
+  </div>
+
+  <div class="next-step">
+    <h2>다음에 해볼 것</h2>
+    <p>{{ personalize(generated.next_step, context.student_name) }}</p>
+  </div>
+</section>
