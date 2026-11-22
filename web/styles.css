@@ -773,6 +773,34 @@ a { color: inherit; text-decoration: none; }
 .design-file-status[data-file-state="selected"] > span { color: var(--blue); font-weight: 850; }
 .design-file-status[data-file-state="saved"] > span { color: var(--ink); font-weight: 850; }
 .design-file-status[data-file-state="removed"] > span { color: #8b2e20; font-weight: 850; }
+.design-fraction-review { display: grid; gap: 9px; margin-top: 12px; }
+.design-fraction-review details { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.design-fraction-review summary { cursor: pointer; font-weight: 800; }
+.design-fraction-review summary small { margin-left: 6px; color: var(--muted); font-weight: 500; }
+.design-fraction-review ol { padding-left: 24px; line-height: 1.7; }
+.kordoc-file-row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.kordoc-file-row label { display: grid; gap: 4px; max-width: 100%; }
+.kordoc-file-row input { max-width: 100%; }
+.design-fraction-review [data-kordoc-status] { margin: 8px 0 0; }
+.design-fraction-review > div:empty { display: none; }
+.design-fraction-review .needs-review { color: #8b2e20; font-weight: 800; }
+.fraction-review-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 6px; padding: 10px 12px; border: 1px solid #eed6b5; border-radius: 10px; background: #fff8ed; }
+.fraction-review-row div { display: grid; flex: 1 1 220px; gap: 4px; overflow-wrap: anywhere; }
+.fraction-review-row button { flex: 0 0 auto; }
+.design-fraction-review details .fraction-review-row:first-of-type { margin-top: 8px; }
+.design-fraction-dialog { width: min(1060px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); }
+.design-fraction-dialog::backdrop { background: rgba(21,30,48,.55); }
+.design-fraction-dialog-panel { display: grid; gap: 14px; padding: clamp(12px, 3vw, 22px); }
+.design-fraction-dialog header { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.design-fraction-dialog h3, .design-fraction-dialog h4 { margin: 0; }
+.design-fraction-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+.design-fraction-comparison section { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; align-content: start; }
+.design-fraction-comparison div > section + section { margin-top: 8px; }
+.design-fraction-comparison canvas { max-width: 100%; height: auto; background: white; }
+.design-fraction-comparison iframe { width: 100%; height: clamp(230px, 48dvh, 540px); border: 0; }
+.design-fraction-comparison pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.design-fraction-comparison p { margin: 0; color: var(--muted); }
+.design-fraction-dialog-panel > button { justify-self: end; }
 .document-analysis-progress { margin: -3px 0 16px; padding: 15px 16px; border: 1px solid rgba(49,84,214,.28); border-radius: 13px; background: linear-gradient(135deg,rgba(233,239,255,.88),rgba(255,255,255,.96)); box-shadow: 0 8px 20px rgba(24,33,56,.06); }
 .document-analysis-progress[hidden] { display: none; }
 .document-analysis-progress-head { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 11px; align-items: center; }
