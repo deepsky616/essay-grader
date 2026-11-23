@@ -3990,6 +3990,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     exampleAnswers: design.exampleAnswers,
     recognitionWarnings,
     requireBlankComparison: true,
+    verifyWrittenText: true,
     identityRedacted: true,
     student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
   };
@@ -4757,7 +4758,8 @@ function nearestScoreChoice(value, choices) {
   return choices.reduce((nearest, candidate) => Math.abs(candidate - numeric) < Math.abs(nearest - numeric) ? candidate : nearest, choices[0]);
 }
 
-function exampleAnswerPointStatus(score, maxScore, missing = false) {
+function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPending = false) {
+  if (missing && writtenPending) return { state: "unlinked", label: "판독 확인 필요" };
   if (missing) return { state: "unlinked", label: "세부 채점 없음" };
   const earned = Math.max(0, Number(score || 0));
   const maximum = Math.max(0, Number(maxScore || 0));
@@ -4930,6 +4932,7 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         evidence: storedPoint?.evidence || "기존 결과에는 이 배점 항목의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
         confidence: ["high", "medium", "low"].includes(storedPoint?.confidence) ? storedPoint.confidence : "low",
         missingResult: !storedPoint || Boolean(storedPoint.missingResult),
+        writtenPending: Boolean(storedPoint?.writtenPending),
         teacherAdjusted: Boolean(storedPoint?.teacherAdjusted),
       };
     });
@@ -4979,10 +4982,11 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
     return `<section class="question-score-group">
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th scope="col">문제·배점 항목</th><th scope="col">획득 점수 / 배점</th><th scope="col">채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
-        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult);
+        const needsWrittenReview = item.writtenPending && item.missingResult;
+        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
-        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${scoreChoices.map((score) => `<option value="${score}" ${Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
+        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
       }).join("") || `<tr><td colspan="3" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
     </section>`;
   }).join("");
@@ -5186,8 +5190,14 @@ async function openStudentResult(course, targetStudents, studentId) {
     const target = pointTarget(exampleIndex, pointIndex);
     if (!target) return;
     const select = row.querySelector("[data-example-point-score]");
-    if (select) select.value = String(nearestScoreChoice(target.awardedScore || 0, pointScoreChoices(target.maxScore, target.awardedScore)));
-    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult);
+    if (select) {
+      if (target.writtenPending && !select.querySelector('option[value=""]')) {
+        select.insertAdjacentHTML("afterbegin", '<option value="" disabled>미확정</option>');
+      }
+      select.value = target.missingResult && target.writtenPending ? ""
+        : String(nearestScoreChoice(target.awardedScore || 0, pointScoreChoices(target.maxScore, target.awardedScore)));
+    }
+    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult, target.writtenPending);
     const statusLabel = row.querySelector("[data-point-status]");
     if (statusLabel) {
       statusLabel.textContent = status.label;

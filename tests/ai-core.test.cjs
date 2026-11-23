@@ -8,6 +8,89 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
+async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata } = {}) {
+  const settings = metadata || {
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [7] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }, { score: 0, criterion: "오답 또는 미응답" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "상민", maxScore: 1, evaluationElementIds: ["r1"], evaluationElementScores: { r1: 1 },
+      pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
+  };
+  let calls = 0;
+  const narrative = "학생이 세금을 내는 이유도 자세히 설명했습니다.";
+  const response = (body) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] }));
+  const result = await AI.gradeAnswer({
+    apiKey: VALID_KEY,
+    metadata: settings,
+    files: [
+      { role: "studentAnswer", file: new File(["answer"], "student.pdf", { type: "application/pdf" }) },
+      { role: "blank", file: new File(["blank"], "blank.pdf", { type: "application/pdf" }) },
+      { role: "example", file: new File(["example"], "example.pdf", { type: "application/pdf" }) },
+    ],
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      const parts = JSON.parse(options.body).contents[0].parts;
+      if (calls <= 2) {
+        assert.match(parts[0].text, /학생 답안의 글자 전사만/);
+        assert.doesNotMatch(parts[0].text, /상민|세금|신분 용어/);
+        assert.equal(parts.filter((part) => part.inlineData).length, 2);
+        const value = calls === 1 ? first : second;
+        return response({ readings: [{
+          exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1,
+          ...(typeof value === "string" ? { status: value ? "readable" : "blank", transcript: value } : value),
+        }] });
+      }
+      assert.match(parts[0].text, /independentTextReadings/);
+      return response({
+        questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "신분 용어", answerReading: answer, score: earned ? 1 : 0, maxScore: 1, confidence: "high", evidence: narrative, feedback: narrative }],
+        exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
+          pointResults: [{ pointItemId: "p1", earned, awardedScore: earned ? 1 : 0, maxScore: 1, evidenceQuote: quote, confidence: "high", evidence: narrative }] }],
+        summary: narrative, strengths: [narrative],
+      });
+    },
+  });
+  assert.equal(calls, 3);
+  return { result, settings };
+}
+
+test("written grading uses two blind readings and excludes invented grading feedback", async () => {
+  const { result } = await gradeWrittenTestAnswer();
+  assert.equal(result.totalScore, 1);
+  assert.equal(result.independentTextReadings[0].transcript, "상민");
+  assert.match(result.questionResults[0].answerReading, /상민/);
+  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /독립 판독 근거 · ‘상민’/);
+  assert.doesNotMatch(JSON.stringify(result), /세금/);
+});
+
+test("written grading holds confident wrong transcriptions and unsupported quotes", async () => {
+  const misread = await gradeWrittenTestAnswer({ answer: "천인", quote: "천인" });
+  const invented = await gradeWrittenTestAnswer({ quote: "세금" });
+  for (const { result } of [misread, invented]) {
+    assert.equal(result.totalScore, 0);
+    assert.equal(result.needsTeacherReview, true);
+    assert.equal(result.hasMissingScores, true);
+    assert.equal(result.exampleAnswerResults[0].answerReading, "상민");
+    assert.equal(result.exampleAnswerResults[0].pointResults[0].missingResult, true);
+    assert.doesNotMatch(result.exampleAnswerResults[0].pointResults[0].evidence, /세금|천인/);
+  }
+  assert.match(misread.result.reviewReasons.join("\n"), /독립 판독과 다릅니다/);
+  assert.match(invented.result.reviewReasons.join("\n"), /독립 판독문에서 확인하지 못했습니다/);
+});
+
+test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {
+  const uncertain = await gradeWrittenTestAnswer({ second: "천인" });
+  const { result: accepted } = await gradeWrittenTestAnswer();
+  assert.equal(uncertain.result.totalScore, 0);
+  assert.match(uncertain.result.exampleAnswerResults[0].answerReading, /판독 불일치.*상민.*천인/);
+  const merged = AI.mergePrecisionGradingResult(uncertain.result, accepted, ["r1"], uncertain.settings);
+  assert.equal(merged.totalScore, 0);
+  assert.equal(merged.hasMissingScores, true);
+  assert.equal(merged.independentTextReadings[0].status, "disagreement");
+  const { result: blank } = await gradeWrittenTestAnswer({ first: "", answer: "무응답", quote: "", earned: false });
+  assert.equal(blank.independentTextReadings[0].status, "blank");
+  assert.equal(blank.exampleAnswerResults[0].answerReading, "무응답");
+  assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
+});
+
 test("evaluation examples verify fraction equality and the separately entered answer", () => {
   assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "27/4 = 6과 3/4", answerText: "6 3/4" }), []);
   assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "12 × 2/9 = 8/3 = 2와 2/9" }), [
