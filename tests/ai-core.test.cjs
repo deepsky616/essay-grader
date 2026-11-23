@@ -8,6 +8,56 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
+test("evaluation examples verify fraction equality and the separately entered answer", () => {
+  assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "27/4 = 6과 3/4", answerText: "6 3/4" }), []);
+  assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "12 × 2/9 = 8/3 = 2와 2/9" }), [
+    "‘8/3 = 2 2/9’의 양쪽 값이 다릅니다.",
+  ]);
+  assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "65/8 = 7" }), ["‘65/8 = 7’의 양쪽 값이 다릅니다."]);
+  assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "13/6 × 15/4 = 65/8", answerText: "정답: 7" }), [
+    "예시 답안 7과 수식의 최종 값 65/8이 다릅니다.",
+  ]);
+  assert.deepEqual(AI.exampleFractionEquationIssues({ answerText: "3/0" }), ["분모가 0인 분수가 있습니다."]);
+  assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "□ + 1/4 = 11/12" }), []);
+});
+
+test("evaluation design keeps independent readings and flags only conflicting or uncertain fractions", async () => {
+  const file = new File(["design"], "평가기준안.pdf", { type: "application/pdf" });
+  const image = new File(["crop"], "문제-1-확대.jpg", { type: "image/jpeg" });
+  const first = [
+    { questionNumber: "1. (1)", mathNotation: "27/4" },
+    { questionNumber: "(4)", mathNotation: "12 × 2/9 = 8/3 = 2와 2/3" },
+    { questionNumber: "2", mathNotation: "1/4" },
+  ];
+  const second = [
+    { questionNumber: "1-(1)", mathNotation: "6과 3/4", sourceImageIndex: 1 },
+    { questionNumber: "1-(4)", mathNotation: "12 × 2/9 = 8/3 = 2와 2/9", sourceImageIndex: 1 },
+    { questionNumber: "2", mathNotation: "1/4", mathLines: [{ transcription: "1/4", confidence: "low" }] },
+  ];
+  let requests = 0;
+  const result = await AI.extractEvaluationDocument({
+    apiKey: VALID_KEY, file, kind: "design", visionFiles: [image],
+    fetchImpl: async (_url, options) => {
+      requests += 1;
+      if (requests === 2) {
+        const request = JSON.parse(options.body);
+        assert.match(request.contents[0].parts[0].text, /1차에서 찾은 문항 번호: \["1-\(1\)","1-\(4\)","2"\]/);
+        assert.doesNotMatch(request.contents[0].parts[0].text, /27\/4|12 × 2\/9/);
+      }
+      const text = JSON.stringify({ exampleAnswers: requests === 1 ? first : second, notes: [] });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+    },
+  });
+  assert.equal(requests, 2);
+  const [equivalent, conflict, uncertain] = result.exampleAnswers.map((item) => item.mathReview);
+  assert.deepEqual(equivalent.reasons, []);
+  assert.equal(conflict.first, "12 × 2/9 = 8/3 = 2와 2/3");
+  assert.equal(conflict.second, "12 × 2/9 = 8/3 = 2와 2/9");
+  assert.equal(conflict.sourceImageIndex, 1);
+  assert.equal(conflict.reasons.length, 1);
+  assert.match(uncertain.reasons[0], /확실히 읽지 못했습니다/);
+});
+
 function loadSchoolMathHelpers() {
   const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
   const start = source.indexOf("function toTeacherFriendlyMath");

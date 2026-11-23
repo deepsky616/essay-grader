@@ -718,6 +718,7 @@ function designEditor(design, course) {
         <div class="editor-section-title"><div><span>AI</span><strong>평가기준안 한 번에 자동 입력</strong><p>성취기준·성취수준·문제별 채점기준·예시답안이 포함된 PDF 또는 사진을 올리면 아래 1~3을 함께 작성합니다.</p></div></div>
         ${designFilePickerMarkup({ label: "평가기준안 PDF·사진", inputName: "designDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.sourceFile, emptyText: "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요.", removeName: "removeDesignDocument", action: '<button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("design")}
+        <button type="button" data-jump-example-review hidden>확인 필요한 문항 보기</button>
       </section>
 
       <div class="achievement-threshold-placement">
@@ -747,6 +748,7 @@ function designEditor(design, course) {
         <div class="editor-section-title"><div><span>3</span><strong>문제별 예시답안 입력</strong><p>한 문제 안에 계산식·정답처럼 여러 배점 항목을 추가할 수 있습니다. AI는 충족한 항목의 점수만 더하며, 배점 항목이 1개이면 틀린 답은 0점으로 채점합니다.</p></div><button type="button" data-add-example>＋ 예시답안 추가</button></div>
         ${designFilePickerMarkup({ label: "예시답안 PDF·사진", inputName: "exampleDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.exampleFile, emptyText: "수식·도형이 있는 원본도 그대로 보관합니다.", removeName: "removeExampleDocument", action: '<button type="button" data-extract-document="example">AI로 예시답안 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("example")}
+        ${exampleMathReviewMarkup()}
         <div data-example-rows>${exampleAnswers.map((item) => exampleEditorRow(item, { mathOpen: course.subject === "수학" })).join("")}</div>
       </section>
       <section class="design-editor-section blank-answer-section">
@@ -1569,7 +1571,23 @@ function bindDesignTab(course) {
   }));
   const form = app.querySelector("#design-form");
   if (!form) return;
+  const savedDesign = course.designs?.find((item) => item.id === form.dataset.designId);
+  form._mathReviewFiles = { design: savedDesign?.sourceFile, example: savedDesign?.exampleFile };
+  const savedReviews = new Map((savedDesign?.exampleAnswers || []).map((item) => [item.id, item.mathReview]));
+  form.querySelectorAll("[data-example-row]").forEach((row) => { row._mathReview = savedReviews.get(row.dataset.rowId); });
+  const mathDialog = form.querySelector("[data-example-review-dialog]");
+  mathDialog.addEventListener("close", () => {
+    mathDialog._reviewRow = null;
+    mathDialog.querySelector("iframe").removeAttribute("src");
+    mathDialog.querySelector("img").removeAttribute("src");
+    if (mathDialog._sourceUrl) {
+      URL.revokeObjectURL(mathDialog._sourceUrl);
+      previewUrls = previewUrls.filter((url) => url !== mathDialog._sourceUrl);
+      mathDialog._sourceUrl = "";
+    }
+  });
   refreshMathPreviews(form);
+  renderExampleMathReview(form);
   syncQuestionScoreUI(form);
   form.querySelectorAll("[data-design-file-picker]").forEach(syncDesignFilePicker);
   form.querySelectorAll("[data-cancel-design]").forEach((button) => button.addEventListener("click", () => { editingDesignId = ""; renderCourse(course.id, "designs"); }));
@@ -1598,6 +1616,7 @@ function bindDesignTab(course) {
       if (event.target.name === "designDocument") form._designSourceFile = event.target.files?.[0] || null;
       syncDesignFilePicker(picker);
     }
+    if (event.target.matches('[name="exampleQuestion"], [name="exampleMath"], [name="exampleText"]')) renderExampleMathReview(form);
   });
   form.addEventListener("input", (event) => {
     if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
@@ -1628,6 +1647,25 @@ function bindDesignTab(course) {
 }
 
 function handleDesignEditorClick(event, form, course) {
+  const reviewButton = event.target.closest("[data-view-example-review]");
+  if (reviewButton) {
+    const row = form.querySelectorAll("[data-example-row]")[Number(reviewButton.dataset.viewExampleReview)];
+    if (row) openExampleMathReview(form, row);
+    return;
+  }
+  if (event.target.closest("[data-jump-example-review]")) {
+    const firstButton = form.querySelector("[data-view-example-review]");
+    if (firstButton) firstButton.focus();
+    return;
+  }
+  if (event.target.closest("[data-close-example-review]")) {
+    form.querySelector("[data-example-review-dialog]").close();
+    return;
+  }
+  if (event.target.closest("[data-apply-example-review]")) {
+    applyExampleMathReview(form);
+    return;
+  }
   const clearDesignFile = event.target.closest("[data-clear-design-file]");
   if (clearDesignFile) {
     const picker = clearDesignFile.closest("[data-design-file-picker]");
@@ -1741,7 +1779,7 @@ function handleDesignEditorClick(event, form, course) {
   const addExample = event.target.closest("[data-add-example]");
   if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", pointItems: [{ id: crypto.randomUUID(), score: "", criterion: "" }], answerText: "", mathNotation: "", visualDescription: "" }, { mathOpen: course.subject === "수학" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
-  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); return; }
+  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); renderExampleMathReview(form); return; }
   const addExamplePoint = event.target.closest("[data-add-example-point]");
   if (addExamplePoint) {
     const card = addExamplePoint.closest("[data-example-row]");
@@ -2028,6 +2066,178 @@ function renderMathPreview(textarea) {
   catch { preview.textContent = expression; }
 }
 
+function exampleMathReviewMarkup() {
+  return `<aside class="example-math-review" data-example-math-review hidden>
+    <strong data-example-review-heading aria-live="polite"></strong>
+    <ul data-example-review-list></ul>
+  </aside>
+  <dialog class="example-math-dialog" data-example-review-dialog aria-labelledby="example-review-title">
+    <div class="example-math-dialog-content">
+      <header><h3 id="example-review-title"></h3><button type="button" data-close-example-review>닫기</button></header>
+      <div class="example-math-comparison">
+        <section class="example-review-source">
+          <h4>원본 문서</h4>
+          <p data-example-review-location></p>
+          <canvas aria-label="원본 수식 확대" hidden></canvas>
+          <img alt="예시답안 원본 사진" hidden>
+          <iframe title="예시답안 PDF 원본" hidden></iframe>
+          <a target="_blank" rel="noopener noreferrer" hidden>원본 새 탭에서 보기</a>
+        </section>
+        <div class="example-review-fields">
+          <div><strong>1차 판독</strong><pre data-example-first-reading></pre></div>
+          <div><strong>2차 판독</strong><pre data-example-second-reading></pre></div>
+          <ul data-example-review-reasons></ul>
+          <label>예시 답안<textarea data-example-review-answer rows="2"></textarea></label>
+          <label>수식 내용<textarea data-example-review-math rows="3"></textarea></label>
+          <p data-example-review-message role="status"></p>
+          <button class="primary-action" type="button" data-apply-example-review>입력란에 반영</button>
+        </div>
+      </div>
+    </div>
+  </dialog>`;
+}
+
+function exampleMathReviewReasons(row) {
+  const review = row._mathReview;
+  return [...new Set([
+    ...(review && !review.confirmed ? review.reasons : []),
+    ...ChaejeomAI.exampleFractionEquationIssues({
+      answerText: row.querySelector('[name="exampleText"]').value,
+      mathNotation: row.querySelector('[name="exampleMath"]').value,
+    }),
+  ])];
+}
+
+function renderExampleMathReview(form) {
+  const review = form.querySelector("[data-example-math-review]");
+  const issues = Array.from(form.querySelectorAll("[data-example-row]")).flatMap((row, index) => {
+    const reasons = exampleMathReviewReasons(row);
+    return reasons.length ? [{ index, question: row.querySelector('[name="exampleQuestion"]').value.trim() || index + 1, reasons }] : [];
+  });
+  review.hidden = !issues.length;
+  review.querySelector("[data-example-review-heading]").textContent = issues.length ? `분수·수식 확인 필요 ${issues.length}문항` : "";
+  review.querySelector("[data-example-review-list]").innerHTML = issues.map(({ index, question, reasons }) => `<li>
+    <div><strong>문제 ${escapeHtml(question)}</strong><span>${escapeHtml(reasons[0])}</span></div>
+    <button type="button" data-view-example-review="${index}">원본·판독값 보기</button>
+  </li>`).join("");
+  form.querySelector("[data-jump-example-review]").hidden = !issues.length;
+}
+
+function renderExtractedExampleAnswers(form, examples, course, kind, file, visionFiles) {
+  const items = examples.map((item) => ({
+    ...item, id: crypto.randomUUID(), maxScore: positiveDesignScore(item.maxScore) || "",
+  }));
+  form.querySelector("[data-example-rows]").innerHTML = items.map((item) => exampleEditorRow(item, { mathOpen: course.subject === "수학" })).join("");
+  form._mathReviewFiles[kind] = file;
+  form.querySelectorAll("[data-example-row]").forEach((row, index) => {
+    const item = items[index];
+    if (!item.mathReview) return;
+    const group = questionScoreGroupKey(item.questionNumber);
+    const imageIndex = item.mathReview.sourceImageIndex;
+    const indexed = Number.isInteger(imageIndex) && imageIndex >= 1 && imageIndex <= 24 ? visionFiles[imageIndex - 1]?.reviewRegion : null;
+    const candidates = visionFiles.map((image) => image.reviewRegion).filter((region) => group && region?.question === group);
+    const distinct = [...new Map(candidates.map((region) => [JSON.stringify(region), region])).values()];
+    const region = indexed && (!indexed.question || group === indexed.question) ? indexed : distinct.length === 1 ? distinct[0] : null;
+    const { first, second, reasons } = item.mathReview;
+    row._mathReview = { first, second, reasons, sourceKind: kind, region, confirmed: false };
+  });
+  refreshMathPreviews(form);
+  syncQuestionScoreUI(form);
+}
+
+async function openExampleMathReview(form, row) {
+  const dialog = form.querySelector("[data-example-review-dialog]");
+  const review = row._mathReview;
+  const title = row.querySelector('[name="exampleQuestion"]').value.trim();
+  dialog._reviewRow = row;
+  dialog.querySelector("h3").textContent = title ? `문제 ${title} · 분수·수식 확인` : "분수·수식 확인";
+  dialog.querySelector("[data-example-first-reading]").textContent = review?.first || "이 문항의 1차 판독값이 없습니다.";
+  dialog.querySelector("[data-example-second-reading]").textContent = review?.second || "이 문항의 2차 판독값이 없습니다.";
+  dialog.querySelector("[data-example-review-reasons]").innerHTML = exampleMathReviewReasons(row).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  dialog.querySelector("[data-example-review-answer]").value = row.querySelector('[name="exampleText"]').value;
+  dialog.querySelector("[data-example-review-math]").value = row.querySelector('[name="exampleMath"]').value;
+  dialog.querySelector("[data-example-review-message]").textContent = "";
+  const [canvas, photo, frame, link] = dialog.querySelectorAll("canvas, img, iframe, a");
+  const location = dialog.querySelector("[data-example-review-location]");
+  location.textContent = "연결된 원본이 없습니다. 수식 입력값을 확인해 주세요.";
+  canvas.hidden = photo.hidden = frame.hidden = link.hidden = true;
+  dialog.showModal();
+  const file = review ? form._mathReviewFiles[review.sourceKind] : form._mathReviewFiles.example || form._mathReviewFiles.design;
+  if (!file) return;
+  const region = review?.region;
+  const url = createPreviewUrl(file);
+  dialog._sourceUrl = url;
+  const pdf = file.type === "application/pdf";
+  link.href = pdf ? `${url}#page=${region?.page || 1}&view=FitH` : url;
+  link.hidden = false;
+  if (!pdf) {
+    photo.src = url;
+    photo.hidden = false;
+    location.textContent = file.name;
+    return;
+  }
+  const showPage = () => {
+    frame.src = link.href;
+    frame.hidden = false;
+    location.textContent = region ? `원본 ${region.page}쪽` : "PDF에서 해당 문항을 찾아 확인하세요.";
+  };
+  if (!region || !window.pdfjsLib?.getDocument) { showPage(); return; }
+  location.textContent = "원본의 문항 영역을 확대하고 있습니다.";
+  let loadingTask;
+  try {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+    loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false });
+    const documentPdf = await loadingTask.promise;
+    const page = await documentPdf.getPage(region.page);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: Math.min(2.5, 1600 / Math.max(1, base.width, base.height)) });
+    const width = Math.round(region.width * viewport.width);
+    const height = Math.round(region.height * viewport.height);
+    if (!dialog.open || dialog._sourceUrl !== url) return;
+    if (width < 1 || height < 1 || width * height > 5000000) { showPage(); return; }
+    const image = document.createElement("canvas");
+    image.width = width;
+    image.height = height;
+    await page.render({
+      canvasContext: image.getContext("2d"), viewport,
+      transform: [1, 0, 0, 1, -region.x * viewport.width, -region.y * viewport.height],
+    }).promise;
+    if (!dialog.open || dialog._sourceUrl !== url) return;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(image, 0, 0);
+    canvas.hidden = false;
+    location.textContent = `원본 ${region.page}쪽 · ${region.question ? `문제 ${region.question} 영역` : "판독에 사용한 영역"}`;
+  } catch {
+    if (dialog.open && dialog._sourceUrl === url) showPage();
+  } finally {
+    await loadingTask?.destroy().catch(() => {});
+  }
+}
+
+function applyExampleMathReview(form) {
+  const dialog = form.querySelector("[data-example-review-dialog]");
+  const row = dialog._reviewRow;
+  if (!row?.isConnected) return;
+  const math = row.querySelector('[name="exampleMath"]');
+  const answer = row.querySelector('[name="exampleText"]');
+  math.value = toTeacherFriendlyMath(dialog.querySelector("[data-example-review-math]").value);
+  answer.value = toTeacherFriendlyMath(dialog.querySelector("[data-example-review-answer]").value);
+  renderMathPreview(math);
+  const issues = ChaejeomAI.exampleFractionEquationIssues({ mathNotation: math.value, answerText: answer.value });
+  if (row._mathReview && !issues.length) row._mathReview = { ...row._mathReview, confirmed: true };
+  renderExampleMathReview(form);
+  if (issues.length) {
+    dialog.querySelector("[data-example-review-reasons]").innerHTML = exampleMathReviewReasons(row).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+    dialog.querySelector("[data-example-review-message]").textContent = "입력란에 반영했습니다. 값이 다른 등호를 다시 확인해 주세요.";
+    return;
+  }
+  dialog.close();
+  math.closest("details").open = true;
+  math.focus();
+  showToast("예시답안에 반영했습니다.");
+}
+
 function updateDocumentAnalysisProgress(form, kind, { phase = 0, percent, title, message, status = "running" } = {}) {
   const card = form.querySelector(`[data-document-progress="${kind}"]`);
   if (!card) return;
@@ -2142,6 +2352,8 @@ async function extractDesignDocument(form, kind, course) {
         }
       },
     });
+    if (!form.isConnected) return;
+    if (input.files?.[0] !== file) throw new Error("분석 중 선택한 파일이 바뀌었습니다. 새 파일로 자동 입력을 다시 시작해 주세요.");
     updateDocumentAnalysisProgress(form, kind, {
       phase: 4,
       title: "분석 결과를 화면에 입력하는 중",
@@ -2162,14 +2374,8 @@ async function extractDesignDocument(form, kind, course) {
       form.querySelector("[data-rubric-groups]").innerHTML = rubrics.map((item, index) => rubricEditorGroup({ ...item, id: crypto.randomUUID() }, index, performanceThresholds)).join("");
       const rubricScores = rubricQuestionMaxScoreMap(rubrics);
       const examples = prepareExtractedExampleAnswers(rawExamples, rubricScores);
-      form.querySelector("[data-example-rows]").innerHTML = examples.map((item) => exampleEditorRow({
-        ...item,
-        id: crypto.randomUUID(),
-        maxScore: positiveDesignScore(item.maxScore) || "",
-      }, { mathOpen: course.subject === "수학" })).join("");
+      renderExtractedExampleAnswers(form, examples, course, kind, file, visionFiles);
       form._designSourceFile = file;
-      refreshMathPreviews(form);
-      syncQuestionScoreUI(form);
     } else if (kind === "rubric") {
       const items = normalizeRubricCriteria(result.rubricCriteria || [], performanceThresholds);
       if (!items.length) throw new Error("문서에서 채점기준 행을 찾지 못했습니다.");
@@ -2185,10 +2391,9 @@ async function extractDesignDocument(form, kind, course) {
         scoreLevels: Array.from(group.querySelectorAll("[data-rubric-score]")).map((level) => ({ score: Number(level.querySelector('[name="rubricScore"]')?.value || 0), criterion: level.querySelector('[name="rubricCriterion"]')?.value.trim() || "" })),
       })));
       const items = prepareExtractedExampleAnswers(rawItems, currentScores, rubricScores);
-      form.querySelector("[data-example-rows]").innerHTML = items.map((item) => exampleEditorRow({ ...item, id: crypto.randomUUID(), maxScore: positiveDesignScore(item.maxScore) || "" }, { mathOpen: course.subject === "수학" })).join("");
-      refreshMathPreviews(form);
-      syncQuestionScoreUI(form);
+      renderExtractedExampleAnswers(form, items, course, kind, file, visionFiles);
     }
+    if (kind !== "rubric") renderExampleMathReview(form);
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
     const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
     setDesignStatus(form, `${file.name} ${completion}${note}`);
@@ -2270,7 +2475,13 @@ async function prepareEvaluationReferenceImages(pdfFile) {
           cropCanvas.height = 1;
           if (totalBytes + blob.size > maxBytes) break;
           totalBytes += blob.size;
-          files.push(new File([blob], `evaluation-page-${String(pageNumber).padStart(2, "0")}-${region.label}-${variant.label}.jpg`, { type: "image/jpeg" }));
+          const image = new File([blob], `evaluation-page-${String(pageNumber).padStart(2, "0")}-${region.label}-${variant.label}.jpg`, { type: "image/jpeg" });
+          image.reviewRegion = {
+            page: pageNumber, question: region.question || "",
+            x: region.x / sourceCanvas.width, y: region.y / sourceCanvas.height,
+            width: region.width / sourceCanvas.width, height: region.height / sourceCanvas.height,
+          };
+          files.push(image);
         }
         if (totalBytes >= maxBytes) break;
       }
@@ -2317,7 +2528,7 @@ function evaluationProblemRegions(textItems, viewport, canvasWidth, canvasHeight
     const padding = Math.round(canvasHeight * 0.012);
     const y = Math.max(0, Math.round(start - padding));
     const bottom = Math.min(canvasHeight, Math.round(end + padding));
-    return { x: left, y, width: Math.max(1, right - left), height: Math.max(1, bottom - y), label: `문제-${anchor.number}-예시답안` };
+    return { x: left, y, width: Math.max(1, right - left), height: Math.max(1, bottom - y), question: anchor.number, label: `문제-${anchor.number}-예시답안` };
   }).filter((region) => region.height >= 40);
 }
 
@@ -2364,6 +2575,9 @@ function collectDesignForm(form, existing) {
       criterion: level.querySelector('[name="rubricCriterion"]').value.trim(),
     })),
   })), performanceThresholds);
+  const exampleFile = form.elements.removeExampleDocument?.checked ? null : form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
+  const sourceFile = form.elements.removeDesignDocument?.checked ? null : form._designSourceFile || existing?.sourceFile || null;
+  const currentReviewFiles = { design: sourceFile, example: exampleFile };
   const existingExamples = new Map((existing?.exampleAnswers || []).map((item) => [item.id, item]));
   const exampleAnswers = Array.from(form.querySelectorAll("[data-example-row]")).map((row) => {
     const id = row.dataset.rowId || crypto.randomUUID();
@@ -2378,6 +2592,9 @@ function collectDesignForm(form, existing) {
     }));
     const evaluationElementIds = Array.from(row.querySelectorAll('[name="exampleEvaluationElement"]:checked')).map((input) => input.value);
     const evaluationElementScores = Object.fromEntries(Array.from(row.querySelectorAll('[name="exampleEvaluationScore"]')).map((input) => [String(input.dataset.rubricId || ""), positiveDesignScore(input.value)]));
+    const review = row._mathReview;
+    const reviewFile = review && currentReviewFiles[review.sourceKind];
+    const mathReview = reviewFile && reviewFile === form._mathReviewFiles[review.sourceKind] ? review : undefined;
     return {
       id,
       questionNumber: row.querySelector('[name="exampleQuestion"]').value.trim(),
@@ -2389,6 +2606,7 @@ function collectDesignForm(form, existing) {
       answerText: toTeacherFriendlyMath(row.querySelector('[name="exampleText"]').value),
       mathNotation: toTeacherFriendlyMath(row.querySelector('[name="exampleMath"]').value),
       visualDescription: toTeacherFriendlyMath(row.querySelector('[name="exampleVisual"]').value),
+      mathReview,
       file,
     };
   });
@@ -2414,8 +2632,6 @@ function collectDesignForm(form, existing) {
   const mismatchedQuestions = Array.from(exampleScores.entries()).filter(([questionNumber, score]) => Math.abs((rubricQuestionScores.get(questionNumber) || 0) - score) > 0.001);
   if (mismatchedQuestions.length) throw new Error(`문제 ${mismatchedQuestions.map(([question]) => question).join(", ")}의 채점기준 만점 합계가 예시답안 배점과 다릅니다. 문제 번호와 평가요소를 확인해 주세요.`);
   const rubricFile = form.elements.removeRubricDocument?.checked ? null : form.elements.rubricDocument.files?.[0] || existing?.rubricFile || null;
-  const exampleFile = form.elements.removeExampleDocument?.checked ? null : form.elements.exampleDocument.files?.[0] || existing?.exampleFile || null;
-  const sourceFile = form.elements.removeDesignDocument?.checked ? null : form._designSourceFile || existing?.sourceFile || null;
   const blankFile = form.elements.removeBlankDocument?.checked
     ? null
     : form.elements.blankDocument.files?.[0] || existing?.blankFile || null;
