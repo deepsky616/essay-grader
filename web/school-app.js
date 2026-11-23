@@ -4311,7 +4311,7 @@ async function createPrivacyRedactedStudentPdfFromDocument(source, pageNumbers, 
     const context = canvas.getContext("2d", { alpha: false });
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
+    await renderPdfForGrading(page, { canvasContext: context, viewport, background: "#ffffff" });
     if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
     redactIdentityHeader(canvas, anonymousCode);
     const blob = await canvasToBlob(canvas, "image/jpeg", pageNumbers.length > 5 ? 0.86 : 0.9);
@@ -4362,7 +4362,7 @@ async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
       const sourceContext = sourceCanvas.getContext("2d", { alpha: false, willReadFrequently: false });
       sourceContext.fillStyle = "#ffffff";
       sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
-      await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
+      await renderPdfForGrading(page, { canvasContext: sourceContext, viewport, background: "#ffffff" });
       if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
 
       const enhancedCanvas = document.createElement("canvas");
@@ -4418,7 +4418,7 @@ async function prepareFractionAnswerImages(pdfFile, { signal, maxBytes = 8 * 102
       sourceContext.fillRect(0, 0, sourceCanvas.width, sourceCanvas.height);
       sourceContext.imageSmoothingEnabled = true;
       sourceContext.imageSmoothingQuality = "high";
-      await page.render({ canvasContext: sourceContext, viewport, background: "#ffffff" }).promise;
+      await renderPdfForGrading(page, { canvasContext: sourceContext, viewport, background: "#ffffff" });
       if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
 
       const left = Math.round(sourceCanvas.width * 0.025);
@@ -4478,6 +4478,11 @@ async function prepareFractionAnswerImages(pdfFile, { signal, maxBytes = 8 * 102
 
 const blankAlignmentTemplates = new WeakMap();
 
+function renderPdfForGrading(page, options) {
+  // These canvases feed grading. Hidden windows do not receive animation frames.
+  return page.render({ ...options, useRequestAnimationFrame: false }).promise;
+}
+
 async function renderAlignmentRaster(page, width, height) {
   const base = page.getViewport({ scale: 1 });
   const viewport = page.getViewport({ scale: width / base.width });
@@ -4486,12 +4491,12 @@ async function renderAlignmentRaster(page, width, height) {
   canvas.height = height;
   try {
     const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
-    await page.render({
+    await renderPdfForGrading(page, {
       canvasContext: context,
       viewport,
       transform: [1, 0, 0, height / viewport.height, 0, 0],
       background: "#ffffff",
-    }).promise;
+    });
     return context.getImageData(0, 0, width, height);
   } finally {
     canvas.width = 1;

@@ -20,7 +20,7 @@ test("AI grading securely removes identity pixels before sending an anonymous an
   const start = schoolAppSource.indexOf("async function createPrivacyRedactedStudentPdf");
   const end = schoolAppSource.indexOf("async function prepareEnhancedAnswerImages", start);
   const privacyPipeline = schoolAppSource.slice(start, end);
-  assert.match(privacyPipeline, /page\.render\(\{ canvasContext: context/);
+  assert.match(privacyPipeline, /renderPdfForGrading\(page, \{ canvasContext: context/);
   assert.match(privacyPipeline, /redactIdentityHeader\(canvas, anonymousCode\)/);
   assert.match(privacyPipeline, /output\.embedJpg\(await blob\.arrayBuffer\(\)\)/);
   assert.doesNotMatch(privacyPipeline, /copyPages/);

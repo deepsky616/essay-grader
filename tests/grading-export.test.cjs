@@ -541,3 +541,24 @@ test("grading confidence is shown as accessible white badges with distinct color
   assert.match(styles, /\.confidence-low \{ color: #a1262d; \}/);
 });
 
+test("grading PDF preprocessing bypasses screen frames without switching rendering intent", async () => {
+  const web = path.join(__dirname, "..", "web");
+  const appSource = fs.readFileSync(path.join(web, "school-app.js"), "utf8");
+  const start = appSource.indexOf("function renderPdfForGrading");
+  const end = appSource.indexOf("async function renderAlignmentRaster", start);
+  assert.ok(start >= 0 && end > start);
+  const renderPdf = new Function(`${appSource.slice(start, end)}; return renderPdfForGrading;`)();
+  const viewport = { width: 100, height: 150 };
+  const task = { promise: Promise.resolve("rendered") };
+  assert.equal(await renderPdf({ render(options) {
+    assert.deepEqual(options, { viewport, useRequestAnimationFrame: false });
+    return task;
+  } }, { viewport }), "rendered");
+  for (const fn of ["createPrivacyRedactedStudentPdfFromDocument", "prepareEnhancedAnswerImages", "prepareFractionAnswerImages", "renderAlignmentRaster"]) {
+    const entry = appSource.indexOf(`async function ${fn}`);
+    const nextFunction = appSource.indexOf("\nasync function ", entry + 1);
+    assert.match(appSource.slice(entry, nextFunction), /await renderPdfForGrading\(page,/);
+  }
+  assert.match(fs.readFileSync(path.join(web, "index.html"), "utf8"), /\.\/vendor\/pdfjs\/pdf\.min\.js\?v=3\.11\.174-scheduling-1/);
+  assert.match(fs.readFileSync(path.join(web, "vendor", "pdfjs", "pdf.min.js"), "utf8"), /useRequestAnimationFrame:!u&&useFrame/);
+});
