@@ -399,8 +399,7 @@ test("assessment design files can clear a new selection or remove and restore a 
   assert.match(source, /data-clear-file-action>삭제/);
   assert.match(source, /button\.hidden = presentation\.disabled/);
   assert.match(source, /input\.value = ""/);
-  assert.match(source, /setDesignFractionSource\(form, selected \|\| form\._savedDesignSourceFile, selected \? null : form\._savedDesignKordocReport\)/);
-  assert.match(source, /setDesignFractionSource\(form, removal\.checked \? null : form\._savedDesignSourceFile/);
+  assert.match(source, /form\._designSourceFile = event\.target\.files\?\.\[0\] \|\| null/);
   assert.match(source, /저장된 파일을 삭제하도록 표시했습니다/);
   assert.match(styles, /\.design-file-status\[data-file-state="removed"\]/);
   assert.match(styles, /\.design-file-status \{[^}]*grid-column: 1;[^}]*width: fit-content;/);

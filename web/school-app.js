@@ -718,7 +718,6 @@ function designEditor(design, course) {
         <div class="editor-section-title"><div><span>AI</span><strong>평가기준안 한 번에 자동 입력</strong><p>성취기준·성취수준·문제별 채점기준·예시답안이 포함된 PDF 또는 사진을 올리면 아래 1~3을 함께 작성합니다.</p></div></div>
         ${designFilePickerMarkup({ label: "평가기준안 PDF·사진", inputName: "designDocument", accept: "application/pdf,image/jpeg,image/png,image/webp", savedFile: design.sourceFile, emptyText: "학생용 평가지가 함께 있는 파일도 분석할 수 있습니다. 결과는 반드시 원본과 대조하세요.", removeName: "removeDesignDocument", action: '<button type="button" data-extract-document="design">AI로 1~3 자동 입력</button>' })}
         ${documentAnalysisProgressMarkup("design")}
-        ${designFractionReviewMarkup()}
       </section>
 
       <div class="achievement-threshold-placement">
@@ -1570,19 +1569,6 @@ function bindDesignTab(course) {
   }));
   const form = app.querySelector("#design-form");
   if (!form) return;
-  const savedDesign = course.designs?.find((item) => item.id === form.dataset.designId);
-  form._savedDesignSourceFile = savedDesign?.sourceFile || null;
-  form._savedDesignKordocReport = savedDesign?.kordocFractionReport || null;
-  setDesignFractionSource(form, form._savedDesignSourceFile, form._savedDesignKordocReport);
-  form.elements.kordocReport.addEventListener("change", () => importDesignKordocReport(form));
-  const fractionDialog = form.querySelector("[data-design-fraction-dialog]");
-  fractionDialog.addEventListener("close", () => {
-    fractionDialog._comparison = null;
-    if (fractionDialog._previewUrl) URL.revokeObjectURL(fractionDialog._previewUrl);
-    fractionDialog._previewUrl = "";
-    fractionDialog.querySelector("[data-fraction-original-link]").removeAttribute("href");
-    fractionDialog.querySelector("[data-fraction-original-frame]").removeAttribute("src");
-  });
   refreshMathPreviews(form);
   syncQuestionScoreUI(form);
   form.querySelectorAll("[data-design-file-picker]").forEach(syncDesignFilePicker);
@@ -1609,13 +1595,9 @@ function bindDesignTab(course) {
       const picker = event.target.closest("[data-design-file-picker]");
       const removal = picker?.querySelector("[data-remove-saved-file]");
       if (event.target.files?.length && removal) removal.checked = false;
-      if (event.target.name === "designDocument") {
-        const selected = event.target.files?.[0];
-        setDesignFractionSource(form, selected || form._savedDesignSourceFile, selected ? null : form._savedDesignKordocReport);
-      }
+      if (event.target.name === "designDocument") form._designSourceFile = event.target.files?.[0] || null;
       syncDesignFilePicker(picker);
     }
-    if (event.target.matches('[name="exampleQuestion"], [name="exampleText"], [name="exampleMath"]')) renderDesignFractionReview(form);
   });
   form.addEventListener("input", (event) => {
     if (event.target.matches('[name="exampleMath"]')) renderMathPreview(event.target);
@@ -1646,29 +1628,6 @@ function bindDesignTab(course) {
 }
 
 function handleDesignEditorClick(event, form, course) {
-  const reviewButton = event.target.closest("[data-view-fraction-review]");
-  if (reviewButton) {
-    const entry = form._designFractionEntries?.[Number(reviewButton.dataset.viewFractionReview)];
-    if (entry) showDesignFractionComparison(form, entry);
-    return;
-  }
-  if (event.target.closest("[data-close-fraction-review]")) {
-    form.querySelector("[data-design-fraction-dialog]").close();
-    return;
-  }
-  if (event.target.closest("[data-edit-reviewed-fraction]")) {
-    const dialog = form.querySelector("[data-design-fraction-dialog]");
-    const index = dialog._comparison?.index;
-    dialog.close();
-    const math = form.querySelectorAll('[name="exampleMath"]')[index];
-    if (math) { math.closest("details").open = true; math.focus(); }
-    return;
-  }
-  if (event.target.closest("[data-remove-kordoc-report]")) {
-    if (form._designSourceFile === form._savedDesignSourceFile) form._savedDesignKordocReport = null;
-    setDesignFractionSource(form, form._designSourceFile);
-    return;
-  }
   const clearDesignFile = event.target.closest("[data-clear-design-file]");
   if (clearDesignFile) {
     const picker = clearDesignFile.closest("[data-design-file-picker]");
@@ -1677,11 +1636,11 @@ function handleDesignEditorClick(event, form, course) {
     if (!picker || !input) return;
     if (input.files?.length) {
       input.value = "";
-      if (input.name === "designDocument") setDesignFractionSource(form, form._savedDesignSourceFile, form._savedDesignKordocReport);
+      if (input.name === "designDocument") form._designSourceFile = null;
       showToast("선택한 파일을 삭제했습니다.");
     } else if (picker.dataset.savedFileName && removal) {
       removal.checked = !removal.checked;
-      if (input.name === "designDocument") setDesignFractionSource(form, removal.checked ? null : form._savedDesignSourceFile, removal.checked ? null : form._savedDesignKordocReport);
+      if (input.name === "designDocument" && removal.checked) form._designSourceFile = null;
       showToast(removal.checked ? "저장된 파일을 삭제하도록 표시했습니다. 평가 설계 저장을 눌러 완료해 주세요." : "저장된 파일 삭제를 취소했습니다.");
     }
     syncDesignFilePicker(picker);
@@ -1782,7 +1741,7 @@ function handleDesignEditorClick(event, form, course) {
   const addExample = event.target.closest("[data-add-example]");
   if (addExample) { form.querySelector("[data-example-rows]").insertAdjacentHTML("beforeend", exampleEditorRow({ id: crypto.randomUUID(), questionNumber: "", maxScore: "", pointItems: [{ id: crypto.randomUUID(), score: "", criterion: "" }], answerText: "", mathNotation: "", visualDescription: "" }, { mathOpen: course.subject === "수학" })); refreshMathPreviews(form); syncQuestionScoreUI(form); return; }
   const removeExample = event.target.closest("[data-remove-example]");
-  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); renderDesignFractionReview(form); return; }
+  if (removeExample && form.querySelectorAll("[data-example-row]").length > 1) { removeExample.closest("[data-example-row]").remove(); syncQuestionScoreUI(form); return; }
   const addExamplePoint = event.target.closest("[data-add-example-point]");
   if (addExamplePoint) {
     const card = addExamplePoint.closest("[data-example-row]");
@@ -2069,173 +2028,6 @@ function renderMathPreview(textarea) {
   catch { preview.textContent = expression; }
 }
 
-function designFractionReviewMarkup() {
-  return `<div class="design-fraction-review">
-    <details data-kordoc-setup><summary>Kordoc 보조 판독 <small>선택 사항 · PDF 수식 대조</small></summary>
-      <ol>
-        <li><a href="./kordoc-helper.zip" download>Windows 보조 판독 도구 다운로드</a> 후 압축을 풉니다. 처음 사용할 때는 <a href="https://nodejs.org/ko/download" target="_blank" rel="noopener noreferrer">Node.js LTS</a>가 필요합니다.</li>
-        <li><strong>run-kordoc.cmd</strong>를 열고 위에서 선택한 평가기준안 PDF를 지정합니다. 처음에는 수식 모델을 내려받습니다. PDF는 이 컴퓨터에서 읽습니다.</li>
-        <li>만들어진 JSON 파일을 아래에서 불러옵니다. 자동 입력 전이나 후에 불러올 수 있습니다.</li>
-      </ol>
-      <div class="kordoc-file-row"><label>보조 판독 JSON<input name="kordocReport" type="file" accept=".json,application/json"></label><button type="button" data-remove-kordoc-report hidden>판독 파일 삭제</button></div>
-      <p data-kordoc-status role="status"></p>
-    </details>
-    <div data-design-fraction-summary aria-live="polite"></div>
-    <div data-design-fraction-entries></div>
-  </div>
-  <dialog class="design-fraction-dialog" data-design-fraction-dialog aria-labelledby="design-fraction-title">
-    <div class="design-fraction-dialog-panel">
-      <header><h3 id="design-fraction-title"></h3><button type="button" data-close-fraction-review>닫기</button></header>
-      <div class="design-fraction-comparison">
-        <section><h4>평가기준안 원본</h4><canvas data-fraction-original-crop aria-label="원본 수식 확대" hidden></canvas><iframe data-fraction-original-frame title="평가기준안 PDF 미리보기" hidden></iframe><p data-fraction-original-status></p><a data-fraction-original-link target="_blank" rel="noopener noreferrer" hidden>원본 PDF 새 탭에서 크게 보기</a></section>
-        <div><section><h4>현재 예시답안 입력값</h4><pre data-fraction-current></pre></section><section><h4>Kordoc 판독값</h4><pre data-fraction-kordoc></pre></section><ul data-fraction-reasons></ul></div>
-      </div>
-      <button class="primary-action" type="button" data-edit-reviewed-fraction>예시답안 입력란으로 이동</button>
-    </div>
-  </dialog>`;
-}
-
-function setDesignFractionSource(form, source, report = null) {
-  form._designSourceFile = source;
-  form._designKordocReport = report;
-  form._kordocReadToken = null;
-  form.elements.kordocReport.value = "";
-  showDesignKordocStatus(form);
-  renderDesignFractionReview(form);
-}
-
-function showDesignKordocStatus(form, message) {
-  const report = form._designKordocReport;
-  const status = form.querySelector("[data-kordoc-status]");
-  status.textContent = message || (report
-    ? report.formulas.length ? `같은 PDF의 보조 판독을 연결했습니다. 추출된 분수 수식 ${report.formulas.length}개`
-      : "같은 PDF를 확인했지만 Kordoc이 분수 수식을 찾지 못했습니다."
-    : form._designSourceFile?.type === "application/pdf" ? "같은 PDF로 만든 보조 판독 JSON을 선택하세요." : "평가기준안 PDF를 먼저 선택하세요.");
-  form.querySelector("[data-remove-kordoc-report]").hidden = !report;
-}
-
-async function importDesignKordocReport(form) {
-  const upload = form.elements.kordocReport.files?.[0];
-  if (!upload) return;
-  const source = form._designSourceFile;
-  const token = Symbol();
-  form._kordocReadToken = token;
-  try {
-    if (source?.type !== "application/pdf") throw new Error("보조 판독에 사용한 평가기준안 PDF를 먼저 선택해 주세요.");
-    if (upload.size > 512 * 1024) throw new Error("보조 판독 파일은 512KB 이하여야 합니다.");
-    showDesignKordocStatus(form, "판독 파일과 원본 PDF가 같은지 확인하고 있습니다.");
-    const raw = await upload.text();
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch { throw new Error("Kordoc 보조 판독 도구로 만든 JSON 파일을 선택해 주세요."); }
-    const report = ChaejeomAI.normalizeKordocFractionReport(parsed);
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await source.arrayBuffer()));
-    if (form._kordocReadToken !== token) return;
-    const sha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (sha256 !== report.sha256) throw new Error("다른 PDF의 판독 파일입니다. 위에서 선택한 평가기준안 PDF로 다시 만들어 주세요.");
-    form._designKordocReport = report;
-    showDesignKordocStatus(form);
-    renderDesignFractionReview(form);
-  } catch (error) {
-    if (form._kordocReadToken !== token) return;
-    form.elements.kordocReport.value = "";
-    showDesignKordocStatus(form, friendlyError(error));
-  }
-}
-
-function renderDesignFractionReview(form) {
-  const report = form._designKordocReport;
-  const editorRows = Array.from(form.querySelectorAll("[data-example-row]"));
-  const examples = editorRows.map((row) => ({
-    questionNumber: row.querySelector('[name="exampleQuestion"]').value,
-    mathNotation: row.querySelector('[name="exampleMath"]').value,
-    answerText: row.querySelector('[name="exampleText"]').value,
-  }));
-  const { rows, unlinked } = ChaejeomAI.compareDesignFractionReadings(examples, report);
-  const review = rows.filter((row) => row.messages.length);
-  const unlinkedRows = unlinked.map((reading) => ({
-    question: "", labels: [], readings: [reading],
-    messages: ["같은 시작식을 가진 문항을 하나로 특정할 수 없습니다.", ...(reading.invalid ? [`Kordoc 판독 중 ‘${reading.invalid}’의 양쪽 값이 다릅니다.`] : [])],
-  }));
-  form._designFractionEntries = [...review, ...unlinkedRows];
-  const summary = form.querySelector("[data-design-fraction-summary]");
-  const entries = form.querySelector("[data-design-fraction-entries]");
-  const matched = rows.filter((row) => row.readings.length).length;
-  summary.textContent = [review.length ? `분수·수식 확인 필요 ${review.length}문항` : "",
-    report ? `문항이 연결된 보조 판독 ${matched}개 · 연결을 확인할 수식 ${unlinked.length}개` : ""].filter(Boolean).join(" · ");
-  summary.classList.toggle("needs-review", Boolean(review.length));
-  const button = (index) => `<button type="button" data-view-fraction-review="${index}">원본·판독값 비교</button>`;
-  const wasOpen = entries.querySelector("details")?.open;
-  entries.innerHTML = review.map((row, index) => `<div class="fraction-review-row">
-    <div><strong>문제 ${escapeHtml(row.question || row.index + 1)} · 확인 필요</strong><span>${escapeHtml(row.messages[0])}</span></div>${button(index)}
-  </div>`).join("") + (unlinkedRows.length ? `<details ${wasOpen ? "open" : ""}><summary>문항에 연결하지 못한 Kordoc 수식 ${unlinkedRows.length}개</summary>
-    ${unlinkedRows.map(({ readings: [reading] }, index) => `<div class="fraction-review-row"><div><strong>${reading.page}쪽</strong><span>${escapeHtml(reading.notation)}</span></div>${button(review.length + index)}</div>`).join("")}</details>` : "");
-  return review.length;
-}
-
-async function showDesignFractionComparison(form, entry) {
-  const dialog = form.querySelector("[data-design-fraction-dialog]");
-  const file = form._designSourceFile;
-  const reading = entry.readings.find((item) => item.invalid) || entry.readings.find((item) => item.box) || entry.readings[0];
-  dialog._comparison = entry;
-  dialog.querySelector("h3").textContent = entry.question ? `문제 ${entry.question} · 수식 확인` : "문항 미연결 · 수식 확인";
-  dialog.querySelector("[data-fraction-current]").textContent = entry.labels.join("\n") || "비교할 문항의 입력값을 찾지 못했습니다.";
-  dialog.querySelector("[data-fraction-kordoc]").textContent = entry.readings.map((item) => `${item.page}쪽  ${item.notation}`).join("\n") || "이 문항에 연결된 Kordoc 판독값이 없습니다.";
-  dialog.querySelector("[data-fraction-reasons]").innerHTML = entry.messages.map((message) => `<li>${escapeHtml(message)}</li>`).join("");
-  dialog.querySelector("[data-edit-reviewed-fraction]").hidden = entry.index == null;
-  const crop = dialog.querySelector("[data-fraction-original-crop]");
-  const frame = dialog.querySelector("[data-fraction-original-frame]");
-  const link = dialog.querySelector("[data-fraction-original-link]");
-  const status = dialog.querySelector("[data-fraction-original-status]");
-  crop.hidden = true;
-  frame.hidden = true;
-  link.hidden = true;
-  status.textContent = "원본 PDF를 선택하면 여기에서 함께 볼 수 있습니다.";
-  dialog.showModal();
-  if (file?.type !== "application/pdf") return;
-  dialog._previewUrl = URL.createObjectURL(file);
-  const url = `${dialog._previewUrl}#page=${reading?.page || 1}&view=FitH`;
-  link.href = url;
-  link.hidden = false;
-  const showPage = () => {
-    if (dialog._comparison !== entry) return;
-    frame.src = url;
-    frame.hidden = false;
-    status.textContent = reading ? `원본 ${reading.page}쪽` : "원본 PDF에서 해당 문항을 찾아 확인하세요.";
-  };
-  if (!reading?.box || !window.pdfjsLib?.getDocument) { showPage(); return; }
-  status.textContent = `원본 ${reading.page}쪽 수식을 확대하고 있습니다.`;
-  let loadingTask;
-  try {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-    loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(reading.page);
-    const viewport = page.getViewport({ scale: 2.5 });
-    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(reading.box);
-    const left = Math.max(0, Math.floor(Math.min(x1, x2) - 38));
-    const top = Math.max(0, Math.floor(Math.min(y1, y2) - 25));
-    const width = Math.min(viewport.width, Math.max(x1, x2) + 38) - left;
-    const height = Math.min(viewport.height, Math.max(y1, y2) + 25) - top;
-    if (dialog._comparison !== entry) return;
-    if (width < 10 || height < 10 || width * height > 4000000) { showPage(); return; }
-    const image = document.createElement("canvas");
-    image.width = Math.ceil(width);
-    image.height = Math.ceil(height);
-    await page.render({ canvasContext: image.getContext("2d"), viewport, transform: [1, 0, 0, 1, -left, -top] }).promise;
-    if (dialog._comparison !== entry) return;
-    crop.width = image.width;
-    crop.height = image.height;
-    crop.getContext("2d").drawImage(image, 0, 0);
-    crop.hidden = false;
-    status.textContent = `원본 ${reading.page}쪽 · 수식 확대`;
-  } catch {
-    showPage();
-  } finally {
-    await loadingTask?.destroy().catch(() => {});
-  }
-}
-
 function updateDocumentAnalysisProgress(form, kind, { phase = 0, percent, title, message, status = "running" } = {}) {
   const card = form.querySelector(`[data-document-progress="${kind}"]`);
   if (!card) return;
@@ -2265,7 +2057,7 @@ function updateDocumentAnalysisProgress(form, kind, { phase = 0, percent, title,
 async function extractDesignDocument(form, kind, course) {
   const inputName = kind === "design" ? "designDocument" : kind === "rubric" ? "rubricDocument" : "exampleDocument";
   const input = form.elements[inputName];
-  const file = kind === "design" ? form._designSourceFile : input.files?.[0];
+  const file = input.files?.[0];
   const documentLabel = kind === "design" ? "평가기준안" : kind === "rubric" ? "채점기준표" : "예시답안";
   if (!file) { setDesignStatus(form, `${documentLabel} PDF 또는 사진을 먼저 선택해 주세요.`, true); return; }
   if (!ACCEPTED_DOCUMENT_TYPES.has(file.type) || file.size > MAX_FILE_BYTES) { setDesignStatus(form, "PDF·JPG·PNG·WEBP 형식의 20MB 이하 파일을 선택해 주세요.", true); return; }
@@ -2350,8 +2142,6 @@ async function extractDesignDocument(form, kind, course) {
         }
       },
     });
-    if (!form.isConnected) return;
-    if (kind === "design" && form._designSourceFile !== file) throw new Error("분석 중 평가기준안 파일이 변경되었습니다. 새 파일로 자동 입력을 다시 시작해 주세요.");
     updateDocumentAnalysisProgress(form, kind, {
       phase: 4,
       title: "분석 결과를 화면에 입력하는 중",
@@ -2377,6 +2167,7 @@ async function extractDesignDocument(form, kind, course) {
         id: crypto.randomUUID(),
         maxScore: positiveDesignScore(item.maxScore) || "",
       }, { mathOpen: course.subject === "수학" })).join("");
+      form._designSourceFile = file;
       refreshMathPreviews(form);
       syncQuestionScoreUI(form);
     } else if (kind === "rubric") {
@@ -2398,16 +2189,14 @@ async function extractDesignDocument(form, kind, course) {
       refreshMathPreviews(form);
       syncQuestionScoreUI(form);
     }
-    const fractionReviewCount = renderDesignFractionReview(form);
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
     const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
     setDesignStatus(form, `${file.name} ${completion}${note}`);
     updateDocumentAnalysisProgress(form, kind, {
       phase: 4,
       status: "complete",
-      title: fractionProgressWarning || fractionReviewCount ? `${documentLabel} 자동 입력 완료 · 확인 필요` : `${documentLabel} AI 자동 입력 완료`,
-      message: fractionReviewCount ? `분수·수식 확인이 필요한 ${fractionReviewCount}문항에서 원본과 판독값을 비교해 주세요.`
-        : fractionProgressWarning ? "분수 2차 검증 확인사항이 결과에 표시되었습니다. 원본 문서와 대조해 주세요." : "입력된 내용을 원본 문서와 대조한 뒤 평가 설계를 저장해 주세요.",
+      title: fractionProgressWarning ? `${documentLabel} 자동 입력 완료 · 확인 필요` : `${documentLabel} AI 자동 입력 완료`,
+      message: fractionProgressWarning ? "분수 2차 검증 확인사항이 결과에 표시되었습니다. 원본 문서와 대조해 주세요." : "입력된 내용을 원본 문서와 대조한 뒤 평가 설계를 저장해 주세요.",
     });
   } catch (error) {
     setDesignStatus(form, friendlyError(error), true);
@@ -2647,7 +2436,6 @@ function collectDesignForm(form, existing) {
     rubricFile,
     exampleFile,
     sourceFile,
-    kordocFractionReport: sourceFile === form._designSourceFile ? form._designKordocReport : null,
     blankFile,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),

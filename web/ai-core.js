@@ -1529,112 +1529,6 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     return chain.first.multiply && chain.first.fraction;
   }
 
-  function normalizeKordocFractionReport(report) {
-    if (report?.format !== "essay-grader-kordoc-v1" || !/^[0-9a-f]{64}$/.test(report.sha256)
-      || !Array.isArray(report.formulas) || report.formulas.length > 400) {
-      throw new Error("웹앱에서 제공하는 Kordoc 보조 판독 도구로 만든 JSON 파일을 선택해 주세요.");
-    }
-    const formulas = report.formulas.map((item) => {
-      const latex = typeof item?.latex === "string" ? item.latex.trim() : "";
-      const page = item?.page;
-      if (!latex || latex.length > 600 || !Number.isSafeInteger(page) || page < 1 || page > 1000) {
-        throw new Error("보조 판독 파일의 수식 또는 페이지 정보가 올바르지 않습니다.");
-      }
-      const coords = item.box;
-      const box = Array.isArray(coords) && coords.length === 4
-        && coords.every((number) => typeof number === "number" && Number.isFinite(number) && Math.abs(number) < 100000)
-        && coords[2] > coords[0] && coords[3] > coords[1] ? coords.slice() : null;
-      return { latex, page, box };
-    });
-    return { format: report.format, sha256: report.sha256, formulas };
-  }
-
-  function kordocFractionNotation(latex) {
-    return normalizeArithmetic(latex.replace(/^\$+|\$+$/g, "")
-      .replace(/\\(?:boxed|overline|left|right)\b/g, "")
-      .replace(/\\(?:text|mathrm)\s*\{\s*~?\s*(?:km|m|cm|mm|kg|g|L|mL)\s*\}/g, "")
-      .replace(/\\(?:d|t)?frac\s*\{\s*\{?\s*(\d+)\s*\}?\s*\}\s*\{\s*\{?\s*(\d+)\s*\}?\s*\}/g, " $1/$2 ")
-      .replace(/\\(?:times|cdot)(?![A-Za-z])/g, " × ").replace(/\\div(?![A-Za-z])/g, " ÷ ")
-      .replace(/\\(?:qquad|quad)\b|\\[,;:! ]|~/g, " ")
-      .replace(/\\%/g, "%")
-      .replace(/[{}]/g, ""))
-      .replace(/\s+/g, " ").trim();
-  }
-
-  function kordocFractionReading(item) {
-    const notation = kordocFractionNotation(item.latex);
-    if (!/\d\s*\//.test(notation) || !/^[\d+\-×*÷=/().% ]+$/.test(notation)) return null;
-    const sides = notation.replace(/\.$/, "").split("=").map((side) => side.trim());
-    if (!sides.at(-1)) sides.pop();
-    if (sides.length > 12) return null;
-    const readings = sides.map(parseArithmetic);
-    if (!readings.length || !readings.every(Boolean)) return null;
-    const values = readings.map((reading) => rationalLabel(reading.value));
-    const falseStep = values.findIndex((value, index) => index > 0 && value !== values[index - 1]);
-    return {
-      ...item, notation, key: readings[0].key, final: values.at(-1), complete: sides.length > 1 && !notation.endsWith("="),
-      invalid: falseStep > 0 ? `${sides[falseStep - 1]} = ${sides[falseStep]}` : "",
-    };
-  }
-
-  function compareDesignFractionReadings(examples, report) {
-    const available = (report?.formulas || []).map(kordocFractionReading).filter(Boolean);
-    const rows = examples.map((item, index) => {
-      const math = text(item.mathNotation);
-      const answer = text(item.answerText);
-      const chains = [math, answer].flatMap(arithmeticChains).filter((chain) => /\d\s*\//.test(chain.written));
-      const invalid = [...new Set(chains.filter((chain) => chain.falseStep > 0)
-        .map(({ pieces, falseStep }) => `${pieces[falseStep - 1]} = ${pieces[falseStep]}`))];
-      const finalAnswers = new Set([
-        ...chains.map((chain) => chain.final),
-        ...[math, answer].filter(Boolean).map(answerNumber).filter(Boolean),
-      ]);
-      const labels = [...new Set([math, answer].filter(Boolean))];
-      const left = math.endsWith("=") ? parseArithmetic(normalizeArithmetic(math.slice(0, -1))) : null;
-      const keys = new Set(chains.map((chain) => chain.first.key));
-      if (left?.fraction) keys.add(left.key);
-      return { index, question: text(item.questionNumber), labels, invalid, finalAnswers, keys };
-    });
-    const byKey = new Map();
-    for (const row of rows) {
-      for (const key of row.keys) {
-        if (!byKey.has(key)) byKey.set(key, []);
-        byKey.get(key).push(row);
-      }
-    }
-    const matched = new Map();
-    const unlinked = [];
-    const seen = new Set();
-    for (const reading of available) {
-      const identity = JSON.stringify([reading.page, reading.key, reading.final, reading.invalid, reading.complete]);
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      const targets = byKey.get(reading.key);
-      if (targets?.length !== 1) {
-        unlinked.push(reading);
-        continue;
-      }
-      const target = targets[0];
-      if (!matched.has(target.index)) matched.set(target.index, []);
-      matched.get(target.index).push(reading);
-    }
-    const results = rows.flatMap((row) => {
-      const readings = matched.get(row.index) || [];
-      const messages = row.invalid.map((expression) => `입력된 수식에서 ‘${expression}’의 양쪽 값이 다릅니다.`);
-      for (const reading of readings) {
-        if (reading.invalid) messages.push(`Kordoc 판독에서 ‘${reading.invalid}’의 양쪽 값이 다릅니다.`);
-        if (!reading.complete || !row.finalAnswers.size) continue;
-        if ([...row.finalAnswers].some((value) => value !== reading.final)) {
-          messages.push(`최종 값이 다릅니다. 입력값 ${[...row.finalAnswers].join(", ")} · Kordoc ${reading.final}`);
-        }
-      }
-      return readings.length || messages.length ? [{
-        index: row.index, question: row.question, labels: row.labels, readings, messages: [...new Set(messages)],
-      }] : [];
-    });
-    return { rows: results, unlinked };
-  }
-
   function looksLikeFractionProduct(value) {
     const source = normalizeArithmetic(value);
     return source.includes("=") && /[×*]/.test(source) && /\d\s*\//.test(source);
@@ -3097,8 +2991,6 @@ ${JSON.stringify(roster)}
     normalizePageAssignments,
     normalizeExampleAnswerQuestionNumbers,
     mergeVerifiedExampleAnswers,
-    normalizeKordocFractionReport,
-    compareDesignFractionReadings,
     arrayBufferToBase64,
   };
 });

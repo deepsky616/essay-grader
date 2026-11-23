@@ -8,56 +8,6 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
-test("evaluation design flags misread fractions while accepting equivalent mixed numbers", () => {
-  const examples = [
-    { questionNumber: "1-(1)", mathNotation: "9/16 × 12 = 27/4" },
-    { questionNumber: "1-(4)", mathNotation: "12 × 2/9 = 8/3 = 2와 2/3" },
-    { questionNumber: "2", mathNotation: "65/8 = 7" },
-  ];
-  const report = AI.normalizeKordocFractionReport({
-    format: "essay-grader-kordoc-v1",
-    sha256: "0".repeat(64),
-    formulas: [
-      { page: 1, latex: String.raw`$$\frac{9}{16}\times12=\frac{27}{4}=6\frac{3}{4}$$`, box: [20, 30, 170, 50] },
-      { page: 1, latex: String.raw`12\times\frac{2}{9}=\frac{8}{3}=2\frac{2}{9}` },
-      { page: 1, latex: String.raw`12\times\frac{2}{9}=\frac{8}{3}=2\frac{2}{9}.` },
-      { page: 2, latex: String.raw`\frac{3}{8}\times\frac{6}{7}=\frac{9}{28}` },
-      { page: 2, latex: String.raw`\frac{\lambda}{4}` },
-    ],
-  });
-  const { rows, unlinked } = AI.compareDesignFractionReadings(examples, report);
-  assert.deepEqual(rows.map(({ question }) => question), ["1-(1)", "1-(4)", "2"]);
-  assert.deepEqual(rows[0].readings[0].box, [20, 30, 170, 50]);
-  assert.deepEqual(rows[0].messages, []);
-  assert.deepEqual(rows[1].messages, [
-    "Kordoc 판독에서 ‘8/3 = 2 2/9’의 양쪽 값이 다릅니다.",
-    "최종 값이 다릅니다. 입력값 8/3 · Kordoc 20/9",
-  ]);
-  assert.equal(rows[1].readings.length, 1);
-  assert.match(rows[2].messages[0], /65\/8 = 7/);
-  assert.equal(unlinked.length, 1);
-  assert.equal(unlinked[0].page, 2);
-});
-
-test("ambiguous Kordoc formulas stay unlinked and wrong-format reports are rejected", () => {
-  const examples = [
-    { questionNumber: "1-(1)", mathNotation: "1/2 × 2 = 1" },
-    { questionNumber: "1-(2)", mathNotation: "2 × 1/2 = 1" },
-  ];
-  const report = {
-    format: "essay-grader-kordoc-v1",
-    sha256: "f".repeat(64),
-    formulas: [{ page: 3, latex: String.raw`\frac{1}{2}\times2=3`, box: [2, 10, 1, 0] }],
-  };
-  assert.throws(() => AI.normalizeKordocFractionReport({ ...report, sha256: "" }), /JSON/);
-  assert.throws(() => AI.normalizeKordocFractionReport({ ...report, formulas: [{ page: 0, latex: "1/2" }] }), /페이지/);
-  const { rows, unlinked } = AI.compareDesignFractionReadings(examples, AI.normalizeKordocFractionReport(report));
-  assert.equal(rows.length, 0);
-  assert.equal(unlinked.length, 1);
-  assert.equal(unlinked[0].invalid, "1/2 × 2 = 3");
-  assert.equal(unlinked[0].box, null);
-});
-
 function loadSchoolMathHelpers() {
   const source = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
   const start = source.indexOf("function toTeacherFriendlyMath");
