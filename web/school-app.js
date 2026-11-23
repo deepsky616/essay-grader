@@ -3994,6 +3994,9 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     identityRedacted: true,
     student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
   };
+  const prepareWrittenSources = (readings, alignedReference) => prepareWrittenAnswerSources(
+    readings, studentFile, resolvedBlankFile, alignedReference, signal,
+  );
   onStage?.("원본 우선 1차 판독·채점 중", "primary");
   let result = await ChaejeomAI.gradeAnswer({
     apiKey,
@@ -4001,6 +4004,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     signal,
     metadata: baseMetadata,
     files: firstPassFiles,
+    prepareWrittenSources,
     onProgress: (message) => onStage?.(message, "primary"),
   });
   let enhancedFiles = [];
@@ -4088,6 +4092,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           recognitionWarnings,
         },
         files: precisionFiles,
+        prepareWrittenSources: (readings) => prepareWrittenSources(readings, alignedReference),
         onProgress: (message) => onStage?.(message, "review"),
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
@@ -4611,6 +4616,79 @@ async function tryAlignBlankReference(blankFile, studentFile, options) {
   }
 }
 
+async function renderWrittenAnswerCrop(pdf, reading, size = null) {
+  const page = await pdf.getPage(reading.pageNumber);
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: Math.min(4, 2200 / Math.max(base.width, base.height)) });
+  const [left, top, right, bottom] = reading.sourceBox;
+  const width = viewport.width * (right - left) / 1000;
+  const height = viewport.height * (bottom - top) / 1000;
+  const canvas = document.createElement("canvas");
+  canvas.width = size?.width || Math.ceil(width);
+  canvas.height = size?.height || Math.ceil(height);
+  const scaleX = canvas.width / width;
+  const scaleY = canvas.height / height;
+  await renderPdfForGrading(page, {
+    canvasContext: canvas.getContext("2d", { alpha: false, willReadFrequently: true }),
+    viewport, background: "#ffffff",
+    transform: [scaleX, 0, 0, scaleY, -scaleX * left * viewport.width / 1000, -scaleY * top * viewport.height / 1000],
+  });
+  return canvas;
+}
+
+function hasWrittenInkDifference(student, blank) {
+  const pixels = (canvas) => canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+  const answer = pixels(student);
+  const template = pixels(blank);
+  let darker = 0;
+  for (let i = 0; i < answer.length; i += 4) {
+    if (answer[i] + answer[i + 1] + answer[i + 2] + 66 < template[i] + template[i + 1] + template[i + 2]) darker += 1;
+    if (darker >= 8) return true;
+  }
+  return false;
+}
+
+async function prepareWrittenAnswerSources(readings, studentFile, blankFile, alignedReference, signal) {
+  const crops = new Map();
+  if (!window.pdfjsLib?.getDocument) return crops;
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  const tasks = [];
+  const load = async (file) => {
+    const task = window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false });
+    tasks.push(task);
+    return task.promise;
+  };
+  try {
+    const studentPdf = await load(studentFile);
+    const blankPdf = await load(blankFile);
+    const alignedPdf = alignedReference?.file ? await load(alignedReference.file) : null;
+    for (const reading of readings) {
+      if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+      let studentCanvas, blankCanvas;
+      try {
+        const template = alignedReference?.pageNumbers.includes(reading.pageNumber) ? alignedPdf : blankPdf;
+        studentCanvas = await renderWrittenAnswerCrop(studentPdf, reading);
+        blankCanvas = await renderWrittenAnswerCrop(template, reading, studentCanvas);
+        if (reading.status === "readable" && !hasWrittenInkDifference(studentCanvas, blankCanvas)) continue;
+        crops.set(reading.exampleAnswerId, {
+          student: new File([await canvasToBlob(studentCanvas, "image/jpeg", 0.94)], "student-region.jpg", { type: "image/jpeg" }),
+          blank: new File([await canvasToBlob(blankCanvas, "image/jpeg", 0.94)], "blank-region.jpg", { type: "image/jpeg" }),
+        });
+      } catch (error) {
+        if (signal?.aborted || error?.name === "AbortError") throw error;
+      } finally {
+        if (studentCanvas) studentCanvas.width = studentCanvas.height = 1;
+        if (blankCanvas) blankCanvas.width = blankCanvas.height = 1;
+      }
+    }
+  } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw error;
+  } finally {
+    await Promise.allSettled(tasks.map((task) => task.destroy()));
+  }
+  return crops;
+}
+
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => {
     if (blob) resolve(blob);
@@ -4943,6 +5021,8 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       awardedScore: item ? Math.max(0, Math.min(maxScore, Number(item.awardedScore || 0))) : null,
       maxScore,
       evidence: item?.evidence || "기존 결과에는 이 세부 문항의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
+      writtenReading: item?.writtenReading,
+      answerReading: item?.answerReading,
       confidence: ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low",
       missingResult: !item || Boolean(item.missingResult),
       teacherAdjusted: Boolean(item?.teacherAdjusted),
@@ -4978,6 +5058,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       pointLabel: item.pointResults.length > 1 ? `${item.questionNumber} · 항목 ${pointIndex + 1}` : item.questionNumber,
       exampleIndex,
       pointIndex,
+      hasWrittenSource: pointIndex === 0 && Boolean(item.writtenReading),
     })) : [{ ...item, pointLabel: item.questionNumber, exampleIndex, pointIndex: -1 }]);
     return `<section class="question-score-group">
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
@@ -4986,7 +5067,8 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
         const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
-        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
+        const reviewSource = item.hasWrittenSource ? `<button type="button" class="secondary-action" data-view-written-source="${item.exampleIndex}">원본 글씨 대조</button>` : "";
+        return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small>${reviewSource}</td></tr>`;
       }).join("") || `<tr><td colspan="3" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
     </section>`;
   }).join("");
@@ -5020,6 +5102,44 @@ function teacherReviewScoreSnapshot(questionRows, scoreInputs, exampleRows) {
       })),
     })),
   };
+}
+
+async function openWrittenSourceReview(dialog, row, originalFile, previewUrl) {
+  const reading = row.writtenReading;
+  if (!reading || dialog.open) return;
+  const [canvas, frame, link] = dialog.querySelectorAll("canvas, iframe, a");
+  const location = dialog.querySelector("[data-written-source-location]");
+  dialog.querySelector("h3").textContent = `문제 ${row.questionNumber} · 원본 글씨 대조`;
+  dialog.querySelector("[data-written-source-transcript]").textContent = row.answerReading || "판독값 없음";
+  dialog.querySelector("[data-written-source-evidence]").textContent = row.evidence;
+  link.href = `${previewUrl}#page=${reading.pageNumber || 1}&view=FitH`;
+  canvas.hidden = frame.hidden = true;
+  const token = Symbol();
+  dialog._writtenRequest = token;
+  dialog.showModal();
+  const showPage = () => {
+    frame.src = link.href;
+    frame.hidden = false;
+    location.textContent = "PDF에서 해당 문항을 찾아 답안 원문을 확인해 주세요.";
+  };
+  if (!reading.sourceBox || !reading.pageNumber || !window.pdfjsLib?.getDocument) { showPage(); return; }
+  location.textContent = "학생 원본의 답안 영역을 확대하고 있습니다.";
+  let task;
+  try {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+    task = window.pdfjsLib.getDocument({ data: new Uint8Array(await originalFile.arrayBuffer()), isEvalSupported: false });
+    const crop = await renderWrittenAnswerCrop(await task.promise, reading);
+    if (!dialog.open || dialog._writtenRequest !== token) return;
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    canvas.getContext("2d").drawImage(crop, 0, 0);
+    canvas.hidden = false;
+    location.textContent = `학생 답안 ${reading.pageNumber}쪽 · ${reading.sourceVerified ? "대조한 영역" : "확인할 후보 영역"}`;
+  } catch {
+    if (dialog.open && dialog._writtenRequest === token) showPage();
+  } finally {
+    await task?.destroy().catch(() => {});
+  }
 }
 
 async function openStudentResult(course, targetStudents, studentId) {
@@ -5100,6 +5220,22 @@ async function openStudentResult(course, targetStudents, studentId) {
       </div>
     </div></section>`;
   const panel = slot.querySelector(".student-result-inline");
+  panel.insertAdjacentHTML("beforeend", `<dialog class="example-math-dialog" data-written-source-dialog aria-labelledby="written-source-title">
+    <div class="example-math-dialog-content">
+      <header><h3 id="written-source-title"></h3><button type="button" data-close-written-source>닫기</button></header>
+      <div class="example-math-comparison">
+        <section class="example-review-source"><h4>학생 답안 원본</h4><p data-written-source-location></p><canvas aria-label="학생이 쓴 글씨 확대" hidden></canvas><iframe title="학생 답안 원본" hidden></iframe><a target="_blank" rel="noopener noreferrer">원본 PDF 새 탭에서 보기</a></section>
+        <div class="example-review-fields"><div><strong>AI 판독 결과</strong><pre data-written-source-transcript></pre></div><div><strong>채점 근거</strong><pre data-written-source-evidence></pre></div></div>
+      </div>
+    </div>
+  </dialog>`);
+  const writtenDialog = panel.querySelector("[data-written-source-dialog]");
+  writtenDialog.querySelector("[data-close-written-source]").addEventListener("click", () => writtenDialog.close());
+  writtenDialog.addEventListener("close", () => writtenDialog.querySelector("iframe").removeAttribute("src"));
+  panel.querySelectorAll("[data-view-written-source]").forEach((button) => button.addEventListener("click", () => {
+    const row = initialExampleRows[Number(button.dataset.viewWrittenSource)];
+    if (row) openWrittenSourceReview(writtenDialog, row, answerFile, previewUrl);
+  }));
   const regradeRun = studentRegradeRuns.get(course.id);
   if (regradeRun?.studentId === studentId) updateStudentRegradeProgress(regradeRun, panel);
   const scoreInputs = Array.from(panel.querySelectorAll("[data-teacher-score]"));

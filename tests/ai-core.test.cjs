@@ -8,7 +8,7 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
-async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata } = {}) {
+async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata, prepareWrittenSources, readingCount = 2 } = {}) {
   const settings = metadata || {
     requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [7] },
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }, { score: 0, criterion: "오답 또는 미응답" }] }],
@@ -21,6 +21,7 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
     metadata: settings,
+    prepareWrittenSources,
     files: [
       { role: "studentAnswer", file: new File(["answer"], "student.pdf", { type: "application/pdf" }) },
       { role: "blank", file: new File(["blank"], "blank.pdf", { type: "application/pdf" }) },
@@ -29,10 +30,14 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
     fetchImpl: async (_url, options) => {
       calls += 1;
       const parts = JSON.parse(options.body).contents[0].parts;
-      if (calls <= 2) {
+      if (calls <= readingCount) {
         assert.match(parts[0].text, /학생 답안의 글자 전사만/);
         assert.doesNotMatch(parts[0].text, /상민|세금|신분 용어/);
         assert.equal(parts.filter((part) => part.inlineData).length, 2);
+        if (calls === 2 && prepareWrittenSources) {
+          assert.match(parts[0].text, /문제별로 짝지은 두 확대 이미지/);
+          assert.ok(parts.filter((part) => part.inlineData).every((part) => part.inlineData.mimeType === "image/jpeg"));
+        }
         const value = calls === 1 ? first : second;
         return response({ readings: [{
           exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1,
@@ -48,7 +53,7 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
       });
     },
   });
-  assert.equal(calls, 3);
+  assert.equal(calls, readingCount + 1);
   return { result, settings };
 }
 
@@ -89,6 +94,42 @@ test("written grading keeps disagreement pending on precision merge and recogniz
   assert.equal(blank.independentTextReadings[0].status, "blank");
   assert.equal(blank.exampleAnswerResults[0].answerReading, "무응답");
   assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
+});
+
+test("written grading checks the located crop and holds a repeated short-text mismatch", async () => {
+  const sourceBox = [90, 400, 290, 530];
+  const prepareWrittenSources = async ([reading]) => {
+    assert.deepEqual(reading.sourceBox, sourceBox);
+    return new Map([[reading.exampleAnswerId, {
+      student: new File(["synthetic crop"], "student-region.jpg", { type: "image/jpeg" }),
+      blank: new File(["synthetic blank crop"], "blank-region.jpg", { type: "image/jpeg" }),
+    }]]);
+  };
+  const read = (transcript) => ({ status: "readable", transcript, sourceBox });
+  const { result: mismatch } = await gradeWrittenTestAnswer({ first: read("천인"), second: "천인", answer: "천인", prepareWrittenSources });
+  assert.equal(mismatch.totalScore, 0);
+  assert.equal(mismatch.hasMissingScores, true);
+  assert.equal(mismatch.independentTextReadings[0].sourceVerified, true);
+  assert.match(mismatch.reviewReasons.join("\n"), /짧은 답의 판독값이 예시답과 다릅니다/);
+  const { result: consistent } = await gradeWrittenTestAnswer({ first: read("상민"), second: "상민", prepareWrittenSources });
+  assert.equal(consistent.totalScore, 1);
+  assert.deepEqual(consistent.exampleAnswerResults[0].writtenReading.sourceBox, sourceBox);
+  const { result: disagreement } = await gradeWrittenTestAnswer({ first: read("상민"), second: "천인", prepareWrittenSources });
+  assert.equal(disagreement.totalScore, 0);
+  assert.match(disagreement.exampleAnswerResults[0].answerReading, /판독 불일치.*상민.*천인/);
+});
+
+test("a missing or redacted answer box cannot approve a written score", async () => {
+  for (const sourceBox of [null, [90, 180, 290, 230]]) {
+    const { result } = await gradeWrittenTestAnswer({
+      first: { status: "readable", transcript: "상민", sourceBox },
+      prepareWrittenSources: async () => assert.fail("must not crop an unlocated or redacted answer"),
+      readingCount: 1,
+    });
+    assert.equal(result.totalScore, 0);
+    assert.equal(result.hasMissingScores, true);
+    assert.equal(result.exampleAnswerResults[0].writtenReading.sourceVerified, false);
+  }
 });
 
 test("evaluation examples verify fraction equality and the separately entered answer", () => {
