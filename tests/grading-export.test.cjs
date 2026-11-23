@@ -461,7 +461,7 @@ test("reset and AI restore remain drafts, and the explicit save confirms the tea
 test("teacher score snapshots keep AI results available for restoration after saving zero", () => {
   const start = schoolSource.indexOf("function teacherReviewScoreSnapshot");
   const end = schoolSource.indexOf("async function openStudentResult", start);
-  const snapshot = new Function(schoolSource.slice(start, end) + "; return teacherReviewScoreSnapshot;")();
+  const snapshot = new Function("exampleRowsForCriterion", schoolSource.slice(start, end) + "; return teacherReviewScoreSnapshot;")(() => []);
   const ai = { totalScore: 4, questionResults: [{ criterionId: "r", score: 4, maxScore: 5, evidence: "AI 근거" }] };
   const draft = [{ ...ai.questionResults[0], score: 0, evidence: "교사 수정" }];
   const saved = { ...ai, ...snapshot(draft, [{ value: "0" }], [{ awardedScore: 0, pointResults: [{ awardedScore: 0 }] }]) };
@@ -474,6 +474,37 @@ test("teacher score snapshots keep AI results available for restoration after sa
   const rows = new Function("normalizeRubricCriteria", "normalizePerformanceThresholds", schoolSource.slice(rowStart, rowEnd) + "; return resultQuestionRows;")(() => [], () => ({}));
   assert.equal(rows(saved, {})[0].score, 0);
   assert.equal(rows(saved, {}, false)[0].score, 4);
+});
+
+test("all handwritten claims remain provisional and correcting a long answer clears every proposed point", () => {
+  const start = schoolSource.indexOf("function needsWrittenExampleReview");
+  const end = schoolSource.indexOf("async function openStudentResult", start);
+  const { rows, needsReview, verify, evidence } = new Function("normalizedExamplePointItems", "refreshExampleAnswerScore", "formatScore",
+    schoolSource.slice(start, end) + "; return { rows: resultExampleAnswerRows, needsReview: needsWrittenAnswerReview, verify: applyVerifiedWrittenAnswer, evidence: shownPointEvidence };"
+  )((example) => example.pointItems, () => {}, String);
+  const transcript = "수증기가 식어서 물방울이 되었다고 설명했다.";
+  const actual = "물이 햇빛을 받아 공기 중으로 올라갔다.";
+  const pointItems = [{ id: "p1", criterion: "관찰 내용", score: 1 }, { id: "p2", criterion: "변화 과정", score: 1 }];
+  const design = { exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: transcript, pointItems }] };
+  const result = { teacherConfirmed: true, exampleAnswerResults: [{ exampleAnswerId: "e1", writtenReading: { sourceVerified: true, status: "readable", transcript },
+    pointResults: pointItems.map((point) => ({ pointItemId: point.id, evidence: transcript, awardedScore: 1 })) }] };
+  const reviewed = rows(result, design);
+  assert.equal(needsReview(result, design), true);
+  assert.doesNotMatch(evidence(reviewed[0], reviewed[0].pointResults[0]), /수증기/);
+  verify(reviewed[0], { text: actual, blank: false }, rows(result, design, false)[0]);
+  assert.ok(reviewed[0].pointResults.every((point) => point.missingResult && point.awardedScore === null));
+  result.teacherExampleAnswerResults = reviewed;
+  assert.equal(needsReview(result, design), true);
+  reviewed[0].pointResults.forEach((point) => { point.missingResult = false; point.awardedScore = 1; });
+  assert.equal(needsReview(result, design), false);
+  assert.match(evidence(reviewed[0], reviewed[0].pointResults[0]), /햇빛/);
+  assert.doesNotMatch(evidence(reviewed[0], reviewed[0].pointResults[0]), /수증기/);
+  result.exampleAnswerResults[0] = { exampleAnswerId: "e1", fractionMathCheck: { independent: true } };
+  delete result.teacherExampleAnswerResults;
+  design.exampleAnswers[0].mathNotation = "6과 3/4";
+  assert.equal(needsReview(result, design), true);
+  design.exampleAnswers[0].answerText = "";
+  assert.equal(needsReview(result, design), false);
 });
 
 test("teacher total shows and updates the threshold-based achievement level", () => {

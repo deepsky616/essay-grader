@@ -799,6 +799,9 @@ a { color: inherit; text-decoration: none; }
 .example-review-fields [data-example-review-message] { margin: 0; color: #893b19; }
 .example-review-fields [data-example-review-message]:empty { display: none; }
 .example-review-fields > button { justify-self: end; }
+.example-review-fields [data-verified-written-answer] { padding: 9px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; font: inherit; }
+.example-review-fields [data-written-review-message] { color: #893b19; }
+.example-review-fields [data-written-review-message]:empty { display: none; }
 .document-analysis-progress { margin: -3px 0 16px; padding: 15px 16px; border: 1px solid rgba(49,84,214,.28); border-radius: 13px; background: linear-gradient(135deg,rgba(233,239,255,.88),rgba(255,255,255,.96)); box-shadow: 0 8px 20px rgba(24,33,56,.06); }
 .document-analysis-progress[hidden] { display: none; }
 .document-analysis-progress-head { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 11px; align-items: center; }
