@@ -8,7 +8,8 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
-async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata } = {}) {
+async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata,
+  narrative = "학생이 세금을 내는 이유도 자세히 설명했습니다.", repairMissingPoint = false } = {}) {
   const settings = metadata || {
     requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [7] },
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }, { score: 0, criterion: "오답 또는 미응답" }] }],
@@ -16,7 +17,6 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
       pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
   };
   let calls = 0;
-  const narrative = "학생이 세금을 내는 이유도 자세히 설명했습니다.";
   const response = (body) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] }));
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
@@ -28,7 +28,8 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
     ],
     fetchImpl: async (_url, options) => {
       calls += 1;
-      const parts = JSON.parse(options.body).contents[0].parts;
+      const request = JSON.parse(options.body);
+      const parts = request.contents[0].parts;
       if (calls <= 2) {
         assert.match(parts[0].text, /학생 답안의 글자 전사만/);
         assert.doesNotMatch(parts[0].text, /상민|세금|신분 용어/);
@@ -40,15 +41,19 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
         }] });
       }
       assert.match(parts[0].text, /independentTextReadings/);
+      if (repairMissingPoint && calls === 4) {
+        const schema = request.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.pointResults.items;
+        assert.ok(schema.required.includes("evidenceQuote"));
+      }
       return response({
         questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "신분 용어", answerReading: answer, score: earned ? 1 : 0, maxScore: 1, confidence: "high", evidence: narrative, feedback: narrative }],
-        exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
+        exampleAnswerResults: repairMissingPoint && calls === 3 ? [] : [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
           pointResults: [{ pointItemId: "p1", earned, awardedScore: earned ? 1 : 0, maxScore: 1, evidenceQuote: quote, confidence: "high", evidence: narrative }] }],
         summary: narrative, strengths: [narrative],
       });
     },
   });
-  assert.equal(calls, 3);
+  assert.equal(calls, repairMissingPoint ? 4 : 3);
   return { result, settings };
 }
 
@@ -89,6 +94,39 @@ test("written grading keeps disagreement pending on precision merge and recogniz
   assert.equal(blank.independentTextReadings[0].status, "blank");
   assert.equal(blank.exampleAnswerResults[0].answerReading, "무응답");
   assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
+});
+
+test("partial table handwriting displays confirmed fragments and unreadable cells without guessing a score", async () => {
+  const reading = { status: "partial", transcript: "[판독 불가] [판독 불가] 얘들아 [판독 불가]",
+    tableRows: [{ rowIndex: 1, cells: [
+      { columnIndex: 2, confidence: "low", value: "기여" },
+      { columnIndex: 3, confidence: "low", value: "맞어" },
+      { columnIndex: 4, confidence: "low", value: "얘들아 [판독 불가]" },
+    ] }] };
+  const metadata = {
+    subject: "국어", requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "지역 방언", scoreLevels: [{ score: 1, criterion: "올바르게 사용" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "", visualDescription: "표에 방언과 예문을 넣음",
+      maxScore: 1, pointItems: [{ id: "p1", score: 1, criterion: "방언을 알맞게 사용함" }], evaluationElementIds: ["r1"] }],
+  };
+  const invented = "충청도: 기여, 맞어, 얘들아 좀 기여 아니여";
+  const { result } = await gradeWrittenTestAnswer({ first: reading, metadata, answer: invented, quote: invented, narrative: invented });
+  const point = result.exampleAnswerResults[0].pointResults[0];
+  assert.equal(point.missingResult, true);
+  assert.equal(point.writtenPending, true);
+  assert.equal(point.earned, false);
+  assert.equal(result.hasMissingScores, true);
+  for (const evidence of [point.evidence, result.questionResults[0].evidence]) {
+    assert.match(evidence, /표 1행 4열의 일부 ‘얘들아’/);
+    assert.match(evidence, /판독 확인 필요.*2열.*3열.*4열/);
+    assert.doesNotMatch(evidence, /충청도|기여|맞어|아니여/);
+  }
+});
+
+test("a batched retry requests the literal quote for a readable answer", async () => {
+  const { result } = await gradeWrittenTestAnswer({ repairMissingPoint: true });
+  assert.equal(result.totalScore, 1);
+  assert.equal(result.hasMissingScores, false);
 });
 
 test("evaluation examples verify fraction equality and the separately entered answer", () => {

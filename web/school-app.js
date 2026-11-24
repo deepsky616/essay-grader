@@ -5349,7 +5349,10 @@ async function openStudentResult(course, targetStudents, studentId) {
     scoreInputs.forEach((input, scoreIndex) => {
       input.value = nearestScoreChoice(alignedScores[scoreIndex], scoreChoicesForResultRow(questionRows[scoreIndex], design));
       const linkedExamples = exampleRowsForCriterion(questionRows[scoreIndex], workingExampleRows);
-      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
+      const needsReading = linkedExamples.some((item) => item.pointResults.some((point) => point.writtenPending && point.missingResult));
+      const evidence = needsReading
+        ? linkedExamples.flatMap((item) => item.pointResults.map((point) => `${item.questionNumber} · ${point.evidence}`)).join("\n")
+        : `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
       const feedback = automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
       if (questionRows[scoreIndex]) {
         questionRows[scoreIndex].score = Number(input.value || 0);
@@ -5436,6 +5439,13 @@ async function openStudentResult(course, targetStudents, studentId) {
     if (savingReview) return false;
     if (studentRegradeRuns.get(course.id)?.status === "running") {
       showToast("학생별 재채점이 끝난 뒤 교사 점수를 저장해 주세요.");
+      return false;
+    }
+    const pendingScore = pointScoreSelects.find((select) =>
+      pointTarget(Number(select.dataset.exampleIndex), Number(select.dataset.pointIndex))?.writtenPending && select.value === "");
+    if (pendingScore) {
+      showToast("‘판독 확인 필요’로 표시된 답안을 확인하고 해당 배점을 선택해 주세요.");
+      pendingScore.focus();
       return false;
     }
     const revisionToSave = draftRevision;
