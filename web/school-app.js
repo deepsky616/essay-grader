@@ -50,9 +50,6 @@ let gradingResultsExpanded = false;
 let previewUrls = [];
 let activeGradingRun = null;
 const studentRegradeRuns = new Map();
-const studentRegradeMaterials = new WeakMap();
-const studentRegradeRedactions = new WeakMap();
-const submissionSelectionSaves = new Map();
 
 window.addEventListener("hashchange", renderRoute);
 document.addEventListener("click", (event) => {
@@ -489,8 +486,7 @@ function subjectOptions(grade, selected = "") {
 }
 
 async function renderCourse(courseId, activeTab) {
-  await submissionSelectionSaves.get(courseId)?.catch(() => {});
-  const [storedCourse, students, apiKey, selectedModel, keyStatus] = await Promise.all([
+  const [course, students, apiKey, selectedModel, keyStatus] = await Promise.all([
     getCourse(courseId),
     listStudents(),
     loadGeminiApiKey(),
@@ -498,14 +494,10 @@ async function renderCourse(courseId, activeTab) {
     getSetting(GEMINI_STATUS_SETTING),
   ]);
   const hasApiKey = Boolean(apiKey && keyStatus?.generationVerified && keyStatus.model === selectedModel);
-  if (!storedCourse) return renderNotFound();
+  if (!course) return renderNotFound();
   const allowedTabs = ["targets", "designs", "submissions", "grading"];
   const tab = allowedTabs.includes(activeTab) ? activeTab : "targets";
-  const targetStudents = students.filter((student) => (storedCourse.targetStudentIds || []).includes(student.id));
-  const classKey = (student) => JSON.stringify([student.schoolName || "", student.grade, student.className]);
-  const classes = new Set(targetStudents.map(classKey));
-  const pdfStudents = students.filter((student) => classes.has(classKey(student)));
-  const course = withSubmissionPageLayout(storedCourse, targetStudents, pdfStudents);
+  const targetStudents = students.filter((student) => (course.targetStudentIds || []).includes(student.id));
   app.innerHTML = `
     <div class="page-shell school-shell">
       <div class="breadcrumb"><a href="#/">나의 평가 목록</a><span>／</span><strong>${escapeHtml(course.title)}</strong></div>
@@ -522,13 +514,13 @@ async function renderCourse(courseId, activeTab) {
       <section class="workflow-panel">
         ${tab === "targets" ? renderTargetTab(course, students) : ""}
         ${tab === "designs" ? renderDesignTab(course) : ""}
-        ${tab === "submissions" ? renderSubmissionTab(course, targetStudents, pdfStudents) : ""}
+        ${tab === "submissions" ? renderSubmissionTab(course, targetStudents) : ""}
         ${tab === "grading" ? renderGradingTab(course, targetStudents, hasApiKey, selectedModel) : ""}
       </section>
     </div>`;
   if (tab === "targets") bindTargetTab(course, students);
   if (tab === "designs") bindDesignTab(course);
-  if (tab === "submissions") bindSubmissionTab(course, targetStudents, pdfStudents);
+  if (tab === "submissions") bindSubmissionTab(course, targetStudents);
   if (tab === "grading") bindGradingTab(course, targetStudents);
 }
 
@@ -2715,17 +2707,17 @@ function setDesignStatus(form, message, isError = false) {
   status.classList.toggle("is-success", !isError);
 }
 
-function renderSubmissionTab(course, targetStudents, pdfStudents = targetStudents) {
+function renderSubmissionTab(course, targetStudents) {
   const designs = course.designs || [];
   const submission = course.submission;
   const isReady = targetStudents.length > 0 && designs.length > 0;
-  const assignmentMap = new Map((submission?.pageAssignments || []).map((item) => [item.studentId, item]));
-  const availableStudentCount = targetStudents.filter((student) => assignmentMap.has(student.id)).length;
+  const assignmentMap = new Map((submission?.assignments || []).map((item) => [item.studentId, item]));
   const includedStudentCount = submission?.includedStudentIds?.filter((id) => targetStudents.some((student) => student.id === id)).length || 0;
-  const allStudentsIncluded = includedStudentCount === availableStudentCount;
+  const allStudentsIncluded = Boolean(targetStudents.length) && includedStudentCount === targetStudents.length;
+  const requiredPageCount = includedStudentCount * Number(submission?.pagesPerStudent || 0);
   const previewUrl = submission?.sourceFile?.blob ? createPreviewUrl(submission.sourceFile.blob) : "";
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 3</p><h2>과제물 관리</h2><p>학급 답안 PDF를 학생 번호순으로 나눈 뒤 이번에 채점할 학생을 선택합니다.</p></div><span>${submission ? `${submission.pageCount}쪽` : "업로드 전"}</span></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 3</p><h2>과제물 관리</h2><p>학급 답안 PDF 1개를 올리면 선택한 학생 순서와 1인당 페이지 수에 따라 자동 분할합니다.</p></div><span>${submission ? `${submission.pageCount}쪽` : "업로드 전"}</span></div>
       <form id="submission-form" class="submission-upload-bar ${isReady ? "" : "is-disabled"}">
         <label>평가 설계<select name="designId" ${designs.length ? "" : "disabled"}>${designs.length ? designs.map((design) => `<option value="${escapeHtml(design.id)}" ${submission?.designId === design.id ? "selected" : ""}>${escapeHtml(design.taskName)}</option>`).join("") : `<option>평가 설계를 먼저 추가하세요</option>`}</select></label>
         <label>학생 1명당 답안지 페이지 수<input name="pagesPerStudent" type="number" min="1" max="50" value="${submission?.pagesPerStudent || 3}" required ${isReady ? "" : "disabled"}></label>
@@ -2740,47 +2732,29 @@ function renderSubmissionTab(course, targetStudents, pdfStudents = targetStudent
             <iframe src="${fitPdfPreviewUrl(previewUrl)}" title="업로드된 학급 답안 PDF 미리보기" data-submission-preview-frame></iframe>
           </section>
           <section class="split-student-panel">
-            <div class="mini-panel-head"><strong>채점할 학생 선택</strong><button type="button" class="secondary-action" data-edit-pdf-students>PDF에 들어 있는 학생 지정</button></div>
-            ${submission.pageAssignments ? "" : `<div class="submission-prerequisite"><strong>PDF에 들어 있는 학생을 먼저 지정해 주세요.</strong><p>현재 PDF는 ${submission.pageCount}쪽입니다. 분할할 학생만 지정하면 실제 PDF 쪽이 배정됩니다.</p></div>`}
+            <div class="mini-panel-head"><strong>학생 번호별 자동 분할</strong><span>체크 해제 시 다음 학생부터 페이지를 당겨 배정</span></div>
             <div class="split-selection-toolbar">
-              <div><strong>채점 대상 <b data-split-selected-count>${includedStudentCount}</b> / ${availableStudentCount}명</strong><span data-split-page-summary>선택한 답안 ${includedStudentCount * submission.pagesPerStudent}쪽 · 업로드 PDF ${submission.pageCount}쪽</span></div>
+              <div><strong>분할 대상 <b data-split-selected-count>${includedStudentCount}</b> / ${targetStudents.length}명</strong><span data-split-page-summary>필요 ${requiredPageCount}쪽 · 업로드 PDF ${submission.pageCount}쪽</span></div>
               <div class="split-bulk-actions"><button type="button" data-select-all-submissions ${allStudentsIncluded ? "disabled" : ""}>전체 학생 선택</button><button type="button" data-clear-all-submissions ${includedStudentCount ? "" : "disabled"}>전체 선택 해제</button></div>
             </div>
             <div class="split-list">
-              ${[...targetStudents].sort(studentSort).map((student) => {
+              ${targetStudents.map((student) => {
                 const assignment = assignmentMap.get(student.id);
                 const included = submission.includedStudentIds?.includes(student.id);
                 const inputId = `submission-student-${student.id}`;
-                return `<div class="split-row ${included ? "is-included" : "is-excluded"}" data-split-student="${escapeHtml(student.id)}"><input id="${escapeHtml(inputId)}" type="checkbox" data-include-submission value="${escapeHtml(student.id)}" ${included ? "checked" : ""} ${assignment ? "" : "disabled"}><label class="split-student-label" for="${escapeHtml(inputId)}"><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><em>${submissionPageLabel(assignment, included)}</em></label><button class="split-preview-button" type="button" data-preview-submission="${escapeHtml(student.id)}" ${assignment ? "" : "disabled"}>평가지 미리보기</button></div>`;
+                return `<div class="split-row ${included ? "is-included" : "is-excluded"}" data-split-student="${escapeHtml(student.id)}"><input id="${escapeHtml(inputId)}" type="checkbox" data-include-submission value="${escapeHtml(student.id)}" ${included ? "checked" : ""}><label class="split-student-label" for="${escapeHtml(inputId)}"><span>${escapeHtml(student.number)}번</span><strong>${escapeHtml(student.name)}</strong><em>${included ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽` : "채점 제외"}</em></label><button class="split-preview-button" type="button" data-preview-submission="${escapeHtml(student.id)}" ${assignment?.pageNumbers?.length ? "" : "disabled"}>평가지 미리보기</button></div>`;
               }).join("")}
             </div>
-            <div class="split-summary"><strong>${submission.pageAssignments?.length || 0}명 답안 배정</strong><p>${!submission.pageAssignments ? "학생을 지정하면 배정할 PDF 쪽을 확인할 수 있습니다." : submission.unusedPages?.length ? `배정되지 않은 쪽 ${submission.unusedPages.join(", ")}` : "모든 페이지를 학생 번호순으로 배정했습니다."}</p></div>
+            <div class="split-summary"><strong data-split-completed>${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료</strong><p data-split-unused-pages>${submission.unusedPages?.length ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽` : "모든 페이지를 순서대로 배정했습니다."}</p></div>
           </section>
-        </div>
-        <dialog class="notice-dialog submission-students-dialog" data-pdf-students-dialog aria-labelledby="pdf-students-title">
-          <form data-pdf-students-form>
-            <h2 id="pdf-students-title">PDF에 들어 있는 학생 지정</h2>
-            <p>합본에 답안이 있는 학생을 선택하세요. PDF 첫 쪽부터 학생 번호순으로 1명당 ${submission.pagesPerStudent}쪽을 배정합니다.</p>
-            <p data-pdf-students-count role="status"></p>
-            <div class="split-list">${[...pdfStudents].sort(studentSort).map((student) =>
-              `<label class="pdf-student-choice"><input type="checkbox" value="${escapeHtml(student.id)}" ${assignmentMap.has(student.id) ? "checked" : ""}><span>${escapeHtml(StudentWorkflow.rosterIdentity(student))}</span></label>`).join("")}</div>
-            <div class="form-bottom-actions"><button type="button" class="secondary-action" data-close-pdf-students>닫기</button><button type="submit" class="primary-action" data-save-pdf-students>쪽 배정 저장</button></div>
-          </form>
-        </dialog>` : ""}
+        </div>` : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=designs">← 평가 설계</a><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=grading">AI 채점으로 →</a></div>`;
 }
 
-function submissionPageLabel(assignment, included) {
-  return assignment ? `${assignment.pageNumbers.join("–")}쪽${included ? "" : " · 이번 채점 제외"}` : "PDF에 배정된 쪽 없음";
-}
-
-function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents) {
-  const isGrading = () => studentRegradeRuns.get(course.id)?.status === "running"
-    || activeGradingRun?.courseId === course.id;
+function bindSubmissionTab(course, targetStudents) {
   const form = app.querySelector("#submission-form");
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (isGrading()) { showToast("이 수업의 AI 채점이 끝난 뒤 답안 배정을 바꿔 주세요."); return; }
     const selectedFile = form.elements.classPdf.files?.[0];
     const existingFile = course.submission?.sourceFile;
     try {
@@ -2798,110 +2772,47 @@ function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents)
         const pagesPerStudent = Math.max(1, Math.min(50, Number(form.elements.pagesPerStudent.value) || 1));
         if (blankPageCount !== pagesPerStudent) throw new Error(`학생용 평가지는 ${blankPageCount}쪽입니다. 학생 1명당 작성 답안 페이지 수도 ${blankPageCount}쪽으로 맞춰 주세요.`);
       }
-      const previous = course.submission;
-      const sameLayout = !selectedFile && previous?.pageCount === pageCount
-        && previous.pagesPerStudent === Number(form.elements.pagesPerStudent.value);
-      const includedStudentIds = sameLayout ? previous.includedStudentIds : targetStudents.map((student) => student.id);
+      const includedStudentIds = selectedFile || !course.submission
+        ? targetStudents.map((student) => student.id)
+        : course.submission.includedStudentIds.filter((id) => targetStudents.some((student) => student.id === id));
       course.submission = buildSubmission({
         sourceFile,
         pageCount,
         pagesPerStudent: Number(form.elements.pagesPerStudent.value),
         includedStudentIds,
         students: targetStudents,
-        pdfStudents,
         designId: form.elements.designId.value,
-        pdfStudentIds: sameLayout ? previous.pageAssignments?.map((item) => item.studentId) ?? null : undefined,
       });
-      if (!sameLayout || previous.designId !== course.submission.designId) course.grading = null;
+      course.grading = null;
       course.updatedAt = new Date().toISOString();
       await putCourse(course);
-      showToast(course.submission.pageAssignments ? `${course.submission.pageAssignments.length}명의 답안 쪽을 배정했습니다.`
-        : "PDF에 들어 있는 학생을 지정해 주세요.");
+      showToast(`${course.submission.assignments.length}명의 답안 페이지를 자동 분할했습니다.`);
       renderCourse(course.id, "submissions");
     } catch (error) { showToast(friendlyError(error)); }
   });
-  const pdfStudentsDialog = app.querySelector("[data-pdf-students-dialog]");
-  const pdfStudentsForm = pdfStudentsDialog?.querySelector("[data-pdf-students-form]");
-  const pdfStudentsCount = pdfStudentsForm?.querySelector("[data-pdf-students-count]");
-  const savePdfStudents = pdfStudentsForm?.querySelector("[data-save-pdf-students]");
-  const selectedPdfStudents = () => [...pdfStudentsForm.querySelectorAll("input:checked")].map((input) => input.value);
-  const updatePdfStudentsCount = () => {
-    const count = selectedPdfStudents().length;
-    const pages = count * course.submission.pagesPerStudent;
-    pdfStudentsCount.textContent = `${count}명 선택 · 사용할 쪽 ${pages} / ${course.submission.pageCount}`;
-    savePdfStudents.disabled = !count || pages > course.submission.pageCount;
-  };
-  app.querySelector("[data-edit-pdf-students]")?.addEventListener("click", () => {
-    if (isGrading()) { showToast("이 수업의 AI 채점이 끝난 뒤 답안 배정을 바꿔 주세요."); return; }
-    const assignedIds = new Set((course.submission.pageAssignments || []).map((item) => item.studentId));
-    pdfStudentsForm.querySelectorAll("input").forEach((input) => { input.checked = assignedIds.has(input.value); });
-    updatePdfStudentsCount();
-    pdfStudentsDialog.showModal();
-  });
-  pdfStudentsDialog?.querySelector("[data-close-pdf-students]")?.addEventListener("click", () => pdfStudentsDialog.close());
-  pdfStudentsForm?.addEventListener("change", updatePdfStudentsCount);
-  pdfStudentsForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (isGrading() || savePdfStudents.disabled) return;
-    const pdfStudentIds = selectedPdfStudents();
-    const previous = course.submission;
-    const retained = new Set(previous.includedStudentIds);
-    const alreadyInPdf = new Set((previous.pageAssignments || []).map((item) => item.studentId));
-    const includedStudentIds = pdfStudentIds.filter((id) => retained.has(id) || !alreadyInPdf.has(id));
-    const submission = buildSubmission({ ...previous, students: targetStudents, pdfStudents, pdfStudentIds, includedStudentIds });
-    savePdfStudents.disabled = true;
-    try {
-      const grading = gradingWithVerifiedAnswerPages(course.grading, submission);
-      await putCourse({ ...course, submission, grading, updatedAt: new Date().toISOString() });
-      pdfStudentsDialog.close();
-      showToast(`${submission.pageAssignments.length}명의 답안 쪽을 배정했습니다.`);
-      renderCourse(course.id, "submissions");
-    } catch (error) {
-      showToast(friendlyError(error));
-      updatePdfStudentsCount();
-    }
-  });
   const saveSubmissionSelection = async (includedStudentIds, message = "") => {
-    if (isGrading()) {
-      updateSubmissionSelectionView(course.submission, targetStudents);
-      showToast("이 수업의 AI 채점이 끝난 뒤 학생 선택을 바꿔 주세요.");
-      return;
-    }
-    const submission = selectSubmissionStudents(course.submission, includedStudentIds);
-    course.submission = submission;
+    course.submission = buildSubmission({
+      ...course.submission,
+      includedStudentIds,
+      students: targetStudents,
+    });
+    course.grading = null;
     course.updatedAt = new Date().toISOString();
+    await putCourse(course);
+    if (message) showToast(message);
     updateSubmissionSelectionView(course.submission, targetStudents);
-    const snapshot = { ...course };
-    const save = Promise.resolve(submissionSelectionSaves.get(course.id)).catch(() => {}).then(() => putCourse(snapshot));
-    submissionSelectionSaves.set(course.id, save);
-    try {
-      await save;
-      if (message && course.submission === submission) showToast(message);
-    } catch (error) {
-      showToast(friendlyError(error));
-      if (course.submission === submission) {
-        const saved = withSubmissionPageLayout(await getCourse(course.id), targetStudents, pdfStudents);
-        if (saved?.submission && course.submission === submission) {
-          course.submission = saved.submission;
-          updateSubmissionSelectionView(course.submission, targetStudents);
-        }
-      }
-    } finally {
-      if (submissionSelectionSaves.get(course.id) === save) submissionSelectionSaves.delete(course.id);
-    }
   };
   app.querySelectorAll("[data-include-submission]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
     const includedStudentIds = Array.from(app.querySelectorAll("[data-include-submission]:checked")).map((input) => input.value);
     await saveSubmissionSelection(includedStudentIds);
   }));
-  app.querySelector("[data-select-all-submissions]")?.addEventListener("click", () => {
-    const assigned = new Set((course.submission.pageAssignments || []).map((item) => item.studentId));
-    const allAvailable = targetStudents.filter((student) => assigned.has(student.id)).map((student) => student.id);
-    saveSubmissionSelection(allAvailable, `답안이 있는 학생 ${allAvailable.length}명을 채점 대상으로 선택했습니다.`);
-  });
+  app.querySelector("[data-select-all-submissions]")?.addEventListener("click", () => saveSubmissionSelection(
+    targetStudents.map((student) => student.id),
+    `전체 학생 ${targetStudents.length}명을 분할 대상으로 선택했습니다.`,
+  ));
   app.querySelector("[data-clear-all-submissions]")?.addEventListener("click", () => saveSubmissionSelection(
     [],
-    "전체 학생의 채점 선택을 해제했습니다.",
+    "전체 학생의 분할 대상 선택을 해제했습니다.",
   ));
   app.querySelector("[data-expand-submission-preview]")?.addEventListener("click", () => {
     const frame = app.querySelector("[data-submission-preview-frame]");
@@ -2911,7 +2822,7 @@ function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents)
   app.querySelectorAll("[data-preview-submission]").forEach((button) => button.addEventListener("click", async () => {
     const studentId = button.dataset.previewSubmission;
     const student = targetStudents.find((item) => item.id === studentId);
-    const assignment = course.submission?.pageAssignments?.find((item) => item.studentId === studentId);
+    const assignment = course.submission?.assignments?.find((item) => item.studentId === studentId);
     const panel = app.querySelector("[data-submission-preview-panel]");
     const frame = panel?.querySelector("[data-submission-preview-frame]");
     if (!student || !assignment?.pageNumbers?.length || !panel || !frame) { showToast("이 학생에게 배정된 평가지 페이지가 없습니다."); return; }
@@ -2923,7 +2834,7 @@ function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents)
         URL.revokeObjectURL(panel.dataset.studentPreviewUrl);
         previewUrls = previewUrls.filter((url) => url !== panel.dataset.studentPreviewUrl);
       }
-      const assignmentIndex = course.submission.pageAssignments.indexOf(assignment);
+      const assignmentIndex = Math.max(0, course.submission.assignments.findIndex((item) => item.studentId === studentId));
       const studentFile = await splitStudentPdf(course.submission.sourceFile.blob, assignment.pageNumbers, assignmentIndex);
       const studentPreviewUrl = createPreviewUrl(studentFile);
       panel.dataset.studentPreviewUrl = studentPreviewUrl;
@@ -2938,7 +2849,7 @@ function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents)
       showToast(`학생 평가지 미리보기를 만들지 못했습니다. ${friendlyError(error)}`);
     } finally {
       button.textContent = originalLabel;
-      button.disabled = !course.submission?.pageAssignments?.some((item) => item.studentId === studentId);
+      button.disabled = !course.submission?.assignments?.find((item) => item.studentId === studentId)?.pageNumbers?.length;
     }
   }));
 }
@@ -2946,7 +2857,7 @@ function bindSubmissionTab(course, targetStudents, pdfStudents = targetStudents)
 function updateSubmissionSelectionView(submission, targetStudents) {
   if (!submission) return;
   const included = new Set(submission.includedStudentIds || []);
-  const assignmentMap = new Map((submission.pageAssignments || []).map((item) => [item.studentId, item]));
+  const assignmentMap = new Map((submission.assignments || []).map((item) => [item.studentId, item]));
   app.querySelectorAll("[data-include-submission]").forEach((checkbox) => {
     const isIncluded = included.has(checkbox.value);
     const assignment = assignmentMap.get(checkbox.value);
@@ -2955,7 +2866,9 @@ function updateSubmissionSelectionView(submission, targetStudents) {
     row?.classList.toggle("is-included", isIncluded);
     row?.classList.toggle("is-excluded", !isIncluded);
     const pageSummary = row?.querySelector("em");
-    if (pageSummary) pageSummary.textContent = submissionPageLabel(assignment, isIncluded);
+    if (pageSummary) pageSummary.textContent = isIncluded
+      ? `${assignment?.pageNumbers?.join("–") || "페이지 부족"}쪽 · ${assignment?.pageNumbers?.length || 0}쪽`
+      : "채점 제외";
     const previewButton = row?.querySelector("[data-preview-submission]");
     if (previewButton) previewButton.disabled = !assignment?.pageNumbers?.length;
   });
@@ -2963,75 +2876,54 @@ function updateSubmissionSelectionView(submission, targetStudents) {
   const selectedCountNode = app.querySelector("[data-split-selected-count]");
   if (selectedCountNode) selectedCountNode.textContent = String(selectedCount);
   const pageSummary = app.querySelector("[data-split-page-summary]");
-  if (pageSummary) pageSummary.textContent = `선택한 답안 ${selectedCount * submission.pagesPerStudent}쪽 · 업로드 PDF ${submission.pageCount}쪽`;
+  if (pageSummary) pageSummary.textContent = `필요 ${selectedCount * submission.pagesPerStudent}쪽 · 업로드 PDF ${submission.pageCount}쪽`;
   const selectAllButton = app.querySelector("[data-select-all-submissions]");
-  if (selectAllButton) selectAllButton.disabled = selectedCount === targetStudents.filter((student) => assignmentMap.has(student.id)).length;
+  if (selectAllButton) selectAllButton.disabled = Boolean(targetStudents.length) && selectedCount === targetStudents.length;
   const clearAllButton = app.querySelector("[data-clear-all-submissions]");
   if (clearAllButton) clearAllButton.disabled = selectedCount === 0;
+  const completedNode = app.querySelector("[data-split-completed]");
+  if (completedNode) completedNode.textContent = `${submission.assignments.filter((item) => item.pageNumbers.length).length}명 분할 완료`;
+  const unusedPagesNode = app.querySelector("[data-split-unused-pages]");
+  if (unusedPagesNode) unusedPagesNode.textContent = submission.unusedPages?.length
+    ? `남는 페이지: ${submission.unusedPages.join(", ")}쪽`
+    : "모든 페이지를 순서대로 배정했습니다.";
+  const previewPanel = app.querySelector("[data-submission-preview-panel]");
+  if (previewPanel?.dataset.studentPreviewUrl) {
+    URL.revokeObjectURL(previewPanel.dataset.studentPreviewUrl);
+    previewUrls = previewUrls.filter((url) => url !== previewPanel.dataset.studentPreviewUrl);
+    delete previewPanel.dataset.studentPreviewUrl;
+    delete previewPanel.dataset.previewStudentId;
+    const frame = previewPanel.querySelector("[data-submission-preview-frame]");
+    if (frame) { frame.src = fitPdfPreviewUrl(previewPanel.dataset.classPreviewUrl); frame.title = "업로드된 학급 답안 PDF 미리보기"; }
+    previewPanel.querySelector("[data-submission-preview-title]").textContent = "학급 PDF 미리보기";
+    previewPanel.querySelector("[data-submission-preview-file]").textContent = submission.sourceFile.name;
+    app.querySelectorAll("[data-split-student]").forEach((row) => row.classList.remove("is-previewing"));
+  }
 }
 
-function selectSubmissionStudents(submission, includedStudentIds) {
-  const selected = new Set(includedStudentIds);
-  const assignments = (submission.pageAssignments || []).filter((item) => selected.has(item.studentId));
-  return { ...submission, assignments, includedStudentIds: assignments.map((item) => item.studentId) };
-}
-
-function buildSubmission({ sourceFile, pageCount, pagesPerStudent, includedStudentIds, students, pdfStudents = students, designId, pdfStudentIds, updatedAt }) {
-  const pageSize = Math.max(1, Math.min(50, Math.trunc(Number(pagesPerStudent) || 1)));
+function buildSubmission({ sourceFile, pageCount, pagesPerStudent, includedStudentIds, students, designId }) {
+  const pageSize = Math.max(1, Math.min(50, Number(pagesPerStudent) || 1));
   const included = new Set(includedStudentIds || []);
-  const studentIds = new Set(students.map((student) => student.id));
-  const matchingRoster = [pdfStudents, students].find((roster) => roster.length && roster.length * pageSize === pageCount);
-  const pdfOrder = pdfStudentIds === undefined
-    ? matchingRoster ? [...matchingRoster].sort(studentSort).map((student) => student.id) : null
-    : pdfStudentIds;
-  const pageAssignments = pdfOrder?.length && new Set(pdfOrder).size === pdfOrder.length && pdfOrder.length * pageSize <= pageCount
-    ? pdfOrder.map((studentId, index) => ({
-      studentId, pageNumbers: Array.from({ length: pageSize }, (_value, offset) => index * pageSize + offset + 1),
-    })) : null;
-  const assignments = (pageAssignments || []).filter((item) => studentIds.has(item.studentId) && included.has(item.studentId));
-  const assignedPageCount = (pageAssignments?.length || 0) * pageSize;
+  const sortedStudents = [...students].sort(studentSort);
+  let nextPage = 1;
+  const assignments = [];
+  for (const student of sortedStudents) {
+    if (!included.has(student.id)) continue;
+    const pageNumbers = Array.from({ length: pageSize }, (_, index) => nextPage + index).filter((page) => page <= pageCount);
+    assignments.push({ studentId: student.id, pageNumbers });
+    nextPage += pageSize;
+  }
+  const used = new Set(assignments.flatMap((item) => item.pageNumbers));
   return {
     sourceFile,
     pageCount,
     pagesPerStudent: pageSize,
-    pageAssignments,
-    includedStudentIds: assignments.map((item) => item.studentId),
+    includedStudentIds: sortedStudents.filter((student) => included.has(student.id)).map((student) => student.id),
     assignments,
-    unusedPages: Array.from({ length: pageCount - assignedPageCount }, (_value, index) => assignedPageCount + index + 1),
+    unusedPages: Array.from({ length: pageCount }, (_, index) => index + 1).filter((page) => !used.has(page)),
     designId,
-    updatedAt: updatedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
-}
-
-function gradingWithVerifiedAnswerPages(grading, submission) {
-  if (!grading) return grading;
-  const pages = new Map((submission.pageAssignments || []).map((item) => [item.studentId, item.pageNumbers]));
-  const previous = grading.results || [];
-  const pending = grading.resultsWithUnverifiedPages || [];
-  const results = [];
-  const unverified = [];
-  const verifiedIds = new Set();
-  for (const result of [...previous, ...pending]) {
-    const expected = pages.get(result.studentId);
-    if (expected && expected.length === result.pageNumbers?.length
-      && expected.every((page, index) => page === Number(result.pageNumbers[index])) && !verifiedIds.has(result.studentId)) {
-      results.push(result);
-      verifiedIds.add(result.studentId);
-    } else unverified.push(result);
-  }
-  if (results.length === previous.length && results.every((item, index) => item === previous[index])) return grading;
-  const selected = new Set(submission.includedStudentIds);
-  return { ...grading, results, resultsWithUnverifiedPages: unverified, errors: [], activeTasks: [],
-    completedCount: results.filter((item) => selected.has(item.studentId)).length,
-    totalCount: submission.assignments.length, status: results.length ? "partial" : "idle" };
-}
-
-function withSubmissionPageLayout(course, targetStudents, pdfStudents = targetStudents) {
-  if (!course?.submission || Object.hasOwn(course.submission, "pageAssignments") || !Number.isInteger(course.submission.pageCount)) return course;
-  const { includedStudentIds, assignments } = course.submission;
-  const submission = buildSubmission({ ...course.submission, students: targetStudents, pdfStudents,
-    includedStudentIds: includedStudentIds ?? assignments?.map((item) => item.studentId) });
-  return { ...course, submission, grading: gradingWithVerifiedAnswerPages(course.grading, submission) };
 }
 
 async function getPdfPageCount(blob) {
@@ -3045,29 +2937,25 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
   const grading = course.grading || {};
   const results = grading.results || [];
   const errors = grading.errors || [];
-  const selectedIds = new Set((submission?.assignments || []).map((item) => item.studentId));
-  const successCount = results.filter((item) => selectedIds.has(item.studentId)).length;
-  const failureCount = errors.filter((item) => selectedIds.has(item.studentId)).length;
-  const resultIds = new Set(results.map((item) => item.studentId));
-  const unverifiedResultCount = new Set((grading.resultsWithUnverifiedPages || [])
-    .filter((item) => !resultIds.has(item.studentId)).map((item) => item.studentId)).size;
   const partialScoreCount = results.filter((result) => result.hasMissingScores && !result.teacherConfirmed).length;
   const studentMap = new Map(targetStudents.map((student) => [student.id, student]));
   const resultEntries = orderedGradingResultEntries(results, errors, studentMap);
   const isActivelyRunning = activeGradingRun?.courseId === course.id && !activeGradingRun.controller.signal.aborted;
   const displayStatus = grading.status === "running" && !isActivelyRunning ? "stopped" : grading.status || "idle";
   const statusLabel = ({ running: "채점 진행 중", stopped: "채점 멈춤", complete: "채점 완료", partial: "일부 완료", failed: "채점 실패" })[displayStatus] || "채점 전";
-  const progressTotal = selectedIds.size;
-  const completedCount = successCount + failureCount;
-  const progress = progressTotal ? Math.round((completedCount / progressTotal) * 100) : 0;
+  const progressTotal = grading.totalCount || submission?.assignments?.length || 0;
+  const progress = progressTotal ? Math.round(((grading.completedCount || 0) / progressTotal) * 100) : 0;
   const elapsed = isActivelyRunning
     ? Number(grading.elapsedMs || 0) + Math.max(0, Date.now() - activeGradingRun.startedAt)
     : Number(grading.elapsedMs || 0);
   const activeTasks = isActivelyRunning ? (activeGradingRun.activeTasks || grading.activeTasks || []) : [];
+  const completedCount = Number(grading.completedCount || 0);
+  const successCount = results.length;
+  const failureCount = errors.length;
   const activeCount = activeTasks.length;
   const waitingCount = Math.max(0, progressTotal - completedCount - activeCount);
-  const canContinue = ["running", "stopped", "partial"].includes(displayStatus) && successCount < progressTotal;
-  const runButtonLabel = canContinue ? "AI 채점 계속" : progressTotal > 0 && successCount === progressTotal ? "AI 채점 다시 실행" : "AI 채점 실행";
+  const canContinue = ["running", "stopped", "partial"].includes(displayStatus) && results.length < progressTotal;
+  const runButtonLabel = canContinue ? "AI 채점 계속" : grading.status === "complete" ? "AI 채점 다시 실행" : "AI 채점 실행";
   const selectedSubmissionCount = submission?.includedStudentIds?.filter((id) => targetStudents.some((student) => student.id === id)).length
     ?? submission?.assignments?.length
     ?? 0;
@@ -3084,8 +2972,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
       ${hasApiKey ? `<div class="grading-run-actions"><button class="primary-action" type="button" data-run-grading ${!scanReady || isActivelyRunning ? "disabled" : ""}>${runButtonLabel}</button><button class="stop-grading-action" type="button" data-stop-grading ${isActivelyRunning ? "" : "hidden"}>채점 멈추기</button></div>` : `<a class="primary-action" href="#/settings">API 실제 생성 테스트 →</a>`}
     </div>
     ${design && !design.blankFile ? `<div class="grading-prerequisite"><strong>학생용 평가지 등록이 필요합니다.</strong><p>평가 설계 수정에서 학생이 작성하기 전의 평가지 PDF를 등록하면 AI 채점 버튼이 활성화됩니다.</p><button type="button" data-edit-linked-design>평가 설계 수정</button></div>` : ""}
-    ${submission && !selectedSubmissionCount ? `<div class="grading-prerequisite"><strong>채점할 학생 선택이 필요합니다.</strong><p>${submission.pageAssignments ? "3 과제물 관리에서 채점할 학생을 한 명 이상 선택해 주세요." : "3 과제물 관리에서 PDF에 들어 있는 학생을 먼저 지정해 주세요."}</p><button type="button" data-open-submissions>과제물 관리로</button></div>` : ""}
-    ${unverifiedResultCount ? `<div class="grading-prerequisite"><strong>답안 쪽을 확인해야 하는 기존 결과 ${unverifiedResultCount}명</strong><p>이전 채점에 사용한 쪽과 현재 배정을 대조해 주세요. 학생을 선택하고 다시 채점하면 새 결과가 표시됩니다.</p></div>` : ""}
+    ${submission && !selectedSubmissionCount ? `<div class="grading-prerequisite"><strong>채점할 학생 선택이 필요합니다.</strong><p>3 과제물 관리에서 자동 분할할 학생을 한 명 이상 선택해 주세요.</p><button type="button" data-open-submissions>과제물 관리로</button></div>` : ""}
     <section class="grading-progress-card" ${["running", "stopped"].includes(displayStatus) ? "" : "hidden"} data-grading-progress aria-live="polite" aria-busy="${isActivelyRunning}">
       <div class="grading-progress-overview">
         <div class="grading-progress-dial" style="--progress:${progress}%" role="progressbar" aria-label="전체 AI 채점 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" data-progress-dial><strong data-progress-percent>${progress}%</strong><span>전체 진행</span></div>
@@ -3109,7 +2996,7 @@ function renderGradingTab(course, targetStudents, hasApiKey, selectedModel) {
     ${results.length || errors.length ? `
       <div class="grading-result-summary">
         <div><strong>${results.length + errors.length}명 채점 결과</strong><p>채점 완료 ${results.length - partialScoreCount}명${partialScoreCount ? ` · 일부 문항 확인 필요 ${partialScoreCount}명` : ""} · 실패 ${errors.length}명 · 교사가 점수와 피드백을 확정해야 합니다.</p></div>
-        <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action neis-transfer-action" type="button" data-open-neis-transfer ${results.length ? "" : "disabled"}>NEIS 입력 도우미</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${failureCount ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
+        <div class="grading-result-actions"><button class="secondary-action" type="button" data-download-grading-results>채점 결과 다운로드</button><button class="secondary-action neis-transfer-action" type="button" data-open-neis-transfer ${results.length ? "" : "disabled"}>NEIS 입력 도우미</button><button class="secondary-action result-distribution-action" type="button" data-open-result-distribution ${results.length ? "" : "disabled"}>결과지 출력·배부</button>${errors.length ? `<button class="secondary-action" type="button" data-retry-failed>실패 학생 다시 채점</button>` : ""}<button class="secondary-action" type="button" data-toggle-results>${gradingResultsExpanded ? "결과 목록 닫기" : "채점 결과 상세"}</button></div>
       </div>
       ${gradingResultsExpanded ? `<div class="grading-result-table"><div class="grading-result-head"><span>학년</span><span>반</span><span>번호</span><span>이름</span><span>AI 결과</span><span>점수</span><span>학생 채점 상세</span></div>${resultEntries.map((entry) => entry.kind === "result" ? gradingResultRow(entry.item, studentMap.get(entry.studentId), design) : gradingErrorRow(entry.item, studentMap.get(entry.studentId))).join("")}</div>` : ""}` : `<div class="inline-empty"><strong>아직 AI 채점 결과가 없습니다.</strong><p>AI 채점 실행 후 진행률과 학생별 성공·실패 결과가 표시됩니다.</p></div>`}
     <div class="student-result-inline-slot" data-student-result-inline aria-live="polite"></div>
@@ -3722,7 +3609,6 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   const submission = course.submission;
   const design = course.designs?.find((item) => item.id === submission?.designId);
   if (!submission || !design) { showToast("과제물 분할과 평가 설계를 먼저 준비해 주세요."); return; }
-  if (submission.pageAssignments === null) { showToast("3 과제물 관리에서 PDF에 들어 있는 학생을 먼저 지정해 주세요."); return; }
   if (!design.blankFile) { showToast("평가 설계에서 학생이 작성하기 전의 평가지 PDF를 먼저 등록해 주세요."); return; }
   const blankFile = asFile(design.blankFile);
   let blankPageCount = 0;
@@ -3733,12 +3619,10 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     return;
   }
   const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
-  const selectedStudentIds = new Set(allAssignments.map((item) => item.studentId));
-  const countSelected = (items) => items.reduce((count, item) => count + Number(selectedStudentIds.has(item.studentId)), 0);
   const previousGrading = course.grading || {};
   const previousResults = Array.isArray(previousGrading.results) ? previousGrading.results : [];
   const previousErrors = Array.isArray(previousGrading.errors) ? previousGrading.errors : [];
-  const completedStudentIds = new Set(previousResults.filter((item) => selectedStudentIds.has(item.studentId)).map((item) => item.studentId));
+  const completedStudentIds = new Set(previousResults.map((item) => item.studentId));
   const failedStudentIds = new Set(previousErrors.map((item) => item.studentId));
   const canResume = !retryFailedOnly
     && ["running", "stopped", "partial"].includes(previousGrading.status)
@@ -3773,19 +3657,17 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     return;
   }
   const assignmentStudentIds = new Set(assignments.map((item) => item.studentId));
-  if (assignmentStudentIds.has(studentRegradeRuns.get(course.id)?.studentId)) studentRegradeRuns.delete(course.id);
   const preservePrevious = retryFailedOnly || canResume;
-  const keptResults = previousResults.filter((item) => !assignmentStudentIds.has(item.studentId));
-  const keptErrors = previousErrors.filter((item) => !assignmentStudentIds.has(item.studentId));
+  const keptResults = preservePrevious ? previousResults.filter((item) => !retryFailedOnly || !assignmentStudentIds.has(item.studentId)) : [];
+  const keptErrors = preservePrevious ? previousErrors.filter((item) => !assignmentStudentIds.has(item.studentId)) : [];
   const baseElapsedMs = preservePrevious ? Number(previousGrading.elapsedMs || 0) : 0;
   course.grading = {
     status: "running",
     startedAt: preservePrevious && previousGrading.startedAt ? previousGrading.startedAt : new Date().toISOString(),
     sessionStartedAt: new Date().toISOString(),
-    completedCount: countSelected(keptResults) + countSelected(keptErrors),
+    completedCount: keptResults.length + keptErrors.length,
     totalCount: allAssignments.length,
     results: [...keptResults],
-    resultsWithUnverifiedPages: previousGrading.resultsWithUnverifiedPages || [],
     errors: [...keptErrors],
     model: selectedModel,
     blankComparison: true,
@@ -3804,8 +3686,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     baseElapsedMs,
     completed: course.grading.completedCount,
     total: allAssignments.length,
-    successCount: countSelected(course.grading.results),
-    failureCount: countSelected(course.grading.errors),
+    successCount: course.grading.results.length,
+    failureCount: course.grading.errors.length,
     activeTasks: [],
   };
   await putCourse(course);
@@ -3813,8 +3695,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     stage: course.grading.currentStage,
     elapsedMs: baseElapsedMs,
     running: true,
-    successCount: countSelected(course.grading.results),
-    failureCount: countSelected(course.grading.errors),
+    successCount: course.grading.results.length,
+    failureCount: course.grading.errors.length,
     activeTasks: [],
   });
   const startButton = app.querySelector("[data-run-grading]");
@@ -3829,8 +3711,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       stage: course.grading.currentStage,
       elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
       running: true,
-      successCount: countSelected(course.grading.results),
-      failureCount: countSelected(course.grading.errors),
+      successCount: course.grading.results.length,
+      failureCount: course.grading.errors.length,
       activeTasks: course.grading.activeTasks || [],
     });
   }, 1000);
@@ -3841,8 +3723,6 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   let desiredParallelism = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
   activeGradingRun.parallelism = desiredParallelism;
   const redactedStudentFileCache = new Map();
-  const tableReferenceCache = new Map();
-  const exampleFileCache = new Map();
   let saveQueue = Promise.resolve();
   const queueCourseSave = () => {
     const snapshot = {
@@ -3860,8 +3740,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     const tasks = Array.from(activeStages.entries()).sort(([left], [right]) => left - right).map(([, task]) => task);
     course.grading.activeTasks = tasks;
     activeGradingRun.activeTasks = tasks;
-    activeGradingRun.successCount = countSelected(course.grading.results);
-    activeGradingRun.failureCount = countSelected(course.grading.errors);
+    activeGradingRun.successCount = course.grading.results.length;
+    activeGradingRun.failureCount = course.grading.errors.length;
     course.grading.currentStage = tasks.length
       ? `${tasks.length}명의 답안을 동시에 처리하고 있습니다.`
       : "완료 결과를 저장하고 있습니다.";
@@ -3869,8 +3749,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       stage: course.grading.currentStage,
       elapsedMs: baseElapsedMs + Math.max(0, Date.now() - activeGradingRun.startedAt),
       running: true,
-      successCount: activeGradingRun.successCount,
-      failureCount: activeGradingRun.failureCount,
+      successCount: course.grading.results.length,
+      failureCount: course.grading.errors.length,
       activeTasks: tasks,
     });
   };
@@ -3880,7 +3760,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
       const assignment = pendingAssignments.shift();
       if (!assignment) return;
       const currentStudent = targetStudents.find((item) => item.id === assignment.studentId);
-      const anonymousIndex = Math.max(0, (submission.pageAssignments || allAssignments).findIndex((item) => item.studentId === assignment.studentId));
+      const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
       const currentLabel = `${currentStudent?.number ? `${currentStudent.number}번` : "학생"} · 익명 S${String(anonymousIndex + 1).padStart(3, "0")}`;
       activeStages.set(workerIndex, { label: currentLabel, stage: "답안 준비 중" });
       refreshParallelProgress();
@@ -3895,8 +3775,6 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           blankFile,
           privacySession,
           redactedStudentFileCache,
-          tableReferenceCache,
-          exampleFileCache,
           signal: controller.signal,
           onStage: (stage) => {
             activeStages.set(workerIndex, { label: currentLabel, stage });
@@ -3927,7 +3805,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
         course.grading.errors = course.grading.errors.filter((item) => item.studentId !== assignment.studentId);
         course.grading.errors.push({ studentId: assignment.studentId, message: friendlyError(error), attemptedAt: new Date().toISOString() });
       }
-      course.grading.completedCount = countSelected(course.grading.results) + countSelected(course.grading.errors);
+      course.grading.completedCount = course.grading.results.length + course.grading.errors.length;
       activeGradingRun.completed = course.grading.completedCount;
       activeStages.delete(workerIndex);
       await queueCourseSave();
@@ -3953,9 +3831,8 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     course.grading.currentStage = "채점이 멈췄습니다. 다시 실행하면 남은 학생부터 계속합니다.";
   } else {
     course.grading.finishedAt = new Date().toISOString();
-    const successCount = countSelected(course.grading.results);
-    course.grading.status = successCount === allAssignments.length ? "complete" : successCount ? "partial" : "failed";
-    const hasPartialScores = course.grading.results.some((result) => selectedStudentIds.has(result.studentId) && result.hasMissingScores && !result.teacherConfirmed);
+    course.grading.status = course.grading.results.length === allAssignments.length ? "complete" : course.grading.results.length ? "partial" : "failed";
+    const hasPartialScores = course.grading.results.some((result) => result.hasMissingScores && !result.teacherConfirmed);
     course.grading.currentStage = course.grading.status !== "complete" ? "일부 학생 채점이 완료되지 않았습니다."
       : hasPartialScores ? "AI 채점이 끝났습니다. 일부 문항은 교사 확인이 필요합니다." : "모든 학생의 채점이 완료되었습니다.";
   }
@@ -4069,47 +3946,30 @@ function preliminaryReadingsFromResult(result) {
   }));
 }
 
-async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null,
-  tableReferenceCache = new Map(), exampleFileCache, individualRegrade = false, signal, onStage }) {
+async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null, signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
   if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const resolvedBlankFile = blankFile || asFile(design.blankFile);
-  const allAssignments = (submission.pageAssignments || submission.assignments).filter((item) => item.pageNumbers.length);
+  const allAssignments = submission.assignments.filter((item) => item.pageNumbers.length);
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
   const maxScore = assessmentDesignTotalScore(design);
   if (maxScore <= 0) throw new Error("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요.");
-  const sourceBlob = submission.sourceFile.blob;
-  const redactionKey = individualRegrade ? JSON.stringify([student.id, anonymousIndex, assignment.pageNumbers]) : "";
-  const savedRedaction = individualRegrade ? studentRegradeRedactions.get(sourceBlob) : null;
-  let studentFile = redactedStudentFileCache?.get(student.id) || (savedRedaction?.key === redactionKey ? savedRedaction.file : null);
+  let studentFile = redactedStudentFileCache?.get(student.id) || null;
   if (!studentFile) {
     onStage?.("공유 원본에서 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중", "prepare");
     studentFile = privacySession
       ? await privacySession.create(assignment.pageNumbers, anonymousIndex, { signal })
-      : await splitStudentPdf(sourceBlob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+      : await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
     redactedStudentFileCache?.set(student.id, studentFile);
-    if (individualRegrade && studentFile.size <= ChaejeomAI.MAX_INLINE_BYTES) {
-      studentRegradeRedactions.set(sourceBlob, { key: redactionKey, file: studentFile });
-    }
   } else onStage?.("신원 삭제된 안전한 답안 PDF 재사용 중", "prepare");
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
-  const prepareExampleFile = (source) => {
-    const cached = exampleFileCache?.get(source);
-    if (cached) return cached;
-    const file = asFile(source);
-    exampleFileCache?.set(source, file);
-    return file;
-  };
   const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
-  const attachedExamples = (design.exampleAnswers || []).flatMap((item, index) => item.file
-    ? [{ role: "example", file: prepareExampleFile(item.file), exampleAnswerId: item.id || `example-${index + 1}` }] : []);
-  const sharedExample = design.exampleFile ? [{ role: "example", file: prepareExampleFile(design.exampleFile) }] : [];
   const referenceFiles = [
-    ...(!structuredExamples.length ? sharedExample : []), ...attachedExamples,
+    ...(!structuredExamples.length && design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
+    ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
   ];
-  const tableReferenceFiles = [...sharedExample, ...attachedExamples];
   const recognitionWarnings = [];
   const firstPassFiles = [
     ...referenceFiles,
@@ -4131,7 +3991,6 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     recognitionWarnings,
     requireBlankComparison: true,
     verifyWrittenText: true,
-    compareTableCells: true,
     identityRedacted: true,
     student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
   };
@@ -4142,9 +4001,6 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     signal,
     metadata: baseMetadata,
     files: firstPassFiles,
-    tableReferenceFiles,
-    tableReferenceCache,
-    parallelRecognition: individualRegrade,
     onProgress: (message) => onStage?.(message, "primary"),
   });
   let enhancedFiles = [];
@@ -4232,9 +4088,6 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           recognitionWarnings,
         },
         files: precisionFiles,
-        tableReferenceFiles,
-        tableReferenceCache,
-        parallelRecognition: individualRegrade,
         onProgress: (message) => onStage?.(message, "review"),
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
@@ -4281,10 +4134,7 @@ const STUDENT_REGRADE_STEPS = [
 
 function renderStudentRegradeProgress() {
   return `<section class="student-regrade-progress" data-student-regrade-progress hidden aria-label="학생별 AI 재채점 진행">
-    <div class="student-regrade-progress-head">
-      <h3>학생별 AI 재채점 진행</h3>
-      <div class="student-regrade-clock" role="timer" aria-live="off"><span data-regrade-clock-label>경과 시간</span><time data-regrade-elapsed datetime="PT0S">00:00</time></div>
-    </div>
+    <div class="student-regrade-progress-head"><h3>학생별 AI 재채점 진행</h3><span data-regrade-elapsed aria-live="off"></span></div>
     <ol class="student-regrade-steps">${STUDENT_REGRADE_STEPS.map(({ id, label }) => `<li data-regrade-step="${id}"><strong>${label}</strong><small data-regrade-step-status></small></li>`).join("")}</ol>
     <progress data-regrade-track max="${STUDENT_REGRADE_STEPS.length}" value="0" aria-label="학생별 재채점 단계"></progress>
     <p data-regrade-stage role="status" aria-atomic="true"></p>
@@ -4303,33 +4153,9 @@ function matchingStudentRegradePanel(run) {
   return panel?.dataset.regradeStudentId === run.studentId && panel.dataset.regradeCourseId === run.courseId ? panel : null;
 }
 
-function studentRegradeTiming(run, now = Date.now()) {
-  return run.timing || {
-    elapsedMs: Math.max(0, (run.gradingFinishedAt ?? now) - run.startedAt),
-    phaseMs: { ...run.phaseMs, [run.phase]: Math.max(0, now - run.phaseStartedAt) },
-  };
-}
-
 function updateStudentRegradeClock(run, panel = matchingStudentRegradePanel(run)) {
   const elapsed = panel?.querySelector("[data-regrade-elapsed]");
-  if (!elapsed) return;
-  const timing = studentRegradeTiming(run);
-  elapsed.textContent = formatElapsedTime(timing.elapsedMs);
-  elapsed.dateTime = `PT${Math.floor(timing.elapsedMs / 1000)}S`;
-  if (run.status === "running") {
-    const activeStep = panel.querySelector(`[data-regrade-step="${run.phase}"] [data-regrade-step-status]`);
-    if (activeStep) activeStep.textContent = `진행 중 · ${formatElapsedTime(timing.phaseMs[run.phase])}`;
-  }
-}
-
-function savedStudentRegradeRun(courseId, result) {
-  const timing = result?.regradeTiming;
-  if (!Number.isFinite(timing?.elapsedMs) || timing.elapsedMs < 0) return null;
-  return {
-    courseId, studentId: result.studentId, status: "complete", phase: "save", timing,
-    reviewed: Number.isFinite(timing.phaseMs?.review),
-    detail: result.needsTeacherReview && !result.teacherConfirmed ? "최근 재채점 결과에 교사 확인이 필요한 항목이 있습니다." : "최근 재채점 결과를 저장했습니다.",
-  };
+  if (elapsed) elapsed.textContent = `경과 ${formatElapsedTime((run.finishedAt || Date.now()) - run.startedAt)}`;
 }
 
 function updateStudentRegradeProgress(run, panel = matchingStudentRegradePanel(run)) {
@@ -4337,16 +4163,12 @@ function updateStudentRegradeProgress(run, panel = matchingStudentRegradePanel(r
   if (!card) return;
   const activeIndex = STUDENT_REGRADE_STEPS.findIndex(({ id }) => id === run.phase);
   const labels = { pending: "대기", active: "진행 중", done: "완료", skipped: "건너뜀", error: "실패" };
-  const timing = studentRegradeTiming(run);
   card.hidden = false;
   card.dataset.status = run.status;
-  card.querySelector("[data-regrade-clock-label]").textContent = run.status === "running" && run.phase !== "save" ? "경과 시간" : "채점 소요 시간";
   card.querySelectorAll("[data-regrade-step]").forEach((item, index) => {
     const state = studentRegradeStepState(index, activeIndex, run.status, run.reviewed);
-    const duration = timing.phaseMs?.[STUDENT_REGRADE_STEPS[index].id];
     item.dataset.state = state;
-    item.querySelector("[data-regrade-step-status]").textContent = Number.isFinite(duration) && state !== "skipped"
-      ? `${labels[state]} · ${formatElapsedTime(duration)}` : labels[state];
+    item.querySelector("[data-regrade-step-status]").textContent = labels[state];
     if (state === "active") item.setAttribute("aria-current", "step");
     else item.removeAttribute("aria-current");
   });
@@ -4368,33 +4190,22 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
   }
   const submission = course.submission;
   const design = course.designs?.find((item) => item.id === submission?.designId);
-  const assignment = (submission?.pageAssignments ?? submission?.assignments)?.find((item) => item.studentId === studentId && item.pageNumbers.length);
+  const assignment = submission?.assignments?.find((item) => item.studentId === studentId && item.pageNumbers.length);
   const student = targetStudents.find((item) => item.id === studentId);
   if (!submission || !design || !assignment || !student) { showToast("이 학생의 평가 설계 또는 답안 페이지를 찾지 못했습니다."); return; }
   if (!design.blankFile) { showToast("평가 설계에서 학생용 평가지 PDF를 먼저 등록해 주세요."); return; }
   if (!window.confirm(`${StudentWorkflow.rosterIdentity(student)} 학생만 AI로 다시 채점할까요? 이 학생의 기존 AI 점수와 교사 수정 내용은 새 결과로 교체됩니다.`)) return;
-  const startedAt = Date.now();
-  const run = { courseId: course.id, studentId, status: "running", phase: "prepare", detail: "AI 설정과 평가지 확인 중",
-    startedAt, phaseStartedAt: startedAt, phaseMs: {}, reviewed: false };
+  const run = { courseId: course.id, studentId, status: "running", phase: "prepare", detail: "AI 설정과 평가지 확인 중", startedAt: Date.now(), reviewed: false };
   studentRegradeRuns.set(course.id, run);
   const onStage = (detail, phase) => {
-    if (run.status !== "running") return;
-    if (run.phase !== phase) {
-      const now = Date.now();
-      run.phaseMs[run.phase] = Math.max(0, now - run.phaseStartedAt);
-      run.phase = phase;
-      run.phaseStartedAt = now;
-      if (phase === "save") run.gradingFinishedAt = now;
-    }
+    run.phase = phase;
     run.detail = detail;
     if (phase === "review") run.reviewed = true;
     updateStudentRegradeProgress(run);
   };
   updateStudentRegradeProgress(run);
   matchingStudentRegradePanel(run)?.querySelector("[data-student-regrade-progress]")?.scrollIntoView({ block: "start" });
-  const refreshClock = () => updateStudentRegradeClock(run);
-  const timer = window.setInterval(refreshClock, 1000);
-  document.addEventListener("visibilitychange", refreshClock);
+  const timer = window.setInterval(() => updateStudentRegradeClock(run), 1000);
   try {
     const [apiKey, selectedModel, keyStatus] = await Promise.all([
       loadGeminiApiKey(),
@@ -4404,24 +4215,12 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     if (!apiKey || !keyStatus?.generationVerified || keyStatus.model !== selectedModel) {
       throw new Error("설정에서 현재 모델의 실제 생성 테스트를 먼저 완료해 주세요.");
     }
-    let materials = studentRegradeMaterials.get(design);
-    if (!materials || materials.updatedAt !== design.updatedAt || materials.blankSource !== design.blankFile || materials.model !== selectedModel) {
-      materials = { updatedAt: design.updatedAt, blankSource: design.blankFile, model: selectedModel,
-        blankFile: asFile(design.blankFile), tableReferenceCache: new Map(), exampleFileCache: new Map() };
-      studentRegradeMaterials.set(design, materials);
-    }
-    const { blankFile, tableReferenceCache, exampleFileCache } = materials;
-    const blankPageCount = materials.blankPageCount ?? await getPdfPageCount(blankFile);
-    materials.blankPageCount = blankPageCount;
+    const blankFile = asFile(design.blankFile);
+    const blankPageCount = await getPdfPageCount(blankFile);
     if (blankPageCount !== assignment.pageNumbers.length) throw new Error(`학생용 평가지는 ${blankPageCount}쪽이고 이 학생 답안은 ${assignment.pageNumbers.length}쪽입니다.`);
-    const nextResult = await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile,
-      tableReferenceCache, exampleFileCache, individualRegrade: true, onStage });
+    const nextResult = await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, onStage });
     onStage("새 채점 결과를 브라우저에 저장 중", "save");
-    let latest = await getCourse(course.id);
-    if (latest?.submission && !Object.hasOwn(latest.submission, "pageAssignments") && submission.pageAssignments
-      && latest.submission.updatedAt === submission.updatedAt) {
-      latest = { ...latest, submission, grading: gradingWithVerifiedAnswerPages(latest.grading, submission) };
-    }
+    const latest = await getCourse(course.id);
     const latestDesign = latest?.designs?.find((item) => item.id === design.id);
     if (!latest?.submission || !latestDesign || latest.submission.designId !== design.id
       || latest.submission.updatedAt !== submission.updatedAt || latestDesign.updatedAt !== design.updatedAt) {
@@ -4429,16 +4228,14 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     }
     const results = [...(latest.grading?.results || [])];
     const resultIndex = results.findIndex((item) => item.studentId === studentId);
-    const timedResult = { ...nextResult, regradeTiming: { elapsedMs: studentRegradeTiming(run).elapsedMs, phaseMs: { ...run.phaseMs } } };
-    if (resultIndex >= 0) results[resultIndex] = timedResult;
-    else results.push(timedResult);
+    if (resultIndex >= 0) results[resultIndex] = nextResult;
+    else results.push(nextResult);
     const errors = (latest.grading?.errors || []).filter((item) => item.studentId !== studentId);
-    const selected = new Set(latest.submission.assignments.filter((item) => item.pageNumbers.length).map((item) => item.studentId));
-    const selectedResultCount = results.filter((item) => selected.has(item.studentId)).length;
+    const expectedCount = latest.submission.assignments.filter((item) => item.pageNumbers.length).length;
     const grading = {
       ...latest.grading, results, errors, model: selectedModel, finishedAt: new Date().toISOString(),
-      completedCount: selectedResultCount + errors.filter((item) => selected.has(item.studentId)).length,
-      status: selectedResultCount === selected.size ? "complete" : "partial",
+      completedCount: results.length + errors.length,
+      status: results.length === expectedCount ? "complete" : "partial",
     };
     await putCourse({ ...latest, grading });
     course.grading = grading;
@@ -4449,11 +4246,10 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     run.detail = `재채점 실패 · ${friendlyError(error)}`;
   } finally {
     window.clearInterval(timer);
-    document.removeEventListener("visibilitychange", refreshClock);
-    run.timing = studentRegradeTiming(run);
+    run.finishedAt = Date.now();
     updateStudentRegradeProgress(run);
   }
-  showToast(`${run.detail} · 채점 소요 시간 ${formatElapsedTime(run.timing.elapsedMs)}`);
+  showToast(run.detail);
   if (run.status === "complete" && matchingStudentRegradePanel(run)) {
     try { await openStudentResult(course, targetStudents, studentId); }
     catch { showToast("재채점 결과를 저장했습니다. 상세 화면을 다시 열어 확인해 주세요."); }
@@ -4962,8 +4758,8 @@ function nearestScoreChoice(value, choices) {
   return choices.reduce((nearest, candidate) => Math.abs(candidate - numeric) < Math.abs(nearest - numeric) ? candidate : nearest, choices[0]);
 }
 
-function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPending = false, reviewKind = "") {
-  if (missing && writtenPending) return { state: "unlinked", label: reviewKind === "score" ? "배점 확인 필요" : "판독 확인 필요" };
+function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPending = false) {
+  if (missing && writtenPending) return { state: "unlinked", label: "판독 확인 필요" };
   if (missing) return { state: "unlinked", label: "세부 채점 없음" };
   const earned = Math.max(0, Number(score || 0));
   const maximum = Math.max(0, Number(maxScore || 0));
@@ -4986,10 +4782,9 @@ function teacherPointEvidenceText(point, awardedScore) {
   const score = Math.max(0, Number(awardedScore || 0));
   const maximum = Math.max(0, Number(point?.maxScore || 0));
   const criterion = String(point?.criterion || "배점 항목").trim();
-  const decision = score >= maximum - 0.001 && maximum > 0 ? "항목을 충족하여"
-    : score > 0 ? "항목을 일부 충족하여" : "항목의 근거가 충분하지 않아";
-  const evidence = `교사 수정: ‘${criterion}’ ${decision} ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
-  return point?.tablePointEvidence ? `${evidence}\n\nAI가 확인한 글씨와 예시\n${point.tablePointEvidence}` : evidence;
+  if (score >= maximum - 0.001 && maximum > 0) return `교사 수정: ‘${criterion}’ 항목을 충족하여 ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
+  if (score > 0) return `교사 수정: ‘${criterion}’ 항목을 일부 충족하여 ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
+  return `교사 수정: ‘${criterion}’ 항목의 근거가 충분하지 않아 ${formatScore(maximum)}점 중 0점으로 확정했습니다.`;
 }
 
 function refreshExampleAnswerScore(exampleRow) {
@@ -5135,11 +4930,9 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         maxScore: point.score,
         earned: storedPoint ? Boolean(storedPoint.earned) : false,
         evidence: storedPoint?.evidence || "기존 결과에는 이 배점 항목의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
-        tablePointEvidence: storedPoint?.tablePointEvidence || (storedPoint?.evidenceCells?.length ? storedPoint.evidence : ""),
         confidence: ["high", "medium", "low"].includes(storedPoint?.confidence) ? storedPoint.confidence : "low",
         missingResult: !storedPoint || Boolean(storedPoint.missingResult),
         writtenPending: Boolean(storedPoint?.writtenPending),
-        reviewKind: storedPoint?.reviewKind,
         teacherAdjusted: Boolean(storedPoint?.teacherAdjusted),
       };
     });
@@ -5190,7 +4983,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th scope="col">문제·배점 항목</th><th scope="col">획득 점수 / 배점</th><th scope="col">채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const needsWrittenReview = item.writtenPending && item.missingResult;
-        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending, item.reviewKind);
+        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
         return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
@@ -5240,7 +5033,7 @@ async function openStudentResult(course, targetStudents, studentId) {
   slot.innerHTML = `<div class="student-result-loading"><strong>학생 답안과 채점 결과를 불러오고 있습니다.</strong></div>`;
   const result = course.grading?.results?.find((item) => item.studentId === studentId);
   const student = targetStudents.find((item) => item.id === studentId);
-  const assignment = (course.submission?.pageAssignments ?? course.submission?.assignments)?.find((item) => item.studentId === studentId);
+  const assignment = course.submission?.assignments?.find((item) => item.studentId === studentId);
   const design = course.designs?.find((item) => item.id === course.submission?.designId);
   if (!result || !student || !assignment || !design) { slot.innerHTML = ""; return; }
   const orderedResults = orderedGradingResults(course, targetStudents);
@@ -5307,9 +5100,8 @@ async function openStudentResult(course, targetStudents, studentId) {
       </div>
     </div></section>`;
   const panel = slot.querySelector(".student-result-inline");
-  const currentRegrade = studentRegradeRuns.get(course.id);
-  const regradeRun = currentRegrade?.studentId === studentId ? currentRegrade : savedStudentRegradeRun(course.id, result);
-  if (regradeRun) updateStudentRegradeProgress(regradeRun, panel);
+  const regradeRun = studentRegradeRuns.get(course.id);
+  if (regradeRun?.studentId === studentId) updateStudentRegradeProgress(regradeRun, panel);
   const scoreInputs = Array.from(panel.querySelectorAll("[data-teacher-score]"));
   const scoreButtons = Array.from(panel.querySelectorAll("[data-score-choice]"));
   const pointScoreSelects = Array.from(panel.querySelectorAll("[data-example-point-score]"));
@@ -5405,7 +5197,7 @@ async function openStudentResult(course, targetStudents, studentId) {
       select.value = target.missingResult && target.writtenPending ? ""
         : String(nearestScoreChoice(target.awardedScore || 0, pointScoreChoices(target.maxScore, target.awardedScore)));
     }
-    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult, target.writtenPending, target.reviewKind);
+    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult, target.writtenPending);
     const statusLabel = row.querySelector("[data-point-status]");
     if (statusLabel) {
       statusLabel.textContent = status.label;
@@ -5436,10 +5228,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     scoreInputs.forEach((input, scoreIndex) => {
       input.value = nearestScoreChoice(alignedScores[scoreIndex], scoreChoicesForResultRow(questionRows[scoreIndex], design));
       const linkedExamples = exampleRowsForCriterion(questionRows[scoreIndex], workingExampleRows);
-      const needsReading = linkedExamples.some((item) => item.pointResults.some((point) => point.writtenPending && point.missingResult));
-      const evidence = needsReading
-        ? linkedExamples.flatMap((item) => item.pointResults.map((point) => `${item.questionNumber} · ${point.evidence}`)).join("\n")
-        : `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
+      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
       const feedback = automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
       if (questionRows[scoreIndex]) {
         questionRows[scoreIndex].score = Number(input.value || 0);
@@ -5526,13 +5315,6 @@ async function openStudentResult(course, targetStudents, studentId) {
     if (savingReview) return false;
     if (studentRegradeRuns.get(course.id)?.status === "running") {
       showToast("학생별 재채점이 끝난 뒤 교사 점수를 저장해 주세요.");
-      return false;
-    }
-    const pendingScore = pointScoreSelects.find((select) =>
-      pointTarget(Number(select.dataset.exampleIndex), Number(select.dataset.pointIndex))?.writtenPending && select.value === "");
-    if (pendingScore) {
-      showToast("확인이 필요한 답안의 근거를 확인한 뒤 해당 배점을 선택해 주세요.");
-      pendingScore.focus();
       return false;
     }
     const revisionToSave = draftRevision;

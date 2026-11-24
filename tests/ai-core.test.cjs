@@ -8,8 +8,7 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
-async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata,
-  narrative = "학생이 세금을 내는 이유도 자세히 설명했습니다.", repairMissingPoint = false } = {}) {
+async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata } = {}) {
   const settings = metadata || {
     requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [7] },
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }, { score: 0, criterion: "오답 또는 미응답" }] }],
@@ -17,6 +16,7 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
       pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
   };
   let calls = 0;
+  const narrative = "학생이 세금을 내는 이유도 자세히 설명했습니다.";
   const response = (body) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] }));
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
@@ -28,8 +28,7 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
     ],
     fetchImpl: async (_url, options) => {
       calls += 1;
-      const request = JSON.parse(options.body);
-      const parts = request.contents[0].parts;
+      const parts = JSON.parse(options.body).contents[0].parts;
       if (calls <= 2) {
         assert.match(parts[0].text, /학생 답안의 글자 전사만/);
         assert.doesNotMatch(parts[0].text, /상민|세금|신분 용어/);
@@ -41,19 +40,15 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
         }] });
       }
       assert.match(parts[0].text, /independentTextReadings/);
-      if (repairMissingPoint && calls === 4) {
-        const schema = request.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.pointResults.items;
-        assert.ok(schema.required.includes("evidenceQuote"));
-      }
       return response({
         questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "신분 용어", answerReading: answer, score: earned ? 1 : 0, maxScore: 1, confidence: "high", evidence: narrative, feedback: narrative }],
-        exampleAnswerResults: repairMissingPoint && calls === 3 ? [] : [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
+        exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
           pointResults: [{ pointItemId: "p1", earned, awardedScore: earned ? 1 : 0, maxScore: 1, evidenceQuote: quote, confidence: "high", evidence: narrative }] }],
         summary: narrative, strengths: [narrative],
       });
     },
   });
-  assert.equal(calls, repairMissingPoint ? 4 : 3);
+  assert.equal(calls, 3);
   return { result, settings };
 }
 
@@ -62,58 +57,8 @@ test("written grading uses two blind readings and excludes invented grading feed
   assert.equal(result.totalScore, 1);
   assert.equal(result.independentTextReadings[0].transcript, "상민");
   assert.match(result.questionResults[0].answerReading, /상민/);
-  assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence, "답안 ‘상민’에서 ‘알맞은 신분을 적음’ 기준을 충족하는 내용을 확인함.");
+  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /독립 판독 근거 · ‘상민’/);
   assert.doesNotMatch(JSON.stringify(result), /세금/);
-});
-
-test("individual grading overlaps blind readings and serially retries only a rate-limited lane", async () => {
-  const metadata = {
-    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "상민", maxScore: 1, evaluationElementIds: ["r1"],
-      pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
-  };
-  for (const variant of ["agreed", "disagreement", "rate-limited"]) {
-    let inFlight = 0;
-    let peak = 0;
-    const reads = [0, 0];
-    const stages = [];
-    const fetchImpl = async (_url, options) => {
-      const parts = JSON.parse(options.body).contents[0].parts;
-      const prompt = parts[0].text;
-      let payload;
-      if (prompt.includes("학생 답안의 글자 전사만")) {
-        assert.doesNotMatch(prompt, /상민|천인/);
-        const lane = Number(prompt.includes("글자 하나씩 확인"));
-        reads[lane] += 1;
-        inFlight += 1;
-        peak = Math.max(peak, inFlight);
-        await new Promise((resolve) => setImmediate(resolve));
-        inFlight -= 1;
-        if (variant === "rate-limited" && lane === 1 && reads[1] < 3) {
-          return new Response(JSON.stringify({ error: { message: "quota" } }), { status: 429 });
-        }
-        payload = { readings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: "readable",
-          transcript: variant === "disagreement" && lane === 1 ? "천인" : "상민" }] };
-      } else {
-        assert.equal(inFlight, 0);
-        payload = {
-          questionResults: [{ criterionId: "r1", score: 1 }],
-          exampleAnswerResults: [{ exampleAnswerId: "e1", answerReading: "상민",
-            pointResults: [{ pointItemId: "p1", earned: true, evidenceQuote: "상민", confidence: "high" }] }],
-        };
-      }
-      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }));
-    };
-    const files = ["blank", "studentAnswer"].map((role) => ({ role, file: new File([role], role + ".pdf", { type: "application/pdf" }) }));
-    const result = await AI.gradeAnswer({ apiKey: VALID_KEY, metadata, files, parallelRecognition: true,
-      fetchImpl, retryDelayMs: 0, onProgress: (message) => stages.push(message) });
-    assert.equal(peak, 2);
-    assert.deepEqual(reads, variant === "rate-limited" ? [1, 3] : [1, 1]);
-    assert.equal(result.totalScore, variant === "disagreement" ? 0 : 1);
-    assert.equal(result.exampleAnswerResults[0].pointResults[0].missingResult, variant === "disagreement");
-    assert.equal(stages.some((message) => /남은 판독만 순서대로/u.test(message)), variant === "rate-limited");
-  }
 });
 
 test("written grading holds confident wrong transcriptions and unsupported quotes", async () => {
@@ -125,479 +70,25 @@ test("written grading holds confident wrong transcriptions and unsupported quote
     assert.equal(result.hasMissingScores, true);
     assert.equal(result.exampleAnswerResults[0].answerReading, "상민");
     assert.equal(result.exampleAnswerResults[0].pointResults[0].missingResult, true);
-    assert.equal(result.exampleAnswerResults[0].pointResults[0].reviewKind, "score");
-    assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /배점 확인 필요/);
     assert.doesNotMatch(result.exampleAnswerResults[0].pointResults[0].evidence, /세금|천인/);
   }
   assert.match(misread.result.reviewReasons.join("\n"), /독립 판독과 다릅니다/);
   assert.match(invented.result.reviewReasons.join("\n"), /독립 판독문에서 확인하지 못했습니다/);
 });
 
-test("a missing grading response preserves confirmed handwriting and asks only for a score review", async () => {
-  const metadata = {
-    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "정확한 용어", scoreLevels: [{ score: 1, criterion: "정확" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "상민", maxScore: 1, evaluationElementIds: ["r1"],
-      pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
-  };
-  let scoringCalls = 0;
-  const result = await AI.gradeAnswer({
-    apiKey: VALID_KEY, metadata,
-    files: ["blank", "studentAnswer"].map((role) => ({ role, file: new File([role], role + ".pdf", { type: "application/pdf" }) })),
-    fetchImpl: async (_url, options) => {
-      const prompt = JSON.parse(options.body).contents[0].parts[0].text;
-      let payload = {};
-      if (prompt.includes("학생 답안의 글자 전사만")) {
-        payload = { readings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: "readable", transcript: "상민" }] };
-      } else scoringCalls += 1;
-      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] });
-    },
-  });
-  assert.equal(scoringCalls, 2);
-  const point = result.exampleAnswerResults[0].pointResults[0];
-  assert.equal(result.hasMissingScores, true);
-  assert.equal(point.missingResult, true);
-  assert.equal(point.writtenPending, true);
-  assert.equal(point.reviewKind, "score");
-  assert.match(point.evidence, /확인된 답안 ‘상민’.*배점 확인 필요/);
-  assert.doesNotMatch(point.evidence, /\n/u);
-  assert.doesNotMatch(point.evidence, /판독 확인 필요/);
-  assert.match(result.summary, /배점 확인/);
-  const precision = { ...result,
-    independentTextReadings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: "uncertain", transcript: "", tableRows: [] }] };
-  const merged = AI.mergePrecisionGradingResult(result, precision, ["r1"], metadata);
-  assert.equal(merged.exampleAnswerResults[0].answerReading, "상민");
-  assert.equal(merged.exampleAnswerResults[0].pointResults[0].reviewKind, "score");
-});
-
-test("written grading resolves a corroborated disagreement and keeps a new unsupported reading pending", async () => {
+test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {
   const uncertain = await gradeWrittenTestAnswer({ second: "천인" });
   const { result: accepted } = await gradeWrittenTestAnswer();
   assert.equal(uncertain.result.totalScore, 0);
   assert.match(uncertain.result.exampleAnswerResults[0].answerReading, /판독 불일치.*상민.*천인/);
-  assert.equal(uncertain.result.exampleAnswerResults[0].pointResults[0].reviewKind, "reading");
   const merged = AI.mergePrecisionGradingResult(uncertain.result, accepted, ["r1"], uncertain.settings);
-  assert.equal(merged.totalScore, 1);
-  assert.equal(merged.hasMissingScores, false);
-  assert.equal(merged.independentTextReadings[0].status, "readable");
-  const { result: other } = await gradeWrittenTestAnswer({ first: "양반", answer: "양반" });
-  const unresolved = AI.mergePrecisionGradingResult(uncertain.result, other, ["r1"], uncertain.settings);
-  assert.equal(unresolved.totalScore, 0);
-  assert.equal(unresolved.independentTextReadings[0].status, "disagreement");
+  assert.equal(merged.totalScore, 0);
+  assert.equal(merged.hasMissingScores, true);
+  assert.equal(merged.independentTextReadings[0].status, "disagreement");
   const { result: blank } = await gradeWrittenTestAnswer({ first: "", answer: "무응답", quote: "", earned: false });
   assert.equal(blank.independentTextReadings[0].status, "blank");
   assert.equal(blank.exampleAnswerResults[0].answerReading, "무응답");
   assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
-});
-
-test("spacing and editorial periods between readers do not hide the original student text", async () => {
-  const { result, settings } = await gradeWrittenTestAnswer({ first: "상 민.", second: "상민", answer: "상민", quote: "상민" });
-  assert.equal(result.totalScore, 1);
-  assert.equal(result.independentTextReadings[0].transcript, "상 민.");
-  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /‘상 민’.*기준을 충족/);
-  const spacing = { ...settings, exampleAnswers: settings.exampleAnswers.map((example) => ({
-    ...example, pointItems: [{ id: "p1", score: 1, criterion: "띄어쓰기를 지켜 적음" }],
-  })) };
-  const strict = await gradeWrittenTestAnswer({ first: "상 민.", second: "상민", answer: "상민", metadata: spacing });
-  assert.equal(strict.result.hasMissingScores, true);
-  assert.equal(strict.result.exampleAnswerResults[0].pointResults[0].reviewKind, "reading");
-});
-
-test("two matching table transcriptions grade when the redundant prose transcript is missing or formatted differently", async () => {
-  const tableRows = [{ rowIndex: 1, cells: [
-    { columnIndex: 1, value: "자장구", confidence: "high" },
-    { columnIndex: 2, value: "자전거", confidence: "medium" },
-  ] }];
-  const metadata = {
-    subject: "국어", requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "방언과 표준어", scoreLevels: [{ score: 1, criterion: "짝이 알맞음" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "자장구 | 자전거", maxScore: 1, evaluationElementIds: ["r1"],
-      pointItems: [{ id: "p1", score: 1, criterion: "자장구: 자전거" }] }],
-  };
-  const { result } = await gradeWrittenTestAnswer({ first: { status: "readable", transcript: "", tableRows },
-    second: { status: "readable", transcript: "‘자 장 구’ → ‘자전거’", tableRows }, answer: "자장구 | 자전거", metadata });
-  assert.equal(result.totalScore, 1);
-  assert.equal(result.independentTextReadings[0].status, "readable");
-  assert.equal(result.independentTextReadings[0].transcript, "자장구 | 자전거");
-});
-
-test("oversized handwriting output is retried in smaller groups without losing the student's quotable text", async () => {
-  const answers = ["상민", "중인"];
-  const rubricCriteria = answers.map((_, index) => ({ id: "r" + index, questionNumber: String(index + 1),
-    evaluationElement: "직업", scoreLevels: [{ score: 1, criterion: "정확함" }] }));
-  const exampleAnswers = answers.map((answer, index) => ({ id: "e" + index, questionNumber: String(index + 1),
-    answerText: answer, maxScore: 1, evaluationElementIds: ["r" + index],
-    pointItems: [{ id: "p" + index, score: 1, criterion: "정확한 용어를 적음" }] }));
-  let splitRequests = 0;
-  let truncated = 0;
-  const result = await AI.gradeAnswer({
-    apiKey: VALID_KEY, metadata: { verifyWrittenText: true, requireBlankComparison: true, student: { pageNumbers: [1] }, totalScore: 2, rubricCriteria, exampleAnswers },
-    files: ["blank", "studentAnswer"].map((role) => ({ role, file: new File([role], role + ".pdf", { type: "application/pdf" }) })),
-    fetchImpl: async (_url, options) => {
-      const prompt = JSON.parse(options.body).contents[0].parts[0].text;
-      const match = prompt.match(/전사 대상\(JSON\): (\[.+\])$/u);
-      if (match) {
-        const locations = JSON.parse(match[1]);
-        if (locations.length > 1) {
-          truncated += 1;
-          return Response.json({ candidates: [{ finishReason: "MAX_TOKENS" }] });
-        }
-        splitRequests += 1;
-        const readings = locations.map((location) => ({ ...location, pageNumber: 1, status: "readable", transcript: answers[Number(location.questionNumber) - 1] }));
-        return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ readings }) }] } }] });
-      }
-      const grades = { questionResults: rubricCriteria.map((rubric) => ({ criterionId: rubric.id, score: 1, confidence: "high" })),
-        exampleAnswerResults: exampleAnswers.map((example) => ({ exampleAnswerId: example.id, answerReading: "",
-          pointResults: [{ pointItemId: example.pointItems[0].id, earned: true, confidence: "high", evidenceQuote: example.answerText }] })) };
-      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(grades) }] } }] });
-    },
-  });
-  assert.equal(truncated, 2);
-  assert.equal(splitRequests, 4);
-  assert.equal(result.totalScore, 2);
-  for (const [index, row] of result.exampleAnswerResults.entries()) {
-    const point = row.pointResults[0];
-    assert.ok(point.evidence.includes(answers[index]));
-    assert.doesNotMatch(point.evidence, /확인 필요|\n/u);
-  }
-});
-
-test("partial table handwriting displays confirmed fragments and unreadable cells without guessing a score", async () => {
-  const reading = { status: "partial", transcript: "[판독 불가] [판독 불가] 얘들아 [판독 불가]",
-    tableRows: [{ rowIndex: 1, cells: [
-      { columnIndex: 2, confidence: "low", value: "기여" },
-      { columnIndex: 3, confidence: "low", value: "맞어" },
-      { columnIndex: 4, confidence: "low", value: "얘들아 [판독 불가]" },
-    ] }] };
-  const metadata = {
-    subject: "국어", requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "지역 방언", scoreLevels: [{ score: 1, criterion: "올바르게 사용" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "", visualDescription: "표에 방언과 예문을 넣음",
-      maxScore: 1, pointItems: [{ id: "p1", score: 1, criterion: "방언을 알맞게 사용함" }], evaluationElementIds: ["r1"] }],
-  };
-  const invented = "충청도: 기여, 맞어, 얘들아 좀 기여 아니여";
-  const { result } = await gradeWrittenTestAnswer({ first: reading, metadata, answer: invented, quote: invented, narrative: invented });
-  const point = result.exampleAnswerResults[0].pointResults[0];
-  assert.equal(point.missingResult, true);
-  assert.equal(point.writtenPending, true);
-  assert.equal(point.earned, false);
-  assert.equal(result.hasMissingScores, true);
-  for (const evidence of [point.evidence, result.questionResults[0].evidence]) {
-    assert.match(evidence, /1행 4열의 일부 ‘얘들아’/);
-    assert.match(evidence, /2열.*3열.*4열.*판독 확인 필요/);
-    assert.doesNotMatch(evidence, /충청도|기여|맞어|아니여/);
-  }
-});
-
-test("table grading compares student and example answers by cell and only holds affected points", async () => {
-  const cell = (columnIndex, value, confidence = "high") => ({ columnIndex, value, confidence });
-  const studentRows = [
-    { rowIndex: 1, cells: [cell(1, "자장구"), cell(2, "자전거")] },
-    { rowIndex: 2, cells: [cell(1, "급해"), cell(2, "얘들아 [판독 불가]", "low")] },
-    { rowIndex: 3, cells: [cell(1, "")] },
-  ];
-  const sampleRows = [
-    { rowIndex: 1, cells: [cell(1, "자장구"), cell(2, "자전거")] },
-    { rowIndex: 2, cells: [cell(1, "서둘러"), cell(2, "친구들아 기다려")] },
-    { rowIndex: 3, cells: [cell(1, "조용히"), cell(2, "예시에 없는 문구")] },
-    { rowIndex: 4, cells: [cell(1, "천천히")] },
-  ];
-  const pointItems = [
-    { id: "p1", score: 1, criterion: "1행 1열과 1행 2열의 방언과 표준어가 알맞게 대응함" },
-    { id: "p2", score: 1, criterion: "2행 2열에서 방언을 알맞게 사용함" },
-    { id: "p3", score: 1, criterion: "방언의 뜻이 예시답안과 일치함" },
-    { id: "p4", score: 1, criterion: "1행 2열 설명이 정확함" },
-    { id: "p5", score: 1, criterion: "3행 1열에 답을 적음" },
-  ];
-  const metadata = {
-    subject: "국어", requireBlankComparison: true, verifyWrittenText: true, compareTableCells: true, totalScore: 5,
-    student: { pageNumbers: [1] }, summarizeGradingLocally: true,
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "방언과 표준어", scoreLevels: [{ score: 5, criterion: "올바르게 사용" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "자장구 | 자전거\n서둘러 | 친구들아 기다려\n조용히\n천천히",
-      maxScore: 5, pointItems, evaluationElementIds: ["r1"] }],
-  };
-  const files = ["blank", "studentAnswer"].map((role) => ({ role, file: new File([role], `${role}.pdf`, { type: "application/pdf" }) }));
-  const tableReferenceCache = new Map();
-  let sampleRequests = 0;
-  const fetchImpl = async (_url, options) => {
-    const request = JSON.parse(options.body);
-    const parts = request.contents[0].parts;
-    const prompt = parts[0].text;
-    let payload;
-    if (prompt.includes("학생 답안의 글자 전사만")) {
-      assert.doesNotMatch(prompt, /서둘러|자전거/);
-      payload = { readings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1,
-        status: "partial", transcript: "자장구 | 자전거\n급해 | 얘들아 [판독 불가]", tableRows: studentRows }] };
-    } else if (prompt.includes("교사용 예시답안의 표를 문항")) {
-      sampleRequests += 1;
-      assert.doesNotMatch(prompt, /급해|얘들아/);
-      assert.match(prompt, /서둘러/);
-      assert.equal(parts.filter((part) => part.inlineData).length, 1);
-      assert.equal(parts.find((part) => part.inlineData).inlineData.data, Buffer.from("blank").toString("base64"));
-      payload = { tableRows: sampleRows };
-    } else {
-      assert.match(prompt, /tableCellComparisons/);
-      const schema = request.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.pointResults.items;
-      assert.ok(schema.properties.evidenceCells);
-      payload = { exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", pointResults: [
-        { pointItemId: "p1", earned: true, confidence: "high", evidenceQuote: "‘자장구’ → ‘자전거’", evidenceCells: [{ rowIndex: 2, columnIndex: 2 }] },
-        { pointItemId: "p2", earned: true, confidence: "high", evidenceQuote: "추측한 문장" },
-        { pointItemId: "p3", earned: false, confidence: "high", evidenceQuote: "급해", evidenceCells: [{ rowIndex: 2, columnIndex: 1 }] },
-        { pointItemId: "p4", earned: true, confidence: "low", evidenceQuote: "추측한 근거" },
-        { pointItemId: "p5", earned: true, confidence: "high", evidenceQuote: "추측한 답" },
-      ] }] };
-    }
-    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }));
-  };
-  const settings = { apiKey: VALID_KEY, metadata, files, tableReferenceCache, fetchImpl };
-  const result = await AI.gradeAnswer(settings);
-  const repeated = await AI.gradeAnswer(settings);
-  assert.equal(sampleRequests, 1);
-  assert.equal(result.totalScore, 1);
-  assert.deepEqual(result.exampleAnswerResults, repeated.exampleAnswerResults);
-  const row = result.exampleAnswerResults[0];
-  assert.deepEqual(row.tableEvidence.map((item) => [item.rowIndex, item.columnIndex, item.studentText, item.exampleText, item.readingStatus, item.matchesExample]), [
-    [1, 1, "자장구", "자장구", "readable", true],
-    [1, 2, "자전거", "자전거", "readable", true],
-    [2, 1, "급해", "서둘러", "readable", false],
-    [2, 2, "얘들아", "친구들아 기다려", "unclear", null],
-    [3, 1, "", "조용히", "blank", null],
-    [4, 1, "", "천천히", "unlocated", null],
-  ]);
-  const [paired, unclear, different, uncertainScore, blank] = row.pointResults;
-  assert.deepEqual(paired.evidenceCells, [{ rowIndex: 1, columnIndex: 1 }, { rowIndex: 1, columnIndex: 2 }]);
-  assert.equal(paired.awardedScore, 1);
-  assert.equal(paired.evidence, "‘자장구’를 ‘자전거’로 정확히 대응시킴 (1행).");
-  assert.equal(unclear.missingResult, true);
-  assert.equal(unclear.awardedScore, 0);
-  assert.match(unclear.evidence, /2행 2열.*‘얘들아’.*판독 확인 필요/);
-  assert.doesNotMatch(unclear.evidence, /친구들아 기다려|\n/u);
-  assert.equal(different.missingResult, false);
-  assert.deepEqual(different.evidenceCells, [{ rowIndex: 2, columnIndex: 1 }]);
-  assert.match(different.evidence, /2행 1열.*‘급해’.*예시 ‘서둘러’와 같은 뜻이 확인되지 않음/);
-  assert.equal(uncertainScore.missingResult, true);
-  assert.equal(uncertainScore.reviewKind, "score");
-  assert.equal(blank.missingResult, false);
-  assert.equal(blank.awardedScore, 0);
-  assert.doesNotMatch([result.questionResults[0].answerReading, ...[paired, different, uncertainScore, blank].map((point) => point.evidence)].join("\n"), /판독 확인 필요/);
-  assert.doesNotMatch(row.evidence, /추측한|예시에 없는 문구/);
-});
-
-test("an exact table pair cannot earn credit by mixing cells from different rows", () => {
-  const tableRows = [
-    { rowIndex: 1, cells: [{ columnIndex: 1, value: "수박", confidence: "high" }, { columnIndex: 2, value: "장수", confidence: "high" }] },
-    { rowIndex: 2, cells: [{ columnIndex: 1, value: "복숭아", confidence: "high" }, { columnIndex: 2, value: "다산", confidence: "high" }] },
-  ];
-  const metadata = {
-    verifyWrittenText: true, compareTableCells: true, totalScore: 1,
-    independentTextReadings: [{ exampleAnswerId: "e1", questionNumber: "1", status: "readable", transcript: "수박 장수\n복숭아 다산", tableRows }],
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "상징 해석", scoreLevels: [{ score: 1, criterion: "짝이 알맞음" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", maxScore: 1, evaluationElementIds: ["r1"],
-      pointItems: [{ id: "p1", score: 1, criterion: "수박: 다산" }] }],
-  };
-  const result = AI.normalizeGradingResult({ exampleAnswerResults: [{ exampleAnswerId: "e1",
-    pointResults: [{ pointItemId: "p1", earned: true, evidenceQuote: "수박 | 다산", confidence: "high",
-      evidenceCells: [{ rowIndex: 1, columnIndex: 1 }, { rowIndex: 2, columnIndex: 2 }] }],
-  }] }, metadata);
-  const point = result.exampleAnswerResults[0].pointResults[0];
-  assert.equal(point.awardedScore, 0);
-  assert.equal(point.missingResult, false);
-  assert.match(point.evidence, /1행 1열.*수박.*2행 2열.*다산.*서로 다른 행/);
-});
-
-test("fixed table answers are verified against the authored value at the required position", () => {
-  const cell = (columnIndex, value, confidence = "high") => ({ columnIndex, value, confidence });
-  const singleRow = (...cells) => [{ rowIndex: 1, cells }];
-  const grade = ({ criterion, rows, reference = [], earned = true, quote = "학", readingStatus = "readable", locations = [] }) => {
-    const result = AI.normalizeGradingResult({
-      questionResults: [{ criterionId: "r1", questionNumber: "1", score: earned ? 1 : 0, confidence: "high" }],
-      exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: [
-        { pointItemId: "p1", earned, confidence: "high", evidenceQuote: quote,
-          evidenceCells: [{ rowIndex: 1, columnIndex: 2 }] },
-      ] }],
-    }, {
-      verifyWrittenText: true, compareTableCells: true, totalScore: 1,
-      rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "표에 답을 작성함", scoreLevels: [{ score: 1, criterion: "알맞음" }] }],
-      exampleAnswers: [{ id: "e1", questionNumber: "1", maxScore: 1, evaluationElementIds: ["r1"],
-        pointItems: [{ id: "p1", score: 1, criterion }] }],
-      ...(rows ? { independentTextReadings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: readingStatus,
-        transcript: rows.flatMap((row) => row.cells.map((item) => item.value)).join(" | "), tableRows: rows, reviewLocations: locations }] } : {}),
-      exampleTableReferences: reference.length ? [{ exampleAnswerId: "e1", tableRows: reference }] : [],
-    });
-    const point = result.exampleAnswerResults[0].pointResults[0];
-    assert.equal(result.totalScore, point.awardedScore);
-    return point;
-  };
-  const criterion = "1행 1열에 수박을 정확히 작성함";
-  const wrongCell = grade({ criterion, rows: singleRow(cell(1, "학"), cell(2, "수박")), reference: singleRow(cell(1, "수박")) });
-  assert.equal(wrongCell.awardedScore, 0);
-  assert.equal(wrongCell.missingResult, false);
-  assert.deepEqual(wrongCell.evidenceCells, [{ rowIndex: 1, columnIndex: 1 }]);
-  assert.match(wrongCell.evidence, /1행 1열.*답안 ‘학’.*지정 답안 ‘수박’.*일치하지 않음/);
-  assert.doesNotMatch(wrongCell.evidence, /판독 확인 필요|배점 확인 필요/);
-
-  const correct = grade({ criterion, rows: singleRow(cell(1, "수박")), earned: false, quote: "학" });
-  assert.equal(correct.awardedScore, 1);
-  assert.match(correct.evidence, /지정된 1행 1열에 정답 ‘수박’ 기재를 확인함/);
-
-  const unreadable = grade({ criterion, rows: singleRow(cell(1, "수박", "low"), cell(2, "수박")),
-    readingStatus: "partial", locations: ["표 1행 1열"] });
-  assert.equal(unreadable.missingResult, true);
-  assert.match(unreadable.evidence, /판독 확인 필요/);
-  assert.doesNotMatch(unreadable.evidence, /학생 ‘수박’/);
-  const blank = grade({ criterion, rows: singleRow(cell(1, "")) });
-  assert.equal(blank.awardedScore, 0);
-  assert.equal(blank.missingResult, false);
-  assert.match(blank.evidence, /1행 1열이 비어 있어/);
-
-  const unmapped = grade({ criterion, rows: [] });
-  assert.equal(unmapped.reviewKind, "score");
-  assert.equal(unmapped.missingResult, true);
-  assert.equal(grade({ criterion }).missingResult, true);
-
-  const referenceRule = "첫째 행 둘째 열의 답안이 예시답안과 정확히 일치함";
-  const wrongReference = grade({ criterion: referenceRule, rows: singleRow(cell(2, "학")), reference: singleRow(cell(2, "장수")) });
-  assert.equal(wrongReference.awardedScore, 0);
-  assert.match(wrongReference.evidence, /1행 2열.*답안 ‘학’.*지정 답안 ‘장수’/);
-  assert.equal(grade({ criterion: referenceRule, rows: singleRow(cell(2, "학")) }).reviewKind, "score");
-
-  const alternatives = "１행 １열 정답: ‘수박’ 또는 ‘참외’";
-  assert.equal(grade({ criterion: alternatives, rows: singleRow(cell(1, "참외")), earned: false }).awardedScore, 1);
-  assert.equal(grade({ criterion: alternatives, rows: singleRow(cell(1, "학")) }).awardedScore, 0);
-  const interCellAlternative = "1행 1열에 수박을 작성함 또는 1행 2열에 학을 작성함";
-  assert.equal(grade({ criterion: interCellAlternative, rows: singleRow(cell(1, ""), cell(2, "학")), earned: false }).awardedScore, 1);
-  const compound = "1행 1열에는 수박을, 1행 2열에는 다산을 정확히 작성함";
-  assert.equal(grade({ criterion: compound, rows: singleRow(cell(1, "학"), cell(2, "다산")) }).awardedScore, 0);
-  assert.equal(grade({ criterion: compound, rows: singleRow(cell(1, "수박"), cell(2, "다산")), earned: false }).awardedScore, 1);
-
-  const semantic = grade({ criterion: "1행 1열에 수박의 상징적 의미를 설명함", rows: singleRow(cell(1, "자손이 많아짐")),
-    reference: singleRow(cell(1, "다산")), quote: "자손이 많아짐" });
-  assert.equal(semantic.awardedScore, 1);
-  assert.equal(semantic.missingResult, false);
-  assert.equal(grade({ criterion: "1행 1열에 해가 지는 모습을 적음", rows: singleRow(cell(1, "해가 산 너머로 내려갔다")),
-    quote: "해가 산 너머로 내려갔다" }).awardedScore, 1);
-  assert.equal(grade({ criterion: "1행 1열에 ‘세종 대왕’을 정확히 적음", rows: singleRow(cell(1, "세종 대왕")), earned: false }).awardedScore, 1);
-  assert.equal(grade({ criterion: "1행 1열: -3", rows: singleRow(cell(1, "3")), quote: "3" }).awardedScore, 0);
-});
-
-test("whole example sets can move across rows and columns without allowing mixes or duplicate credit", () => {
-  const makeRow = (rowIndex, values, firstColumn = 1) => ({
-    rowIndex, cells: values.map((value, index) => ({ columnIndex: firstColumn + index, value, confidence: "high" })),
-  });
-  const samples = [makeRow(1, ["수박", "다산"]), makeRow(2, ["학", "장수"])];
-  const sampleSets = samples.map((row) => row.cells.map((cell) => ({...cell, rowIndex: row.rowIndex})));
-  const metadata = {
-    verifyWrittenText: true, compareTableCells: true, totalScore: 4,
-    exampleTableReferences: [{ exampleAnswerId: "e1", tableRows: samples, answerSets: sampleSets }],
-    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "물건과 의미", scoreLevels: [{ score: 4, criterion: "짝이 알맞음" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", maxScore: 4, evaluationElementIds: ["r1"],
-      pointItems: [
-        { id: "p1", score: 1, criterion: "예시답안 2세트와 일치함" },
-        { id: "p2", score: 1, criterion: "1행 1열에 수박을 정확히 작성함" },
-        { id: "p3", score: 1, criterion: "수박: 다산" },
-        { id: "p4", score: 1, criterion: "수박과 다산이 알맞게 짝을 이룸" },
-      ] }],
-  };
-  const grade = (rows, modelEarned) => {
-    const evidenceCells = rows.flatMap((row) => row.cells.filter((cell) => cell.value).map((cell) => ({rowIndex: row.rowIndex, columnIndex: cell.columnIndex})));
-    const quote = rows.flatMap((row) => row.cells.map((cell) => cell.value).filter(Boolean)).join(" | ");
-    const result = AI.normalizeGradingResult({ exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: ["p1", "p2", "p3", "p4"]
-      .map((pointItemId) => ({pointItemId, earned: modelEarned, evidenceCells, evidenceQuote: quote, confidence: "high"})) }] }, {
-      ...metadata, independentTextReadings: [{ exampleAnswerId: "e1", questionNumber: "1", status: "readable", pageNumber: 1, transcript: quote, tableRows: rows }],
-    });
-    return result.exampleAnswerResults[0].pointResults;
-  };
-  const blank = makeRow(1, ["", ""]);
-  const reordered = grade([blank, makeRow(2, ["학", "장수"], 4), makeRow(3, ["수박", "다산"], 3)], false);
-  assert.equal(reordered[0].awardedScore, 1);
-  assert.match(reordered[0].evidence, /‘수박’–‘다산’\(3행\), ‘학’–‘장수’\(2행\).*답안 묶음 2개/);
-  assert.doesNotMatch(reordered[0].evidence, /\n/u);
-  assert.equal(reordered[1].awardedScore, 0);
-  assert.equal(reordered[1].missingResult, false);
-  assert.match(reordered[1].evidence, /1행 1열.*비어 있어/);
-  assert.equal(reordered[2].awardedScore, 1);
-  assert.equal(reordered[3].awardedScore, 1);
-  const crossed = grade([makeRow(1, ["수박", "장수"]), makeRow(2, ["학", "다산"])], true);
-  assert.equal(crossed[0].awardedScore, 0);
-  assert.equal(crossed[0].missingResult, false);
-  assert.equal(crossed[2].awardedScore, 0);
-  const duplicate = grade([makeRow(1, ["수박", "다산"]), makeRow(2, ["수박", "다산"])], true);
-  assert.equal(duplicate[0].awardedScore, 0);
-  assert.equal(duplicate[0].missingResult, false);
-  assert.equal(duplicate[2].awardedScore, 1);
-  const otherExample = grade([blank, makeRow(2, ["학", "장수"])], true);
-  assert.equal(otherExample[3].awardedScore, 0);
-  assert.match(otherExample[3].evidence, /기준이 요구한 답안/);
-});
-
-test("contextual vision recheck can recover an independently read cell but cannot fill guessed handwriting", async () => {
-  const makeReading = (accepted, unsupported) => ({ readings: [{
-    exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: "partial", transcript: "신분 [판독 불가]",
-    tableRows: [{ rowIndex: 1, cells: [
-      { columnIndex: 1, value: "신분", confidence: "high" },
-      { columnIndex: 2, value: accepted, confidence: accepted.includes("[") ? "low" : "high" },
-      { columnIndex: 3, value: unsupported, confidence: unsupported.includes("[") ? "low" : "high" },
-    ] }],
-  }] });
-  const design = {
-    subject: "국어", requireBlankComparison: true, verifyWrittenText: true, compareTableCells: true, totalScore: 2,
-    student: { pageNumbers: [1] }, rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "글씨 읽기",
-      scoreLevels: [{ score: 2, criterion: "용어가 정확함" }] }],
-    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "학생용 예시", maxScore: 2,
-      evaluationElementIds: ["r1"], pointItems: [
-        { id: "p1", score: 1, criterion: "1행 2열에 알맞은 용어를 적음" },
-        { id: "p2", score: 1, criterion: "1행 3열을 작성함" },
-      ] }],
-  };
-  const files = ["studentAnswer", "blank", "enhancedAnswer"].map((role) =>
-    ({ role, file: new File([role], role + ".pdf", { type: "application/pdf" }) }));
-  let blindCalls = 0;
-  let contextCalls = 0;
-  const fetchImpl = async (_url, options) => {
-    const parts = JSON.parse(options.body).contents[0].parts;
-    const prompt = parts[0].text;
-    let payload;
-    if (prompt.includes("문맥 참고 재판독")) {
-      contextCalls += 1;
-      assert.match(prompt, /표 1행 2열/);
-      assert.match(prompt, /표 1행 3열/);
-      assert.match(prompt, /신분/);
-      assert.doesNotMatch(prompt, /상민|세금|학생용 예시/);
-      assert.ok(parts.some((part) => part.inlineData?.data === Buffer.from("enhancedAnswer").toString("base64")));
-      payload = makeReading("상민", "세금");
-    } else if (prompt.includes("학생 답안의 글자 전사만")) {
-      blindCalls += 1;
-      payload = makeReading(blindCalls % 2 ? "상민" : "[판독 불가]", "[판독 불가]");
-    } else if (prompt.includes("교사용 예시답안의 표를 문항")) {
-      payload = { tableRows: [] };
-    } else {
-      payload = { exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: [
-        { pointItemId: "p1", earned: true, confidence: "high", evidenceQuote: "상민" },
-        { pointItemId: "p2", earned: true, confidence: "high", evidenceQuote: "세금" },
-      ] }] };
-    }
-    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }));
-  };
-  const base = await AI.gradeAnswer({ apiKey: VALID_KEY, metadata: design, files, fetchImpl });
-  assert.equal(contextCalls, 0);
-  assert.equal(base.totalScore, 0);
-  const precision = await AI.gradeAnswer({ apiKey: VALID_KEY, metadata: { ...design, precisionReview: true }, files, fetchImpl });
-  assert.equal(blindCalls, 4);
-  assert.equal(contextCalls, 1);
-  const merged = AI.mergePrecisionGradingResult(base, precision, ["r1"], design);
-  assert.equal(merged.totalScore, 1);
-  const [confirmed, unresolved] = merged.exampleAnswerResults[0].pointResults;
-  assert.match(confirmed.evidence, /1행 2열.*상민/);
-  assert.doesNotMatch(confirmed.evidence, /판독 확인 필요/);
-  assert.equal(unresolved.missingResult, true);
-  assert.match(unresolved.evidence, /1행 3열.*판독 확인 필요/);
-  assert.doesNotMatch(unresolved.evidence, /세금/);
-});
-
-test("a batched retry requests the literal quote for a readable answer", async () => {
-  const { result } = await gradeWrittenTestAnswer({ repairMissingPoint: true });
-  assert.equal(result.totalScore, 1);
-  assert.equal(result.hasMissingScores, false);
 });
 
 test("evaluation examples verify fraction equality and the separately entered answer", () => {
@@ -1618,8 +1109,7 @@ test("dense fraction assessments are split by model and every subquestion point 
       },
     });
     assert.equal(requests, expectedRequests, model);
-    assert.equal(progress.length, expectedRequests, model);
-    assert.match(progress[0], expectedRequests === 1 ? /채점기준을 대조/u : /문항 나누어 채점/u, model);
+    assert.equal(progress.length, expectedRequests === 1 ? 0 : expectedRequests, model);
     assert.equal(result.totalScore, 11);
     assert.equal(result.hasMissingScores, false);
     assert.deepEqual(result.exampleAnswerResults.map((row) => row.questionNumber), numbers);

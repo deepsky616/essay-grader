@@ -442,56 +442,12 @@ test("assessment target class options come only from classes registered in stude
 test("submission splitting can select or clear every target student at once", () => {
   assert.match(source, /data-select-all-submissions[^>]*>전체 학생 선택<\/button>/);
   assert.match(source, /data-clear-all-submissions[^>]*>전체 선택 해제<\/button>/);
-  assert.match(source, /채점 대상 <b[^>]*>\$\{includedStudentCount\}<\/b> \/ \$\{availableStudentCount\}명/);
-  assert.match(source, /선택한 답안 \$\{includedStudentCount \* submission\.pagesPerStudent\}쪽 · 업로드 PDF \$\{submission\.pageCount\}쪽/);
-  assert.match(source, /data-select-all-submissions[\s\S]*?targetStudents\.filter\(\(student\) => assigned\.has\(student\.id\)\)/);
+  assert.match(source, /분할 대상 <b[^>]*>\$\{includedStudentCount\}<\/b> \/ \$\{targetStudents\.length\}명/);
+  assert.match(source, /필요 \$\{requiredPageCount\}쪽 · 업로드 PDF \$\{submission\.pageCount\}쪽/);
+  assert.match(source, /data-select-all-submissions[\s\S]*?targetStudents\.map\(\(student\) => student\.id\)/);
   assert.match(source, /data-clear-all-submissions[\s\S]*?saveSubmissionSelection\(\s*\[\]/);
   assert.match(styles, /\.split-selection-toolbar \{[^}]*justify-content: space-between/);
   assert.match(styles, /\.split-bulk-actions \{[^}]*display: flex/);
-});
-
-test("changing the grading selection keeps the original PDF page order for one- and two-page answers", () => {
-  const start = source.indexOf("function selectSubmissionStudents");
-  const end = source.indexOf("async function getPdfPageCount", start);
-  const { buildSubmission, selectSubmissionStudents } = new Function("studentSort",
-    source.slice(start, end) + "; return { buildSubmission, selectSubmissionStudents };")((a, b) => a.number - b.number);
-  const students = [4, 2, 1, 3].map((number) => ({ number, id: "s" + number }));
-  for (const pagesPerStudent of [1, 2]) {
-    const setup = { students, pageCount: students.length * pagesPerStudent, pagesPerStudent };
-    const full = buildSubmission({ ...setup, includedStudentIds: students.map((student) => student.id) });
-    const onlyFourth = selectSubmissionStudents(selectSubmissionStudents(full, []), ["s4"]);
-    const expected = pagesPerStudent === 1 ? [4] : [7, 8];
-    assert.deepEqual(onlyFourth.assignments, [{ studentId: "s4", pageNumbers: expected }]);
-    assert.deepEqual(onlyFourth.unusedPages, []);
-    assert.equal(onlyFourth.pageAssignments, full.pageAssignments);
-    const onlyFourthTarget = buildSubmission({ ...setup, students: [students[0]], pdfStudents: students, includedStudentIds: ["s4"] });
-    assert.deepEqual(onlyFourthTarget.assignments, onlyFourth.assignments);
-  }
-});
-
-test("legacy results are checked against fixed pages and compact PDFs can be assigned independently", () => {
-  const start = source.indexOf("function selectSubmissionStudents");
-  const end = source.indexOf("async function getPdfPageCount", start);
-  const { buildSubmission, selectSubmissionStudents, withSubmissionPageLayout, gradingWithVerifiedAnswerPages } = new Function("studentSort",
-    source.slice(start, end) + "; return { buildSubmission, selectSubmissionStudents, withSubmissionPageLayout, gradingWithVerifiedAnswerPages };")((a, b) => a.number - b.number);
-  const students = [1, 2, 3, 4].map((number) => ({ number, id: "s" + number }));
-  const wrong = { studentId: "s4", pageNumbers: [1], teacherConfirmed: true };
-  const valid = { studentId: "s2", pageNumbers: [2], teacherConfirmed: true };
-  const course = { submission: { pageCount: 4, pagesPerStudent: 1, includedStudentIds: ["s4"], assignments: [{ studentId: "s4", pageNumbers: [1] }] },
-    grading: { status: "complete", results: [wrong, valid] } };
-  const fixed = withSubmissionPageLayout(course, students);
-  assert.deepEqual(fixed.submission.assignments, [{ studentId: "s4", pageNumbers: [4] }]);
-  assert.deepEqual(fixed.grading.results, [valid]);
-  assert.deepEqual(fixed.grading.resultsWithUnverifiedPages, [wrong]);
-  const setup = { students, pageCount: 2, pagesPerStudent: 1, includedStudentIds: ["s2", "s4"] };
-  const unassigned = buildSubmission(setup);
-  assert.equal(unassigned.pageAssignments, null);
-  assert.deepEqual(unassigned.assignments, []);
-  const compact = buildSubmission({ ...setup, pdfStudentIds: ["s2", "s4"] });
-  assert.deepEqual(selectSubmissionStudents(compact, ["s4"]).assignments, [{ studentId: "s4", pageNumbers: [2] }]);
-  const held = gradingWithVerifiedAnswerPages({ results: [valid] }, unassigned);
-  assert.deepEqual(held.results, []);
-  assert.deepEqual(gradingWithVerifiedAnswerPages(held, fixed.submission).results, [valid]);
 });
 
 test("submission selection updates in place without jumping the student list to the top", () => {

@@ -210,7 +210,8 @@ test("grading detail source exposes rubric score buttons and the requested revie
 
 test("student question evidence shows example-answer point attainment", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
-  assert.match(schoolSource, /if \(missing && writtenPending\).*reviewKind === "score" \? "배점 확인 필요" : "판독 확인 필요"/);
+  assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore, missing = false, writtenPending = false\)/);
+  assert.match(schoolSource, /if \(missing && writtenPending\).*판독 확인 필요/);
   assert.match(schoolSource, /문제·배점 항목별 획득표/);
   assert.match(schoolSource, /pointResults/);
   assert.match(schoolSource, /3 문제별 예시답안 기준/);
@@ -327,64 +328,13 @@ test("AI grading exposes a visible live progress dashboard", () => {
   assert.match(styles, /@keyframes grading-spinner/);
 });
 
-test("individual regrades reuse only redacted files with the same source and assigned pages", async () => {
-  const start = schoolSource.indexOf("async function gradeStudentAssignment");
-  const end = schoolSource.indexOf("const STUDENT_REGRADE_STEPS", start);
-  const initialSource = {};
-  const student = { id: "s1" };
-  const assignment = { studentId: "s1", pageNumbers: [1] };
-  const course = { submission: { sourceFile: { blob: initialSource }, pageAssignments: [assignment] } };
-  const prepared = [];
-  const requests = [];
-  let exampleFileCreations = 0;
-  const context = {
-    studentRegradeRedactions: new WeakMap(),
-    asFile: () => { exampleFileCreations += 1; return { name: "example.pdf" }; },
-    assessmentDesignTotalScore: () => 1,
-    splitStudentPdf: async (source, pages, _index, options) => {
-      assert.equal(options.anonymize, true);
-      const file = { size: 1, source, pages: [...pages] };
-      prepared.push(file);
-      return file;
-    },
-    StudentWorkflow: { createAnonymousStudent: () => ({}), rosterIdentity: () => "학생 1" },
-    ChaejeomAI: { MAX_INLINE_BYTES: 100, selectFractionCriterionIds: () => [],
-      gradeAnswer: async (request) => { requests.push(request); return { questionResults: [] }; } },
-    needsPrecisionReview: () => false, normalizeRubricCriteria: () => [],
-    normalizePerformanceThresholds: () => ({}), derivedAchievementResults: () => [],
-  };
-  vm.createContext(context);
-  vm.runInContext(schoolSource.slice(start, end) + "\nthis.grade = gradeStudentAssignment;", context);
-  const options = { course, design: { exampleFile: {} }, targetStudents: [student], assignment, blankFile: {},
-    exampleFileCache: new Map(), individualRegrade: true };
-  await context.grade(options);
-  await context.grade(options);
-  assert.equal(prepared.length, 1);
-  assert.equal(requests[1].files.find((item) => item.role === "studentAnswer").file, prepared[0]);
-  assert.equal(requests[1].files.find((item) => item.role === "example").file, requests[0].files[0].file);
-  assert.equal(exampleFileCreations, 1);
-  assert.equal(requests[1].parallelRecognition, true);
-  assert.equal(requests[1].metadata.identityRedacted, true);
-
-  assignment.pageNumbers = [2];
-  await context.grade(options);
-  assert.equal(prepared.length, 2);
-  assert.deepEqual(prepared[1].pages, [2]);
-  assert.equal(requests[2].files.find((item) => item.role === "studentAnswer").file, prepared[1]);
-
-  course.submission.sourceFile = { blob: {} };
-  await context.grade(options);
-  assert.equal(prepared.length, 3);
-  assert.equal(prepared[2].source, course.submission.sourceFile.blob);
-});
-
 test("AI grading shows how many students were selected in submission management", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
   assert.match(schoolSource, /const selectedSubmissionCount = submission\?\.includedStudentIds/);
   assert.match(schoolSource, /class="grading-selection-count"><span>과제물 관리에서 선택<\/span><strong>\$\{selectedSubmissionCount\}명<\/strong>/);
   assert.match(schoolSource, /평가 대상 \$\{targetStudents\.length\}명 중/);
   assert.match(schoolSource, /scanReady = Boolean\(submission && design\?\.blankFile && selectedSubmissionCount > 0\)/);
-  assert.match(schoolSource, /3 과제물 관리에서 채점할 학생을 한 명 이상 선택/);
+  assert.match(schoolSource, /3 과제물 관리에서 자동 분할할 학생을 한 명 이상 선택/);
   assert.match(schoolSource, /data-open-submissions/);
   assert.match(styles, /\.grading-selection-count \{[^}]*min-width: 145px/);
 });
@@ -406,84 +356,35 @@ test("individual AI regrading reports real phases, completion, and a failed phas
   const course = { id: "c1", submission, designs, grading: { results: [previousResult], errors: [] } };
   const events = [];
   const toasts = [];
-  let now = 1000;
-  let interval;
-  let onVisibilityChange;
-  let blankReads = 0;
-  let references;
   let stored;
   let failGrading = false;
-  const node = () => ({ textContent: "", dataset: {}, setAttribute() {}, removeAttribute() {} });
-  const elapsed = node();
-  const timeLabel = node();
-  const stepLabels = Array.from({ length: 4 }, node);
-  const steps = stepLabels.map((label) => ({ ...node(), querySelector: () => label }));
-  const track = node();
-  const stage = node();
-  const button = node();
-  const card = { ...node(), hidden: true, scrollIntoView() {}, querySelectorAll: () => steps, querySelector: (selector) => ({
-    "[data-regrade-clock-label]": timeLabel, "[data-regrade-track]": track, "[data-regrade-stage]": stage,
-  })[selector] };
-  const panel = { dataset: { regradeStudentId: "s1", regradeCourseId: "c1" }, querySelector: (selector) => ({
-    "[data-regrade-elapsed]": elapsed, "[data-student-regrade-progress]": card, "[data-regrade-student]": button,
-    '[data-regrade-step="primary"] [data-regrade-step-status]': stepLabels[1],
-  })[selector] };
   const context = {
-    studentRegradeRuns: new Map(), studentRegradeMaterials: new WeakMap(), activeGradingRun: null,
-    Date: class extends Date { static now() { return now; } },
-    app: { querySelector: () => panel },
-    window: { confirm: () => true, setInterval: (callback) => { interval = callback; return 2; }, clearInterval: (id) => assert.equal(id, 2) },
-    document: { addEventListener: (_type, callback) => { onVisibilityChange = callback; },
-      removeEventListener: (_type, callback) => { assert.equal(callback, onVisibilityChange); onVisibilityChange = null; } },
+    studentRegradeRuns: new Map(), activeGradingRun: null,
+    app: { querySelector: () => null },
+    window: { confirm: () => true, setInterval: () => 2, clearInterval: (id) => assert.equal(id, 2) },
     StudentWorkflow: { rosterIdentity: () => "학생 1" },
     ChaejeomAI: { MODEL: "test-model" },
     GEMINI_MODEL_SETTING: "model", GEMINI_STATUS_SETTING: "status",
     loadGeminiApiKey: async () => "key", getSetting: async (name) => name === "model" ? "test-model" : { generationVerified: true, model: "test-model" },
-    getPdfPageCount: async () => { blankReads += 1; return 1; }, asFile: (file) => file, getCourse: async () => course,
+    getPdfPageCount: async () => 1, asFile: (file) => file, getCourse: async () => course,
     showToast: (message) => toasts.push(message), friendlyError: (error) => error.message,
-    putCourse: async (value) => { stored = value; events.push("save"); now += 1000; },
-    openStudentResult: async () => {},
-    gradeStudentAssignment: async ({ onStage, tableReferenceCache, individualRegrade }) => {
-      assert.equal(individualRegrade, true);
-      if (references) assert.equal(tableReferenceCache, references);
-      references = tableReferenceCache;
+    putCourse: async (value) => { stored = value; events.push("save"); },
+    gradeStudentAssignment: async ({ onStage }) => {
       onStage("답안 준비 확인", "prepare");
-      now += 2000;
       onStage("1차 채점 1/2", "primary");
-      now += 3000;
-      interval();
-      assert.equal(elapsed.textContent, "00:05");
-      assert.equal(timeLabel.textContent, "경과 시간");
-      assert.equal(stepLabels[0].textContent, "완료 · 00:02");
-      assert.equal(stepLabels[1].textContent, "진행 중 · 00:03");
-      now += 5000;
-      onVisibilityChange();
-      assert.equal(elapsed.textContent, "00:10");
-      assert.equal(stepLabels[1].textContent, "진행 중 · 00:08");
       assert.equal(context.studentRegradeRuns.get("c1").phase, "primary");
       if (failGrading) throw new Error("테스트 연결 오류");
       onStage("분수 정밀 재판독 중", "review");
-      now += 4000;
       events.push("review");
       return nextResult;
     },
   };
   vm.createContext(context);
-  const formatStart = schoolSource.indexOf("function formatElapsedTime(");
-  const formatEnd = schoolSource.indexOf("function friendlyError(", formatStart);
-  vm.runInContext(schoolSource.slice(start, end) + schoolSource.slice(formatStart, formatEnd)
-    + "\nthis.regrade = regradeSingleStudent; this.stepState = studentRegradeStepState; this.restoreRun = savedStudentRegradeRun; this.render = updateStudentRegradeProgress;", context);
+  vm.runInContext(schoolSource.slice(start, end) + "\nthis.regrade = regradeSingleStudent; this.stepState = studentRegradeStepState;", context);
   await context.regrade(course, [{ id: "s1" }], "s1");
   assert.deepEqual(events, ["review", "save"]);
   assert.equal(context.studentRegradeRuns.get("c1").status, "complete");
   assert.equal(stored.grading.results[0].totalScore, 2);
-  assert.equal(stored.grading.results[0].regradeTiming.elapsedMs, 14000);
-  assert.equal(elapsed.textContent, "00:14");
-  assert.equal(timeLabel.textContent, "채점 소요 시간");
-  assert.equal(onVisibilityChange, null);
-  context.render(context.restoreRun("c1", stored.grading.results[0]), panel);
-  assert.equal(elapsed.textContent, "00:14");
-  assert.equal(stepLabels[2].textContent, "완료 · 00:04");
   assert.match(toasts.at(-1), /저장했습니다/);
   assert.equal(context.stepState(2, 3, "complete", false), "skipped");
   assert.equal(context.stepState(2, 2, "running", true), "active");
@@ -494,9 +395,6 @@ test("individual AI regrading reports real phases, completion, and a failed phas
   const error = context.studentRegradeRuns.get("c1");
   assert.equal(error.status, "error");
   assert.equal(error.phase, "primary");
-  assert.equal(timeLabel.textContent, "채점 소요 시간");
-  assert.equal(elapsed.textContent, "00:10");
-  assert.equal(blankReads, 1);
   assert.equal(stored, undefined);
   assert.equal(course.grading.results[0].totalScore, 2);
   assert.match(toasts.at(-1), /테스트 연결 오류/);
