@@ -1254,6 +1254,7 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
     const modelConfig = gradingModelConfig(selectedModel, Boolean(metadata.precisionReview));
     const initialBatches = batchGradingTargets(targets, modelConfig.batchSize);
     const parsed = { questionResults: [], exampleAnswerResults: [] };
+    let gradingPayloadReceived = false;
     let lastError;
     async function requestGrade(batch = null, retry = false) {
       const responseSchema = batch ? buildGradingBatchSchema(batch, writtenIds, metadata.compareTableCells ? tableIds : new Set()) : buildGradingResponseSchema();
@@ -1286,6 +1287,7 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
         let payload;
         try {
           payload = parseCandidateJson(body, "Gemini 응답에 채점 결과가 없습니다.");
+          if (payload && typeof payload === "object" && !Array.isArray(payload)) gradingPayloadReceived = true;
         } catch (error) {
           if (/안전 필터/.test(error.message)) throw error;
           lastError = finishReason === "MAX_TOKENS"
@@ -1325,7 +1327,11 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
       if (await requestGrade(batch, true) && !hasPartialScores()) throw lastError;
     }
     if (!targets.length && !hasPartialScores()) await requestGrade(null, true);
-    if (!hasPartialScores()) throw lastError || new Error("Gemini가 채점 가능한 문항 결과를 반환하지 않았습니다. 다시 시도해 주세요.");
+    const hasConfirmedWriting = independentTextReadings.some((reading) =>
+      reading.status === "readable" || reading.status === "blank" || reading.tableRows?.length || reading.confirmedFragments?.length || reading.confirmedCellFragments?.length);
+    if (!hasPartialScores() && !(gradingPayloadReceived && hasConfirmedWriting)) {
+      throw lastError || new Error("Gemini가 채점 가능한 문항 결과를 반환하지 않았습니다. 다시 시도해 주세요.");
+    }
     if (useBatches || missing.length) {
       delete parsed.totalScore;
       delete parsed.achievementResults;
@@ -1751,6 +1757,7 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
     const criteria = [example.visualDescription, ...example.pointItems.map((item) => item.criterion),
       ...linked.map((rubric) => rubric.evaluationElement)].join(" ");
     if (/방언|표준어|글씨|손글씨|글자|낱말|단어|문장|서술|논술|맞춤법|표에\s*(?:씀|쓰|적|작성)|[행열]의?\s*내용/u.test(criteria)) return true;
+    if (example.pointItems.some((point) => tableCriterionScope(point.criterion).cells.some((cell) => cell.rule))) return true;
     if (example.mathNotation) return false;
     if (/(?:\d+\s*행\s*(?:의\s*)?\d+\s*열|표의\s*(?:행|열|칸)|표\s*채우기)/u.test(criteria)) return true;
     if (example.answerText) return true;
@@ -2293,6 +2300,11 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
         writtenReadings.set(reading.exampleAnswerId, reading);
         continue;
       }
+      const previousPending = (baseExampleRows.get(reading.exampleAnswerId)?.pointResults || []).filter((point) => point.missingResult);
+      if (previous.status === "readable" && !hasTableReading(previous) && previousPending.length
+        && previousPending.every((point) => point.reviewKind === "score")
+        && (reading.status === "uncertain" || (reading.status === "partial" && reading.pageNumber === previous.pageNumber
+          && !hasTableReading(reading) && (reading.confirmedFragments || []).every((fragment) => writtenLiteral(previous.transcript).includes(fragment))))) continue;
       if (["partial", "disagreement"].includes(previous.status) && reading.status !== "readable") {
         if (hasTableReading(previous) && reading.status === "partial") {
           writtenReadings.set(reading.exampleAnswerId, addConfirmedTableCells(previous, reading));
@@ -2936,11 +2948,12 @@ ${JSON.stringify(roster)}
     return visible.length ? `확인된 글씨 · ${visible.join(" · ")}` : "";
   }
 
-  function writtenReviewEvidence(reading, reason) {
+  function pendingWrittenPoint(reading, reason, reviewKind = "reading") {
     const confirmed = confirmedWritingSummary(reading);
-    const locations = (reading.reviewLocations || []).slice(0, 4);
+    const locations = reviewKind === "reading" ? (reading.reviewLocations || []).slice(0, 4) : [];
     const details = locations.length ? `${locations.join(", ")}의 글씨를 원본에서 확인해 주세요.` : reason;
-    return `${confirmed ? `${confirmed}\n` : ""}판독 확인 필요 · ${details}`;
+    const label = reviewKind === "score" ? "배점 확인 필요" : "판독 확인 필요";
+    return { earned: false, pending: true, reviewKind, quote: "", evidence: `${confirmed ? `${confirmed}\n` : ""}${label} · ${details}` };
   }
 
   function writtenTableEvidence(reading, referenceRows = []) {
@@ -2952,6 +2965,10 @@ ${JSON.stringify(roster)}
     };
     for (const row of reading.tableRows || []) {
       for (const cell of row.cells) {
+        if (cell.confidence === "low" || incompleteWriting.test(cell.value)) {
+          getCell(row.rowIndex, cell.columnIndex);
+          continue;
+        }
         Object.assign(getCell(row.rowIndex, cell.columnIndex), {
           studentText: cell.value, columnLabel: cell.columnLabel, readingStatus: cell.value ? "readable" : "blank",
         });
@@ -2980,13 +2997,13 @@ ${JSON.stringify(roster)}
       .sort((left, right) => left.rowIndex - right.rowIndex || left.columnIndex - right.columnIndex);
   }
 
-  function tableCellEvidenceText(cell) {
+  function tableCellEvidenceText(cell, statedAnswer = "") {
     const student = cell.studentText ? `‘${cell.studentText}’` : cell.readingStatus === "blank" ? "빈칸"
       : cell.readingStatus === "unlocated" ? "답안 위치 확인 필요" : "확인 필요";
-    const example = cell.exampleText ? `‘${cell.exampleText}’` : "확인 필요";
     const exampleLocation = cell.exampleLocation && (cell.exampleLocation.rowIndex !== cell.rowIndex || cell.exampleLocation.columnIndex !== cell.columnIndex)
       ? ` ${cell.exampleLocation.rowIndex}행 ${cell.exampleLocation.columnIndex}열` : "";
-    return `${cell.rowIndex}행 ${cell.columnIndex}열${cell.columnLabel ? ` (${cell.columnLabel})` : ""} · 학생 ${student} · 예시${exampleLocation} ${example}${cell.readingStatus === "unclear" ? " · 판독 확인 필요" : ""}`;
+    const reference = cell.exampleText ? `예시${exampleLocation} ‘${cell.exampleText}’` : statedAnswer ? `채점기준 ${statedAnswer}` : "예시 확인 필요";
+    return `${cell.rowIndex}행 ${cell.columnIndex}열${cell.columnLabel ? ` (${cell.columnLabel})` : ""} · 학생 ${student} · ${reference}${cell.readingStatus === "unclear" ? " · 판독 확인 필요" : ""}`;
   }
 
   function tableAnswerSets(reference) {
@@ -3046,12 +3063,104 @@ ${JSON.stringify(roster)}
       : words.some((word) => word === value || (word.startsWith(value) && /^(?:을|를|은|는|이|가|과|와|의|도)$/u.test(word.slice(value.length)))));
   }
 
-  function groundTablePoint(cells, point, rawPoint, earned, missing, tableDecision, sets, matchingSets) {
-    const rowNumbers = [...new Set([...point.criterion.matchAll(/(\d+)\s*행/gu)].map((match) => positiveInteger(match[1])).filter(Boolean))];
-    const columnNumbers = [...new Set([...point.criterion.matchAll(/(\d+)\s*열/gu)].map((match) => positiveInteger(match[1])).filter(Boolean))];
-    const numberedCells = [...point.criterion.matchAll(/(\d+)\s*행\s*(?:의\s*)?(\d+)\s*열/gu)].map((match) => (
-      { rowIndex: positiveInteger(match[1]), columnIndex: positiveInteger(match[2]) }
-    ));
+  const tableOrdinal = "(?:제\\s*)?([0-9０-９]+|첫째|첫\\s*번째|둘째|두\\s*번째|셋째|세\\s*번째|넷째|네\\s*번째|다섯째|다섯\\s*번째)(?:\\s*번째)?";
+
+  function tableCriterionScope(criterion) {
+    const ordinalNumber = (value) => {
+      const index = [["첫째", "첫번째"], ["둘째", "두번째"], ["셋째", "세번째"], ["넷째", "네번째"], ["다섯째", "다섯번째"]]
+        .findIndex((words) => words.includes(value.replace(/\s+/gu, "")));
+      return positiveInteger(value.normalize("NFKC")) || index + 1;
+    };
+    const rowNumbers = [...new Set([...criterion.matchAll(new RegExp(`${tableOrdinal}\\s*행`, "gu"))].map((match) => ordinalNumber(match[1])).filter(Boolean))];
+    const columnNumbers = [...new Set([...criterion.matchAll(new RegExp(`${tableOrdinal}\\s*열`, "gu"))].map((match) => ordinalNumber(match[1])).filter(Boolean))];
+    const anchors = [...criterion.matchAll(new RegExp(`${tableOrdinal}\\s*행\\s*(?:의\\s*|[,，·]\\s*)?${tableOrdinal}\\s*열`, "gu"))];
+    const clauses = anchors.map((match, index) => {
+      const tail = criterion.slice(match.index + match[0].length, anchors[index + 1]?.index).trim();
+      const orNext = index < anchors.length - 1 && /\s+(?:또는|혹은)$/u.test(tail);
+      const instruction = tail.replace(/(?:[,;，；]\s*|\s+(?:그리고|및|또는|혹은))$/u, "").trim();
+      return { rowIndex: ordinalNumber(match[1]), columnIndex: ordinalNumber(match[2]), instruction, orNext };
+    }).filter((cell) => cell.rowIndex && cell.columnIndex);
+    const lastRule = fixedTableAnswerRule(clauses.at(-1)?.instruction || "");
+    const cells = clauses.map(({ instruction, ...cell }) => ({
+      ...cell,
+      rule: fixedTableAnswerRule(instruction) || (lastRule?.complete && /^(?:에는|에|은|는)\s*.+[을를]$/u.test(instruction) ? fixedTableAnswerRule(`${instruction} 작성함`) : null),
+    }));
+    return { rowNumbers, columnNumbers, cells };
+  }
+
+  function fixedTableAnswerRule(instruction) {
+    const textAfterColon = instruction.match(/^(?:(?:정답|답안?|채점기준)\s*)?[:：=]\s*(.+)$/u)?.[1];
+    const writing = instruction.match(/^(?:에는|에서|에|은|는)\s*(?:정답\s*[:：]?\s*)?(.+?)\s*(?:(?:[을를]|이라고|라고)\s*)?(?:(?:정확히|정확하게|그대로)\s*)?(?:작성(?:함|한다|하기|한\s*경우|하고)|적(?:음|는다|기|은\s*경우|고|으면)|(?:씀|쓰기|썼음|쓰고|쓰면)|답(?:함|한다|하기)|입력(?:함|한다|하고)|기입(?:함|한다|하고)|표기(?:함|한다|하고)|기록(?:함|한다|하고))\s*(.*)$/u);
+    const equality = instruction.match(/^(?:(?:의\s*)?답(?:안)?(?:이|은|는)?|은|는|에서)\s*(.+?)\s*[과와]\s*(?:(?:정확히|정확하게|그대로)\s*)?(?:일치(?:함|한다|하는\s*경우|하고)|같(?:음|다|은\s*경우)|동일(?:함|하다|한\s*경우))\s*(.*)$/u);
+    const phrase = text(textAfterColon || writing?.[1] || equality?.[1])
+      .replace(/^(?:정확히|정확하게|그대로)\s+/u, "").trim();
+    if (!phrase) return null;
+    const complete = !text(writing?.[2] || equality?.[2]).replace(/[.!。]$/u, "");
+    if (/^(?:예시|모범)\s*답안(?:의\s*(?:답|표기|글자)|[과와]\s*(?:같은|동일한|똑같은)\s*(?:답|표기|글자|내용))?$/u.test(phrase)) {
+      return { fromExample: true, values: [], complete };
+    }
+    const parts = phrase.split(/\s+(?:또는|혹은)\s+|(?<=['’"”])(?:이)?나\s*(?=['‘"“])/u);
+    const values = parts.map((part) => {
+      const quoted = part.match(/^(?:‘([^’]+)’|“([^”]+)”|'([^']+)'|"([^"]+)")[.!。]?$/u);
+      if (quoted) return writtenLiteral(quoted.slice(1).find(Boolean));
+      if (/^[\p{L}\p{N}][\p{L}\p{N}\s+\-/.]*$|^[-+]\d+(?:[./]\d+)?$/u.test(part)
+        && (textAfterColon || !/\s/u.test(part))
+        && !/(?:^|\s)(?:답|글|글씨|말|낱말|단어|문장|용어|이름|표준어|방언|숫자|수|기호|값|예문|빈칸|무응답)$/u.test(part)
+        && !/정답|예시|모범|알맞|적절|올바르|맞는|정확|해당|제시|내용|답안|뜻|의미|근거|이유|설명|과정|이해|표현|판단|관계|특징|작성|하면서|포함|(?:^|\s)(?:과|와|및|또는)(?:\s|$)/u.test(part)) return writtenLiteral(part);
+      return "";
+    });
+    if (values.every(Boolean)) return { values, complete };
+    if (/^(?:정확한|지정된)\s*(?:답안?|용어|이름|글자|표기|기호|숫자|값)$/u.test(phrase)) {
+      return { fromExample: true, values: [], complete };
+    }
+    return null;
+  }
+
+  function fixedTablePoint(cells, scope) {
+    const rules = scope.cells.filter((cell) => cell.rule);
+    if (!rules.length) return null;
+    const comparisons = rules.map(({ rowIndex, columnIndex, rule }) => {
+      const cell = cells.find((item) => item.rowIndex === rowIndex && item.columnIndex === columnIndex);
+      const expected = rule.fromExample ? [cell?.exampleText].filter(Boolean) : rule.values;
+      return { rowIndex, columnIndex, rule, cell, expected };
+    });
+    const scoped = comparisons.map(({ cell }) => cell).filter(Boolean);
+    const evidence = comparisons.map(({ rowIndex, columnIndex, rule, cell, expected }) => {
+      const location = `${rowIndex}행 ${columnIndex}열`;
+      if (!cell) return `${location} · 학생 답안 위치 확인 필요`;
+      const statedAnswer = expected.map((value) => `‘${value}’`).join(" 또는 ");
+      const detail = tableCellEvidenceText(cell, statedAnswer);
+      return rule.fromExample || !cell.exampleText || (expected.length === 1 && writtenLiteral(cell.exampleText) === expected[0])
+        ? detail : `${detail} · 채점기준 ${statedAnswer}`;
+    }).join("\n");
+    const result = { pending: false, earned: false, quote: "", scoped };
+    const complete = rules.length === scope.cells.length && rules.every(({ rule }) => rule.complete);
+    const hasAlternative = scope.cells.some((cell) => cell.orNext);
+    const isMatch = ({ cell, expected }) => cell?.readingStatus === "readable"
+      && expected.some((value) => writtenLiteral(value) === writtenLiteral(cell.studentText));
+    if (hasAlternative && (!complete || !scope.cells.slice(0, -1).every((cell) => cell.orNext))) {
+      return { ...result, pending: true, reviewKind: "score", evidence: `${evidence}\n배점 확인 필요 · 대안 조건이 어느 칸에 적용되는지 확인해 주세요.` };
+    }
+    if (hasAlternative && comparisons.some(isMatch)) {
+      return { ...result, earned: true, evidence: `${evidence}\n허용된 답안 위치와 채점기준 중 하나를 충족합니다.` };
+    }
+    if (scoped.some((cell) => cell.readingStatus === "unclear")) return { ...result, pending: true, evidence };
+    if (comparisons.some(({ cell, expected }) => !cell || cell.readingStatus === "unlocated" || (!expected.length && cell.readingStatus !== "blank"))) {
+      return { ...result, pending: true, reviewKind: "score", evidence: `${evidence}\n배점 확인 필요 · 해당 칸의 위치나 기준 답안을 확인해 주세요.` };
+    }
+    if (comparisons.some((comparison) => !isMatch(comparison))) {
+      return { ...result, evidence: `${evidence}\n지정된 칸의 답안이 채점기준과 일치하지 않아 배점을 부여하지 않았습니다.` };
+    }
+    if (complete) {
+      return { ...result, earned: true, evidence: `${evidence}\n지정된 칸의 답안이 채점기준과 일치합니다.` };
+    }
+    return null;
+  }
+
+  function groundTablePoint(cells, point, rawPoint, earned, missing, tableDecision, sets, matchingSets, scope) {
+    const { rowNumbers, columnNumbers, cells: numberedCells } = scope;
+    const fixed = fixedTablePoint(cells, scope);
+    if (fixed) return fixed;
     const allCells = /전체|모든\s*(?:칸|행|열)|각\s*(?:칸|행|열)|빠짐없이/u.test(point.criterion);
     const requested = Array.isArray(rawPoint?.evidenceCells) ? rawPoint.evidenceCells : [];
     const quote = writtenLiteral(rawPoint?.evidenceQuote);
@@ -3161,24 +3270,28 @@ ${JSON.stringify(roster)}
     return { earned, pending: false, quote: earned ? quote : "", scoped, evidence };
   }
 
-  function groundWrittenPoint(reading, item, rawPoint, earned, missing, tableDecision) {
-    const pending = (reason) => ({ earned: false, pending: true, evidence: writtenReviewEvidence(reading, reason), quote: "" });
+  function groundWrittenPoint(reading, item, rawPoint, earned, missing, tableDecision, fixedScope) {
     if (reading.status === "blank") return { earned: false, pending: false, evidence: "독립 판독에서 답안 칸이 비어 있음을 확인했습니다.", quote: "" };
     if (tableDecision && (reading.status === "readable" || (reading.status === "partial" && tableDecision.earned))) {
       return { earned: tableDecision.earned, pending: false, evidence: tableDecision.evidence, quote: "" };
     }
-    if (reading.status !== "readable") return pending(reading.status === "disagreement"
+    if (reading.status !== "readable") return pendingWrittenPoint(reading, reading.status === "disagreement"
       ? "두 판독에서 이 부분을 다르게 읽었습니다. 원본 글씨를 확인해 주세요."
       : "이 배점에 필요한 글씨를 확인하지 못했습니다. 원본을 확인해 주세요.");
-    if (missing) return pending("판독문은 있으나 이 항목의 배점 판단을 확인하지 못했습니다.");
+    if (fixedScope) {
+      return pendingWrittenPoint(reading, "학생 글씨가 채점기준에서 지정한 칸에 있는지 확인할 수 없습니다.", "score");
+    }
+    if (missing) return pendingWrittenPoint(reading, "AI가 이 항목의 배점 판단을 반환하지 않았습니다.", "score");
     const gradedAnswer = rawPoint.gradedAnswerReading ?? item?.answerReading;
-    if (writtenLiteral(gradedAnswer) !== writtenLiteral(reading.transcript)) return pending("채점 응답의 답안이 독립 판독과 다릅니다.");
+    if (writtenLiteral(gradedAnswer) !== writtenLiteral(reading.transcript)) {
+      return pendingWrittenPoint(reading, "채점 응답의 답안이 독립 판독과 다릅니다.", "score");
+    }
     if (rawPoint.confidence === "low" && incompleteWriting.test(text(rawPoint.evidence))) {
-      return pending("채점 중 글씨가 불확실하게 읽힌 부분이 있습니다.");
+      return pendingWrittenPoint(reading, "채점 응답이 확인된 글씨에 대한 판단을 보류했습니다.", "score");
     }
     const quote = writtenLiteral(rawPoint.evidenceQuote);
     if (earned && (!quote || !writtenLiteral(reading.transcript).includes(quote))) {
-      return pending("제시된 채점 근거를 학생의 독립 판독문에서 확인하지 못했습니다.");
+      return pendingWrittenPoint(reading, "제시된 채점 근거를 학생의 독립 판독문에서 확인하지 못했습니다.", "score");
     }
     return {
       earned, pending: false, quote: earned ? quote : "",
@@ -3225,11 +3338,13 @@ ${JSON.stringify(roster)}
       if (rawIndex >= 0) usedIndexes.add(rawIndex);
       const item = rawIndex >= 0 ? rawItems[rawIndex] : null;
       const independentReading = independent.get(example.id);
+      const scopes = metadata.compareTableCells ? example.pointItems.map((point) => tableCriterionScope(point.criterion)) : [];
+      const hasFixedRule = scopes.some((scope) => scope.cells.some((cell) => cell.rule));
       const reportedUnreadable = metadata.verifyWrittenText && !independentReading && item
         && (/^(?:판독\s*(?:불가|확인\s*필요)|식별\s*불가)$/u.test(text(item.answerReading))
           || (Array.isArray(item.pointResults) && item.pointResults.some((point) =>
             point?.confidence === "low" && incompleteWriting.test(text(point.evidence)))));
-      const writtenReading = written.get(example.id) || (reportedUnreadable
+      const writtenReading = written.get(example.id) || (reportedUnreadable || (hasFixedRule && !independentReading)
         ? { exampleAnswerId: example.id, questionNumber: example.questionNumber, status: "uncertain", tableRows: [] } : null);
       const reference = referenceTables.get(example.id);
       const tableEvidence = metadata.compareTableCells && hasTableReading(writtenReading)
@@ -3257,11 +3372,13 @@ ${JSON.stringify(roster)}
           questionNumber: example.questionNumber, criterionId: example.evaluationElementIds[0],
           tableRows: writtenReading.tableRows, confidence: "high",
         }] : questionResults;
-        const tableDecision = exactTablePairDecision(example, point, tableSources);
+        const scope = scopes[pointIndex];
+        const fixedScope = scope?.cells.some((cell) => cell.rule) ? scope : null;
+        const tableDecision = fixedScope ? null : exactTablePairDecision(example, point, tableSources);
         if (writtenReading) {
           const grounded = tableEvidence.length
-            ? groundTablePoint(tableEvidence, point, rawPoint, earned, missing, tableDecision, sets, matchingSets)
-            : groundWrittenPoint(writtenReading, item, rawPoint, earned, missing, tableDecision);
+            ? groundTablePoint(tableEvidence, point, rawPoint, earned, missing, tableDecision, sets, matchingSets, scope)
+            : groundWrittenPoint(writtenReading, item, rawPoint, earned, missing, tableDecision, fixedScope);
           if (grounded.pending) reviewReasons.push(`${example.questionNumber}번 ‘${point.criterion}’ 확인 필요 · ${grounded.evidence}`);
           return {
             pointItemId: point.id, criterion: point.criterion, awardedScore: grounded.earned ? point.score : 0, maxScore: point.score,
