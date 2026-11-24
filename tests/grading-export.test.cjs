@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const AI = require("../web/ai-core.js");
 const Export = require("../web/grading-export.js");
 const schoolSource = fs.readFileSync(path.join(__dirname, "..", "web", "school-app.js"), "utf8");
 
@@ -479,18 +480,23 @@ test("teacher score snapshots keep AI results available for restoration after sa
 test("all handwritten claims remain provisional and correcting a long answer clears every proposed point", () => {
   const start = schoolSource.indexOf("function needsWrittenExampleReview");
   const end = schoolSource.indexOf("async function openStudentResult", start);
-  const { rows, needsReview, verify, evidence } = new Function("normalizedExamplePointItems", "refreshExampleAnswerScore", "formatScore",
-    schoolSource.slice(start, end) + "; return { rows: resultExampleAnswerRows, needsReview: needsWrittenAnswerReview, verify: applyVerifiedWrittenAnswer, evidence: shownPointEvidence };"
-  )((example) => example.pointItems, () => {}, String);
+  const { rows, needsReview, verify, evidence, rubricEvidence } = new Function("normalizedExamplePointItems", "refreshExampleAnswerScore", "formatScore", "ChaejeomAI",
+    schoolSource.slice(start, end) + "; return { rows: resultExampleAnswerRows, needsReview: needsWrittenAnswerReview, verify: applyVerifiedWrittenAnswer, evidence: shownPointEvidence, rubricEvidence: writtenRubricEvidence };"
+  )((example) => example.pointItems, () => {}, String, AI);
   const transcript = "수증기가 식어서 물방울이 되었다고 설명했다.";
   const actual = "물이 햇빛을 받아 공기 중으로 올라갔다.";
   const pointItems = [{ id: "p1", criterion: "관찰 내용", score: 1 }, { id: "p2", criterion: "변화 과정", score: 1 }];
   const design = { exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: transcript, pointItems }] };
-  const result = { teacherConfirmed: true, exampleAnswerResults: [{ exampleAnswerId: "e1", writtenReading: { sourceVerified: true, status: "readable", transcript },
-    pointResults: pointItems.map((point) => ({ pointItemId: point.id, evidence: transcript, awardedScore: 1 })) }] };
+  const result = { teacherConfirmed: true, exampleAnswerResults: [{ exampleAnswerId: "e1", answerReading: transcript,
+    writtenReading: { sourceVerified: true, status: "readable", transcript },
+    pointResults: pointItems.map((point) => ({ pointItemId: point.id, earned: true, awardedScore: 1, gradedAnswerReading: transcript,
+      evidenceQuote: point.id === "p1" ? "물방울이 되었다" : "답안에 없는 문구", evidence: "원본에 없는 근거" })) }] };
   const reviewed = rows(result, design);
   assert.equal(needsReview(result, design), true);
-  assert.doesNotMatch(evidence(reviewed[0], reviewed[0].pointResults[0]), /수증기/);
+  assert.match(evidence(reviewed[0], reviewed[0].pointResults[0]), /물방울이 되었다.*관찰 내용/);
+  assert.doesNotMatch(evidence(reviewed[0], reviewed[0].pointResults[0]), /원본에 없는 근거/);
+  assert.match(evidence(reviewed[0], reviewed[0].pointResults[1]), /독립 판독문에 없습니다/);
+  assert.match(rubricEvidence(reviewed).evidence, /AI 제안.*물방울이 되었다/);
   verify(reviewed[0], { text: actual, blank: false }, rows(result, design, false)[0]);
   assert.ok(reviewed[0].pointResults.every((point) => point.missingResult && point.awardedScore === null));
   result.teacherExampleAnswerResults = reviewed;
@@ -499,6 +505,7 @@ test("all handwritten claims remain provisional and correcting a long answer cle
   assert.equal(needsReview(result, design), false);
   assert.match(evidence(reviewed[0], reviewed[0].pointResults[0]), /햇빛/);
   assert.doesNotMatch(evidence(reviewed[0], reviewed[0].pointResults[0]), /수증기/);
+  assert.doesNotMatch(rubricEvidence(reviewed).evidence, /수증기|물방울/);
   result.exampleAnswerResults[0] = { exampleAnswerId: "e1", fractionMathCheck: { independent: true } };
   delete result.teacherExampleAnswerResults;
   design.exampleAnswers[0].mathNotation = "6과 3/4";

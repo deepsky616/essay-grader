@@ -2253,7 +2253,7 @@ ${safeMetadata.alignedReferencePages.length ? "3-1. ‘위치 보정 빈 평가�
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 낮은 confidence와 구체적인 근거를 기록합니다.
 7-1. 분수 계산은 세부 문항별 answerReading에 학생의 중간 계산과 최종 답을 등호 순서대로 전사하세요. 학생이 우변만 썼다면 평가지에 인쇄된 원래 식을 첫 등호의 좌변으로 붙이세요. 보이는 수를 정답에 맞춰 바꾸지 말고, 교사 예시의 등식은 학생 답안으로 옮기지 마세요. 각 등호의 값과 최종 답을 각각 검산하고, 식 세우기·풀이 과정·최종 답의 배점 기준을 구분하세요.
 ${safeMetadata.independentFractionReadings.length ? "7-2. independentFractionReadings는 예시답을 제외하고 전사한 학생 필기입니다. 해당 세부 문항은 여기에 기록된 최종 답과 풀이를 우선 사용하세요. uncertain이면 정답이나 예시풀이를 학생 필기로 채우지 말고 검토 사유를 남기세요." : ""}
-${safeMetadata.independentTextReadings.length ? "7-3. independentTextReadings에 있는 문항의 판독문은 채점 근거에 사용할 수 있는 학생 글자의 범위를 정합니다. readable이면 exampleAnswerResults.answerReading에 transcript를 그대로 복사하세요. 배점을 충족한다고 판단한 각 항목의 evidenceQuote에는 transcript에 실제로 있는 구절만 그대로 복사하세요. 학생 답이나 근거를 이미지, 예시답 또는 문제에서 새로 보충하지 마세요. blank이면 무응답으로 기록하고, uncertain이나 disagreement이면 판독 불가로 적고 교사 확인을 요청하세요." : ""}
+${safeMetadata.independentTextReadings.length ? "7-3. independentTextReadings에 있는 문항의 판독문은 채점 근거에 사용할 수 있는 학생 글자의 범위를 정합니다. readable이면 exampleAnswerResults.answerReading에 transcript를 그대로 복사하세요. 각 배점 항목의 evidenceQuote에는 해당 기준을 충족하거나 미충족한다고 판단한 근거가 드러나는 구절을 transcript에서 그대로 복사하세요. 부정어, 단서, 조건이 있으면 뜻이 바뀌지 않도록 함께 인용하세요. 인용할 구절이 없으면 빈 문자열입니다. 학생 답이나 근거를 이미지, 예시답 또는 문제에서 새로 보충하지 마세요. blank이면 무응답으로 기록하고, uncertain이나 disagreement이면 판독 불가로 적고 교사 확인을 요청하세요." : ""}
 ${batch ? buildGradingBatchInstructions(batch, safeMetadata) : `
 ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
     ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
@@ -2671,7 +2671,40 @@ ${JSON.stringify(roster)}
     return "판독 불가";
   }
 
-  function groundWrittenPoint(example, reading, item, rawPoint, earned, missing, tableDecision) {
+  function describeWrittenPointEvidence(reading, point, { earned, quote }) {
+    const criterion = `‘${point.criterion}’`;
+    if (earned) return `독립 판독 근거 · ‘${quote}’에서 ${criterion} 기준을 충족한다고 판단했습니다.`;
+    const transcript = writtenLiteral(reading.transcript);
+    const observed = quote || (transcript.length > 240 ? `${transcript.slice(0, 240)}…` : transcript);
+    return `독립 판독 · ‘${observed}’ · 이 답안에서 ${criterion} 기준을 충족하는 근거를 찾지 못했습니다.`;
+  }
+
+  function writtenPointSuggestion(reading, point, graded) {
+    const pending = (evidence) => ({ evidence, supported: false });
+    const supported = (evidence) => ({ evidence, supported: true });
+    if (!reading) return pending("이 문항에는 독립 판독 기록이 없습니다. AI 채점을 다시 실행하면 글씨와 배점 기준을 대조할 수 있습니다.");
+    if (graded?.writtenPending && graded.missingResult && graded.evidence) return pending(graded.evidence);
+    if (reading.status === "disagreement") return pending("전체 답안과 확대 영역에서 다르게 읽혀 이 문항의 근거를 확인해 주세요.");
+    if (reading.status === "uncertain" || reading.sourceVerified === false) {
+      return pending(reading.sourceIssue || "답안 영역에서 글씨를 충분히 확인하지 못했습니다.");
+    }
+    if (!graded || graded.missingResult) return pending("이 배점 항목의 채점 결과가 없습니다.");
+    if (graded.criterion && writtenLiteral(graded.criterion) !== writtenLiteral(point.criterion)) {
+      return pending("이 항목의 배점 기준이 바뀌었습니다. 현재 기준으로 다시 채점해 주세요.");
+    }
+    if (reading.status === "blank") return supported("독립 판독에서 답안 칸이 비어 있는 것으로 판단했습니다.");
+    if (reading.status !== "readable" || !writtenLiteral(reading.transcript)) return pending("학생이 쓴 글씨를 확인하지 못했습니다.");
+    if (graded.tablePairValidated && reading.tableRows?.length && graded.evidence) return supported(graded.evidence);
+    const transcript = writtenLiteral(reading.transcript);
+    if (transcript !== writtenLiteral(graded.gradedAnswerReading)) return pending("채점에 사용된 답안이 독립 판독과 일치하지 않습니다.");
+    if (typeof graded.earned !== "boolean") return pending("이 기준의 배점 획득 여부를 확인하지 못했습니다.");
+    const proposedQuote = writtenLiteral(graded.evidenceQuote);
+    const quote = proposedQuote && transcript.includes(proposedQuote) ? proposedQuote : "";
+    if (graded.earned && !quote) return pending("채점 근거로 제시된 구절이 독립 판독문에 없습니다.");
+    return supported(describeWrittenPointEvidence(reading, point, { earned: graded.earned, quote }));
+  }
+
+  function groundWrittenPoint(example, point, reading, item, rawPoint, earned, missing, tableDecision) {
     const pending = (evidence) => ({ earned: false, pending: true, evidence, quote: "" });
     if (reading.status === "blank") return { earned: false, pending: false, evidence: "독립 판독에서 답안 칸이 비어 있음을 확인했습니다.", quote: "" };
     if (reading.status !== "readable") return pending(reading.sourceIssue || (reading.status === "disagreement"
@@ -2685,13 +2718,14 @@ ${JSON.stringify(roster)}
     if (missing) return pending("판독문은 있으나 이 항목의 배점 판단을 확인하지 못했습니다.");
     const gradedAnswer = rawPoint.gradedAnswerReading ?? item?.answerReading;
     if (writtenLiteral(gradedAnswer) !== writtenLiteral(reading.transcript)) return pending("채점 응답의 답안이 독립 판독과 다릅니다.");
-    const quote = writtenLiteral(rawPoint.evidenceQuote);
-    if (earned && (!quote || !writtenLiteral(reading.transcript).includes(quote))) {
+    const requestedQuote = writtenLiteral(rawPoint.evidenceQuote);
+    const quote = requestedQuote && writtenLiteral(reading.transcript).includes(requestedQuote) ? requestedQuote : "";
+    if (earned && !quote) {
       return pending("제시된 채점 근거를 학생의 독립 판독문에서 확인하지 못했습니다.");
     }
     return {
-      earned, pending: false, quote: earned ? quote : "",
-      evidence: earned ? `독립 판독 근거 · ‘${quote}’` : `독립 판독 · ‘${reading.transcript.slice(0, 240)}’ · 이 항목의 배점 미획득`,
+      earned, pending: false, quote,
+      evidence: describeWrittenPointEvidence(reading, point, { earned, quote }),
     };
   }
 
@@ -2753,7 +2787,7 @@ ${JSON.stringify(roster)}
         }] : questionResults;
         const tableDecision = exactTablePairDecision(example, point, tableSources);
         if (writtenReading) {
-          const grounded = groundWrittenPoint(example, writtenReading, item, rawPoint, earned, missing, tableDecision);
+          const grounded = groundWrittenPoint(example, point, writtenReading, item, rawPoint, earned, missing, tableDecision);
           if (grounded.pending) reviewReasons.push(`${example.questionNumber}번 ‘${point.criterion}’ 확인 필요 · ${grounded.evidence}`);
           return {
             pointItemId: point.id, criterion: point.criterion, awardedScore: grounded.earned ? point.score : 0, maxScore: point.score,
@@ -3317,6 +3351,7 @@ ${JSON.stringify(roster)}
     buildPrompt,
     buildPageMatchPrompt,
     normalizeGradingResult,
+    writtenPointSuggestion,
     selectPrecisionCriterionIds,
     selectFractionCriterionIds,
     mergePrecisionGradingResult,

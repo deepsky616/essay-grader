@@ -63,6 +63,7 @@ test("written grading uses two blind readings and excludes invented grading feed
   assert.equal(result.independentTextReadings[0].transcript, "상민");
   assert.match(result.questionResults[0].answerReading, /상민/);
   assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /독립 판독 근거 · ‘상민’/);
+  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /알맞은 신분을 적음.*충족/);
   assert.doesNotMatch(JSON.stringify(result), /세금/);
 });
 
@@ -79,6 +80,16 @@ test("written grading holds confident wrong transcriptions and unsupported quote
   }
   assert.match(misread.result.reviewReasons.join("\n"), /독립 판독과 다릅니다/);
   assert.match(invented.result.reviewReasons.join("\n"), /독립 판독문에서 확인하지 못했습니다/);
+});
+
+test("written grades explain an unearned point using the student's wording and the configured criterion", async () => {
+  const answer = "일부 농사는 지주가 아닌 다른 사람이 지었다고 설명했다.";
+  const { result } = await gradeWrittenTestAnswer({ first: answer, answer, quote: "실제로 쓰지 않은 설명", earned: false });
+  const row = result.exampleAnswerResults[0];
+  const point = row.pointResults[0];
+  assert.match(point.evidence, /지주가 아닌.*알맞은 신분을 적음.*근거를 찾지 못했습니다/);
+  assert.doesNotMatch(point.evidence, /실제로 쓰지 않은/);
+  assert.equal(AI.writtenPointSuggestion(row.writtenReading, point, point).evidence, point.evidence);
 });
 
 test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {

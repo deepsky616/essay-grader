@@ -5027,10 +5027,14 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       ? result.exampleAnswerResults?.find((row) => row.exampleAnswerId === id) : item;
     const requiresWrittenReview = Boolean(item?.writtenReading || item?.verifiedWrittenAnswer
       || needsWrittenExampleReview(example, aiItem));
+    const writtenReading = aiItem?.writtenReading || item?.writtenReading;
     const configuredPoints = normalizedExamplePointItems(example);
     const storedPoints = Array.isArray(item?.pointResults) ? item.pointResults : [];
     const pointResults = configuredPoints.map((point, pointIndex) => {
       const storedPoint = storedPoints.find((candidate) => candidate?.pointItemId === point.id) || storedPoints[pointIndex];
+      const aiPoint = (aiItem?.pointResults || []).find((candidate) => candidate?.pointItemId === point.id);
+      const writtenSuggestion = requiresWrittenReview ? ChaejeomAI.writtenPointSuggestion(writtenReading, point, aiPoint) : null;
+      const ungrounded = writtenSuggestion && !writtenSuggestion.supported && !item?.verifiedWrittenAnswer && !storedPoint?.teacherAdjusted;
       return {
         pointItemId: point.id,
         criterion: point.criterion,
@@ -5039,8 +5043,9 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         earned: storedPoint ? Boolean(storedPoint.earned) : false,
         evidence: storedPoint?.evidence || "기존 결과에는 이 배점 항목의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
         confidence: ["high", "medium", "low"].includes(storedPoint?.confidence) ? storedPoint.confidence : "low",
-        missingResult: !storedPoint || Boolean(storedPoint.missingResult),
-        writtenPending: Boolean(storedPoint?.writtenPending),
+        missingResult: !storedPoint || Boolean(storedPoint.missingResult || ungrounded),
+        writtenPending: Boolean(storedPoint?.writtenPending || ungrounded),
+        writtenSuggestion,
         teacherAdjusted: Boolean(storedPoint?.teacherAdjusted),
       };
     });
@@ -5051,7 +5056,7 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       awardedScore: item ? Math.max(0, Math.min(maxScore, Number(item.awardedScore || 0))) : null,
       maxScore,
       evidence: item?.evidence || "기존 결과에는 이 세부 문항의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
-      writtenReading: item?.writtenReading,
+      writtenReading,
       answerReading: item?.answerReading,
       requiresWrittenReview,
       verifiedWrittenAnswer: item?.verifiedWrittenAnswer ?? null,
@@ -5093,9 +5098,10 @@ function applyVerifiedWrittenAnswer(row, answer, aiRow) {
   refreshExampleAnswerScore(row);
 }
 
-function verifiedWrittenEvidence(answer, score, maximum) {
+function verifiedWrittenEvidence(answer, point) {
   const source = answer.blank ? "교사 확인 · 무응답" : `교사 확인 답안 · ‘${answer.text}’`;
-  return `${source} · ${formatScore(score)} / ${formatScore(maximum)}점`;
+  const criterion = point.criterion ? `‘${point.criterion}’ 기준 ` : "";
+  return `${source} · ${criterion}${formatScore(point.awardedScore)} / ${formatScore(point.maxScore)}점`;
 }
 
 function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
@@ -5147,7 +5153,8 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
-        return `<article class="${choices.length > 8 ? "has-many-score-choices" : ""}"><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong><small class="rubric-linked-question">연결 문제 ${escapeHtml(item.questionNumber || String(index + 1))}</small>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>AI 판독:</b> ${escapeHtml(item.answerReading || "판독 불가").replace(/\n/g, "<br>")}</p>${item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">확신도 ${confidence}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
+        const written = writtenRubricEvidence(exampleRowsForCriterion(item, exampleRows));
+        return `<article class="${choices.length > 8 ? "has-many-score-choices" : ""}"><div><strong>${escapeHtml(item.evaluationElement || item.criterion || "평가요소")}</strong><small class="rubric-linked-question">연결 문제 ${escapeHtml(item.questionNumber || String(index + 1))}</small>${item.missingResult ? `<em class="missing-score-label">AI 결과 누락 · 교사 확인</em>` : ""}<p class="answer-reading"><b>답안 판독:</b> <span data-question-reading="${index}">${escapeHtml(written?.answerReading || item.answerReading || "판독 불가")}</span></p>${!written && item.visualDescription ? `<p class="visual-reading"><b>그림 판독:</b> ${escapeHtml(item.visualDescription)}</p>` : ""}<p><b>적용 기준:</b> ${escapeHtml(item.criterion || "교사 확인 필요")}</p><p><b>채점 근거:</b> <span data-question-evidence="${index}">${escapeHtml(written?.evidence || item.evidence || "근거가 반환되지 않았습니다.")}</span></p><small class="score-feedback-meta"><span data-question-feedback="${index}">${escapeHtml(written ? "" : item.feedback || "")}</span><em class="confidence-badge confidence-${confidence}">${written ? "문항별 근거 참조" : `확신도 ${confidence}`}</em></small></div><fieldset class="score-choice-field"><legend>배점 결과</legend><input data-teacher-score="${index}" data-score-index="${index}" type="hidden" min="0" max="${Number(item.maxScore || 0)}" value="${selectedScore}"><div class="score-choice-buttons">${choices.map((score) => `<button type="button" data-score-choice="${score}" data-score-index="${index}" class="${score === selectedScore ? "is-selected" : ""}" aria-label="${formatScore(score)}점" aria-pressed="${score === selectedScore}">${formatScore(score)}</button>`).join("")}</div></fieldset></article>`;
       }).join("")}
   </section>`;
   return problemSections + rubricSection;
@@ -5182,9 +5189,26 @@ function teacherReviewScoreSnapshot(questionRows, scoreInputs, exampleRows) {
 
 function shownPointEvidence(row, point) {
   if (!row.requiresWrittenReview) return point.evidence || "교사 확인이 필요합니다.";
-  if (!row.verifiedWrittenAnswer) return "원본 확인 후 채점 근거가 표시됩니다.";
+  if (point === row && row.pointResults?.length) {
+    return row.pointResults.map((item) => shownPointEvidence(row, item)).join("\n");
+  }
+  if (!row.verifiedWrittenAnswer) return point.writtenSuggestion?.evidence || "이 배점 항목의 독립 판독 결과가 없습니다.";
   if (point.missingResult) return "교사가 확인한 답안으로 배점을 선택해 주세요.";
-  return verifiedWrittenEvidence(row.verifiedWrittenAnswer, point.awardedScore, point.maxScore);
+  if (row.verifiedWrittenAnswer.matchesAi && !point.teacherAdjusted && point.writtenSuggestion?.supported) return point.writtenSuggestion.evidence;
+  return verifiedWrittenEvidence(row.verifiedWrittenAnswer, point);
+}
+
+function writtenRubricEvidence(linkedRows) {
+  if (!linkedRows.some((row) => row.requiresWrittenReview)) return null;
+  const label = (row) => row.verifiedWrittenAnswer ? "교사 확인" : row.requiresWrittenReview ? "AI 판독" : "";
+  return {
+    answerReading: linkedRows.map((row) => {
+      const supportsReading = row.pointResults.some((point) => point.writtenSuggestion?.supported);
+      const answer = row.verifiedWrittenAnswer || supportsReading || !row.requiresWrittenReview ? row.answerReading : "판독 확인 필요";
+      return [`문제 ${row.questionNumber}`, label(row), answer].filter(Boolean).join(" · ");
+    }).join("\n"),
+    evidence: linkedRows.map((row) => `문제 ${row.questionNumber} · ${row.requiresWrittenReview && !row.verifiedWrittenAnswer ? "AI 제안 · " : ""}${shownPointEvidence(row, row)}`).join("\n"),
+  };
 }
 
 async function openWrittenSourceReview(dialog, row, aiRow, originalFile, previewUrl) {
@@ -5193,8 +5217,8 @@ async function openWrittenSourceReview(dialog, row, aiRow, originalFile, preview
   const [canvas, frame, link] = dialog.querySelectorAll("canvas, iframe, a");
   const location = dialog.querySelector("[data-written-source-location]");
   dialog.querySelector("h3").textContent = `문제 ${row.questionNumber} · 원본 글씨 대조`;
-  dialog.querySelector("[data-written-source-transcript]").textContent = aiRow.answerReading || "판독값 없음";
-  dialog.querySelector("[data-written-source-evidence]").textContent = aiRow.evidence;
+  dialog.querySelector("[data-written-source-transcript]").textContent = aiRow.writtenReading ? aiRow.answerReading : "독립 판독 기록 없음";
+  dialog.querySelector("[data-written-source-evidence]").textContent = shownPointEvidence(aiRow, aiRow);
   const answerInput = dialog.querySelector("[data-verified-written-answer]");
   const blankInput = dialog.querySelector("[data-verified-written-blank]");
   blankInput.checked = Boolean(row.verifiedWrittenAnswer?.blank);
@@ -5467,16 +5491,19 @@ async function openStudentResult(course, targetStudents, studentId) {
     scoreInputs.forEach((input, scoreIndex) => {
       input.value = nearestScoreChoice(alignedScores[scoreIndex], scoreChoicesForResultRow(questionRows[scoreIndex], design));
       const linkedExamples = exampleRowsForCriterion(questionRows[scoreIndex], workingExampleRows);
-      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
-      const feedback = automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
+      const written = writtenRubricEvidence(linkedExamples);
+      const evidence = written?.evidence || `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
+      const feedback = written ? "" : automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
       if (questionRows[scoreIndex]) {
         questionRows[scoreIndex].score = Number(input.value || 0);
         questionRows[scoreIndex].evidence = evidence;
         questionRows[scoreIndex].feedback = feedback;
       }
       const evidenceLabel = panel.querySelector(`[data-question-evidence="${scoreIndex}"]`);
+      const readingLabel = panel.querySelector(`[data-question-reading="${scoreIndex}"]`);
       const feedbackLabel = panel.querySelector(`[data-question-feedback="${scoreIndex}"]`);
       if (evidenceLabel) evidenceLabel.textContent = evidence;
+      if (readingLabel && written) readingLabel.textContent = written.answerReading;
       if (feedbackLabel) feedbackLabel.textContent = feedback;
     });
     syncScoreChoiceStates();
