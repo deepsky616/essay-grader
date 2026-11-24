@@ -334,7 +334,7 @@ test("AI grading shows how many students were selected in submission management"
   assert.match(schoolSource, /class="grading-selection-count"><span>과제물 관리에서 선택<\/span><strong>\$\{selectedSubmissionCount\}명<\/strong>/);
   assert.match(schoolSource, /평가 대상 \$\{targetStudents\.length\}명 중/);
   assert.match(schoolSource, /scanReady = Boolean\(submission && design\?\.blankFile && selectedSubmissionCount > 0\)/);
-  assert.match(schoolSource, /3 과제물 관리에서 자동 분할할 학생을 한 명 이상 선택/);
+  assert.match(schoolSource, /3 과제물 관리에서 채점할 학생을 한 명 이상 선택/);
   assert.match(schoolSource, /data-open-submissions/);
   assert.match(styles, /\.grading-selection-count \{[^}]*min-width: 145px/);
 });

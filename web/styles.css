@@ -993,6 +993,11 @@ a { color: inherit; text-decoration: none; }
 .split-bulk-actions button:last-child { color: #8b2e20; }
 .split-bulk-actions button:disabled { cursor: not-allowed; filter: grayscale(.7); opacity: .48; }
 .split-list { max-height: 520px; overflow: auto; }
+.split-student-panel > .mini-panel-head { align-items: center; flex-wrap: wrap; }
+.submission-students-dialog .split-list { max-height: min(45vh, 390px); border: 1px solid var(--line); border-radius: 10px; }
+.pdf-student-choice { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.pdf-student-choice:last-child { border-bottom: 0; }
+.pdf-student-choice input { width: 18px; height: 18px; }
 .split-row { display: grid; grid-template-columns: 24px 50px minmax(100px,1fr) auto auto; gap: 8px; align-items: center; padding: 12px 15px; border-bottom: 1px solid var(--line); }
 .split-student-label { display: contents; cursor: pointer; }
 .split-row.is-included { background: rgba(185,234,210,.14); }
