@@ -288,8 +288,7 @@ test("course grading uses adaptive workers and selectively rechecks handwritten 
   assert.match(schoolSource, /const GRADING_PARALLELISM = 4/);
   assert.match(schoolSource, /const MIN_GRADING_PARALLELISM = 2/);
   assert.match(schoolSource, /Promise\.all\(Array\.from\(\{ length: workerCount \}/);
-  assert.match(schoolSource, /function needsPrecisionReview\(result, metadata\)/);
-  assert.match(schoolSource, /selectPrecisionCriterionIds/);
+  assert.match(schoolSource, /selectPrecisionCriterionIds\(result, baseMetadata\)/);
   assert.match(schoolSource, /원본 우선 1차 판독·채점 중/);
   assert.match(schoolSource, /prepareEnhancedAnswerImages\(studentFile/);
   assert.match(schoolSource, /selectFractionCriterionIds/);

@@ -3929,10 +3929,6 @@ function updateGradingProgress(completed, total, { stage = `최대 ${GRADING_PAR
   card.querySelector("[data-progress-workers]").innerHTML = gradingActiveTaskMarkup(tasks, running);
 }
 
-function needsPrecisionReview(result, metadata) {
-  return ChaejeomAI.selectPrecisionCriterionIds(result, metadata).length > 0;
-}
-
 function preliminaryReadingsFromResult(result) {
   return (Array.isArray(result?.questionResults) ? result.questionResults : []).map((item) => ({
     criterionId: item.criterionId || "",
@@ -4012,9 +4008,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   let fractionVerificationCompleted = false;
   let precisionPassCompleted = false;
   let alignedReferencePageCount = 0;
-  const initialPrecisionCriterionIds = needsPrecisionReview(result, baseMetadata)
-    ? ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata)
-    : [];
+  const initialPrecisionCriterionIds = ChaejeomAI.selectPrecisionCriterionIds(result, baseMetadata);
   const fractionCriterionIds = ChaejeomAI.selectFractionCriterionIds(result, baseMetadata);
   if (fractionCriterionIds.length && !signal?.aborted) {
     try {
@@ -4039,8 +4033,20 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     .map((rubric) => rubric.id);
   if (precisionCriterionIds.length && !signal?.aborted) {
     try {
+      const writtenIds = new Set((result.independentTextReadings || []).map((row) => row.exampleAnswerId));
+      const designExamples = (design.exampleAnswers || []).map((row, index) => ({ ...row, exampleAnswerId: row.id || `example-${index + 1}` }));
+      const targetIdSet = new Set(precisionCriterionIds);
+      const writtenRubricIds = new Set();
+      const writtenOnlyRubricIds = new Set();
+      for (const rubric of normalizedRubrics.filter((item) => targetIdSet.has(item.id))) {
+        const examples = exampleRowsForCriterion({ ...rubric, criterionId: rubric.id }, designExamples);
+        if (examples.some((example) => writtenIds.has(example.exampleAnswerId))) writtenRubricIds.add(rubric.id);
+        if (examples.length && examples.every((example) => writtenIds.has(example.exampleAnswerId))) writtenOnlyRubricIds.add(rubric.id);
+      }
+      const writtenOnly = !fractionCriterionIds.length && writtenOnlyRubricIds.size === precisionCriterionIds.length;
       const fractionIdSet = new Set(fractionCriterionIds);
-      const needsGeneralEnhancement = initialPrecisionCriterionIds.some((criterionId) => !fractionIdSet.has(criterionId)) || !fractionFiles.length;
+      const needsGeneralEnhancement = !writtenOnly
+        && (initialPrecisionCriterionIds.some((criterionId) => !fractionIdSet.has(criterionId)) || !fractionFiles.length);
       if (needsGeneralEnhancement) {
         onStage?.(`${precisionCriterionIds.length}개 문항 고해상도 필기 보정 중`, "review");
         try {
@@ -4065,15 +4071,14 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
       });
       if (retainedEnhancementFiles.length < candidateEnhancements.length) recognitionWarnings.push("AI 요청 용량을 넘지 않도록 일부 분수·필기 확대 이미지는 제외했습니다.");
       const maxReferenceBytes = ChaejeomAI.MAX_INLINE_BYTES - fixedBytes - retainedBytes - (256 * 1024);
-      onStage?.("빈 평가지와 학생 답안의 인쇄 위치 대조 중", "review");
-      const alignedReference = await tryAlignBlankReference(resolvedBlankFile, studentFile, { signal, maxBytes: maxReferenceBytes });
+      if (!writtenOnly) onStage?.("빈 평가지와 학생 답안의 인쇄 위치 대조 중", "review");
+      const alignedReference = writtenOnly ? null : await tryAlignBlankReference(resolvedBlankFile, studentFile, { signal, maxBytes: maxReferenceBytes });
       alignedReferencePageCount = alignedReference?.pageNumbers.length || 0;
       const precisionFiles = [
         ...firstPassFiles,
         ...retainedEnhancementFiles,
         ...(alignedReference ? [{ role: "alignedBlank", file: alignedReference.file }] : []),
       ];
-      const targetIdSet = new Set(precisionCriterionIds);
       const preliminaryReadings = preliminaryReadingsFromResult(result);
       onStage?.(`${precisionCriterionIds.length}개 선별 문항 고해상도 정밀 재채점 중`, "review");
       const precisionResult = await ChaejeomAI.gradeAnswer({
@@ -4087,18 +4092,20 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           fractionVerification: fractionFiles.length > 0,
           fractionCriterionIds,
           alignedReferencePages: alignedReference?.pageNumbers,
-          preReadings: preliminaryReadings.filter((item) => targetIdSet.has(item.criterionId)),
+          preReadings: preliminaryReadings.filter((item) => targetIdSet.has(item.criterionId) && !writtenRubricIds.has(item.criterionId)),
           recognitionWarnings,
         },
         files: precisionFiles,
         prepareWrittenImages,
+        cropWrittenImage: (image, box) => cropWrittenReviewImage(image, box, signal),
+        priorWrittenResult: result,
         onProgress: (message) => onStage?.(message, "review"),
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
         ...baseMetadata,
         recognitionWarnings,
       }, selectedModel);
-      precisionPassCompleted = !precisionResult.hasMissingScores;
+      precisionPassCompleted = !result.hasMissingScores;
       fractionVerificationCompleted = precisionPassCompleted && fractionCriterionIds.length > 0;
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -4390,6 +4397,33 @@ async function prepareEnhancedAnswerImages(pdfFile, { signal } = {}) {
     return files;
   } finally {
     await loadingTask.destroy();
+  }
+}
+
+async function cropWrittenReviewImage(image, box, signal) {
+  if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  if (!window.createImageBitmap) return null;
+  let bitmap;
+  const canvas = document.createElement("canvas");
+  try {
+    bitmap = await window.createImageBitmap(image);
+    const [left, top, right, bottom] = box;
+    const width = (right - left) * bitmap.width / 1000;
+    const height = (bottom - top) * bitmap.height / 1000;
+    const scale = Math.min(2, 1800 / Math.max(width, height));
+    canvas.width = Math.ceil(width * scale);
+    canvas.height = Math.ceil(height * scale);
+    const context = canvas.getContext("2d", { alpha: false });
+    context.drawImage(bitmap, left * bitmap.width / 1000, top * bitmap.height / 1000, width, height, 0, 0, canvas.width, canvas.height);
+    if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+    const blob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+    return new File([blob], "student-answer-detail.jpg", { type: "image/jpeg" });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return null;
+  } finally {
+    bitmap?.close();
+    canvas.width = canvas.height = 1;
   }
 }
 

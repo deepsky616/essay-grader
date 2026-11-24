@@ -115,6 +115,135 @@ test("written grading holds confident wrong transcriptions and unsupported quote
   assert.match(invented.result.reviewReasons.join("\n"), /독립 판독문에서 확인하지 못했습니다/);
 });
 
+test("written comparison accepts formatting variations and preserves meaningful numbers and negations", async () => {
+  const report = "공기 중에 물방울이 생겼다.";
+  const formatted = await gradeWrittenTestAnswer({ first: report, second: "공기중에 물 방울이 생겼다", answer: report, quote: "물방울이 생겼다" });
+  assert.equal(formatted.result.totalScore, 1);
+  assert.equal(formatted.result.hasMissingScores, false);
+  for (const [first, second] of [["6 3/4", "63/4"], ["물을 더 넣었다.", "물을 더 넣지 않았다."]]) {
+    const { result } = await gradeWrittenTestAnswer({ first, second, answer: first, quote: first });
+    assert.equal(result.totalScore, 0);
+    assert.equal(result.hasMissingScores, true);
+  }
+});
+
+test("only unresolved written points are sent after a corroborating focused reread", async () => {
+  const confirmed = "물이 공기 중으로 이동했다.";
+  const uncertain = "표면이 따뜻해졌다.";
+  const corrected = "표면이 차가워졌다.";
+  const firstAnswer = `${confirmed} ${uncertain}`;
+  const secondAnswer = `${confirmed} ${corrected}`;
+  const otherAnswer = "투명한 물방울이 맺혔다.";
+  const box = [125, 420, 440, 510];
+  const settings = {
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 3, student: { pageNumbers: [7, 8] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "상태 변화", scoreLevels: [{ score: 3, criterion: "모두 설명" }, { score: 0, criterion: "무응답" }] }],
+    exampleAnswers: [
+      { id: "e1", questionNumber: "1-(1)", evaluationElementIds: ["r1"], evaluationElementScores: { r1: 2 }, answerText: "참고 설명",
+        pointItems: [{ id: "p1", score: 1, criterion: "물의 이동 설명" }, { id: "p2", score: 1, criterion: "온도의 변화 설명" }] },
+      { id: "e2", questionNumber: "1-(2)", evaluationElementIds: ["r1"], evaluationElementScores: { r1: 1 }, answerText: "다른 참고 설명",
+        pointItems: [{ id: "p3", score: 1, criterion: "관찰한 물방울 설명" }] },
+    ],
+  };
+  const file = new File(["student"], "student.pdf", { type: "application/pdf" });
+  const blank = new File(["blank"], "blank.pdf", { type: "application/pdf" });
+  const files = [{ role: "studentAnswer", file }, { role: "blank", file: blank }];
+  const images = ["first", "second"].map((label) => new File([label], `${label}.jpg`, { type: "image/jpeg" }));
+  const reply = (body) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] }));
+  const evidence = (pointItemId, evidenceQuote) => ({ pointItemId, evidenceQuote, earned: true, confidence: "high" });
+  const reading = (exampleAnswerId, questionNumber, pageNumber, transcript) => ({ exampleAnswerId, questionNumber, pageNumber, transcript, sourceBox: box, status: "readable" });
+  const rubric = { questionResults: [{ criterionId: "r1", questionNumber: "1", score: 3, maxScore: 3, confidence: "high", answerReading: "" }] };
+  let firstCalls = 0;
+  const base = await AI.gradeAnswer({ apiKey: VALID_KEY, metadata: settings, files, prepareWrittenImages: async () => images,
+    fetchImpl: async (_url, options) => {
+      const parts = JSON.parse(options.body).contents[0].parts;
+      firstCalls += 1;
+      if (firstCalls < 3) {
+        if (firstCalls === 2) {
+          assert.equal(parts.filter((part) => part.inlineData?.mimeType === "image/jpeg").length, 2);
+          assert.match(parts[0].text, /"pageNumber":1/);
+          assert.match(parts[0].text, /"pageNumber":2/);
+        }
+        return reply({ readings: [reading("e1", "1-(1)", 1, firstCalls === 1 ? firstAnswer : secondAnswer),
+          reading("e2", "1-(2)", 2, otherAnswer)] });
+      }
+      assert.doesNotMatch(parts[0].text, /따뜻해졌다|차가워졌다/);
+      return reply({ ...rubric, exampleAnswerResults: [{
+        exampleAnswerId: "e1", answerReading: confirmed, pointResults: [evidence("p1", "공기 중으로 이동"), evidence("p2", "따뜻해졌다")],
+      }, { exampleAnswerId: "e2", answerReading: otherAnswer, pointResults: [evidence("p3", "물방울이 맺혔다")] }] });
+    },
+  });
+  assert.equal(firstCalls, 3);
+  assert.equal(base.totalScore, 2);
+  assert.equal(base.exampleAnswerResults[0].pointResults[0].earned, true);
+  assert.equal(base.exampleAnswerResults[0].pointResults[1].missingResult, true);
+  const runReview = async (answer) => {
+    let calls = 0;
+    const result = await AI.gradeAnswer({ apiKey: VALID_KEY, files, priorWrittenResult: base, prepareWrittenImages: async () => images,
+      metadata: { ...settings, precisionReview: true, precisionCriterionIds: ["r1"] },
+      cropWrittenImage: async (image, region) => {
+        assert.equal(image, images[0]);
+        assert.deepEqual(region, [105, 396, 460, 534]);
+        return new File(["crop"], "crop.jpg", { type: "image/jpeg" });
+      },
+      fetchImpl: async (_url, options) => {
+        const request = JSON.parse(options.body);
+        const parts = request.contents[0].parts;
+        calls += 1;
+        if (calls === 1) {
+          assert.match(parts[0].text, /"cropped":true/);
+          assert.doesNotMatch(parts[0].text, /따뜻해졌다|차가워졌다|1-\(2\)/);
+          assert.equal(parts.filter((part) => part.inlineData).length, 2);
+          return reply({ readings: [reading("e1", "1-(1)", 1, answer)] });
+        }
+        assert.match(parts[0].text, /"pointItems":\{"e1":\["p2"\]\}/);
+        return reply({ ...rubric, exampleAnswerResults: [{
+          exampleAnswerId: "e1", answerReading: secondAnswer, pointResults: [evidence("p2", "표면이 차가워졌다")],
+        }] });
+      },
+    });
+    return { result: AI.mergePrecisionGradingResult(base, result, ["r1"], settings), calls };
+  };
+  const recovered = await runReview(secondAnswer);
+  assert.equal(recovered.calls, 2);
+  assert.equal(recovered.result.totalScore, 3);
+  assert.equal(recovered.result.hasMissingScores, false);
+  assert.doesNotMatch(recovered.result.reviewReasons.join("\n"), /온도의 변화 설명.*확인 필요/);
+  assert.match(recovered.result.exampleAnswerResults[0].pointResults[1].evidence, /표면이 차가워졌다/);
+  const stillDisputed = await runReview(`${confirmed} 표면은 변화가 없었다.`);
+  assert.equal(stillDisputed.calls, 1);
+  assert.equal(stillDisputed.result.totalScore, 2);
+  assert.equal(stillDisputed.result.hasMissingScores, true);
+});
+
+test("partial table grading preserves column positions and does not merge different numbers", async () => {
+  const cells = (values) => values.map(([columnIndex, value]) => ({ columnIndex, value, confidence: "high" }));
+  const first = { status: "readable", transcript: "수박 장수 크기 1.5", tableRows: [
+    { rowIndex: 1, cells: cells([[1, "수박"], [2, "장수"]]) },
+    { rowIndex: 2, cells: cells([[1, "크기"], [2, "1.5"]]) },
+  ] };
+  const second = { status: "readable", transcript: "수박 장수 크기 15", tableRows: [
+    { rowIndex: 1, cells: cells([[1, "수박"], [2, "장수"]]) },
+    { rowIndex: 2, cells: cells([[1, "크기"], [2, "15"]]) },
+  ] };
+  const tableMetadata = (criterion) => ({
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "표 내용", scoreLevels: [{ score: 1, criterion: "정확함" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "비교 표", maxScore: 1,
+      pointItems: [{ id: "p1", score: 1, criterion }], evaluationElementIds: ["r1"] }],
+  });
+  const common = await gradeWrittenTestAnswer({ first, second, metadata: tableMetadata("수박: 장수") });
+  assert.equal(common.result.totalScore, 1);
+  assert.match(common.result.exampleAnswerResults[0].pointResults[0].evidence, /표 1행.*같은 행/);
+  const differing = await gradeWrittenTestAnswer({ first, second, metadata: tableMetadata("크기: 1.5") });
+  assert.equal(differing.result.hasMissingScores, true);
+  assert.match(differing.result.exampleAnswerResults[0].pointResults[0].evidence, /2행 2열/);
+  const shifted = { ...second, tableRows: [{ rowIndex: 1, cells: cells([[2, "수박"], [3, "장수"]]) }, second.tableRows[1]] };
+  const wrongColumn = await gradeWrittenTestAnswer({ first, second: shifted, metadata: tableMetadata("수박: 장수") });
+  assert.equal(wrongColumn.result.totalScore, 0);
+  assert.equal(wrongColumn.result.hasMissingScores, true);
+});
+
 test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {
   const uncertain = await gradeWrittenTestAnswer({ second: "천인" });
   const { result: accepted } = await gradeWrittenTestAnswer();
