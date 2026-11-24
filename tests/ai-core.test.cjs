@@ -91,6 +91,70 @@ test("written grading keeps disagreement pending on precision merge and recogniz
   assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
 });
 
+function dialectTableCell(columnIndex, columnLabel, value, confidence = "high") {
+  return { columnIndex, columnLabel, value, confidence };
+}
+
+function dialectTableSettings(criterion) {
+  return {
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "지역별 방언", scoreLevels: [{ score: 1, criterion }, { score: 0, criterion: "미충족" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "예시 표현", maxScore: 1, evaluationElementIds: ["r1"],
+      pointItems: [{ id: "p1", score: 1, criterion }] }],
+  };
+}
+
+test("table grading gives the same-row handwritten pair and the judgment as evidence", async () => {
+  const rows = [
+    { rowIndex: 1, rowLabel: "제주도", cells: [dialectTableCell(1, "방언", "혼저"), dialectTableCell(2, "표준어", "어서")] },
+    { rowIndex: 2, rowLabel: "전라도", cells: [dialectTableCell(2, "표준어", "자전거 바퀴"), dialectTableCell(1, "방언", "자장구 바쿠")] },
+  ];
+  const answer = "혼저 | 어서\n자장구 바쿠 | 자전거 바퀴";
+  const first = { status: "readable", transcript: answer, tableRows: rows };
+  const metadata = dialectTableSettings("방언과 표준어의 대응이 알맞음");
+  for (const earned of [true, false]) {
+    const { result } = await gradeWrittenTestAnswer({ first, answer, quote: "자장구 바쿠", metadata, earned });
+    const evidence = earned ? "‘자장구 바쿠’를 ‘자전거 바퀴’로 정확히 대응시킴."
+      : "‘자장구 바쿠’를 ‘자전거 바퀴’로 작성함 · 이 배점 기준 미충족";
+    assert.equal(result.totalScore, earned ? 1 : 0);
+    assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence, evidence);
+    assert.equal(result.questionResults[0].evidence, "1 · " + evidence);
+  }
+});
+
+test("table grading preserves the printed row heading and exact cell order without guessing a disputed heading", async () => {
+  const cells = [dialectTableCell(3, "사용 예", "워메 얘야 뭐시여?"), dialectTableCell(1, "방언", "워메"), dialectTableCell(2, "표준어", "어머")];
+  const answer = "워메 | 어머 | 워메 얘야 뭐시여?";
+  const first = { status: "readable", transcript: answer, tableRows: [{ rowIndex: 2, rowLabel: "전라도", cells }] };
+  const metadata = dialectTableSettings("전라도의 방언과 표준어, 사용 예를 알맞게 씀");
+  const { result } = await gradeWrittenTestAnswer({ first, answer, quote: "워메", metadata });
+  assert.equal(result.independentTextReadings[0].transcript, answer);
+  assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence, "전라도 - 워메 - 어머 - 워메 얘야 뭐시여? · 채점 기준 충족");
+  const second = { ...first, tableRows: [{ rowIndex: 2, rowLabel: "충청도", cells }] };
+  const { result: disputed } = await gradeWrittenTestAnswer({ first, second, answer, quote: "워메", metadata });
+  assert.equal(disputed.totalScore, 1);
+  assert.equal(disputed.exampleAnswerResults[0].pointResults[0].evidence, "표 2행 - 워메 - 어머 - 워메 얘야 뭐시여? · 채점 기준 충족");
+});
+
+test("table grading masks uncertain cells in both point and rubric evidence", () => {
+  const metadata = dialectTableSettings("전라도의 방언과 표준어가 알맞음");
+  const result = AI.normalizeGradingResult({
+    totalScore: 0,
+    questionResults: [{ criterionId: "r1", questionNumber: "1", score: 0, confidence: "high",
+      evidence: "전라도 행의 모든 셀 내용이 적절함",
+      tableRows: [{ rowIndex: 1, rowLabel: "전라도", cells: [
+        dialectTableCell(1, "방언", "워메"), dialectTableCell(2, "표준어", "모델 추측", "low"),
+      ] }],
+    }],
+    exampleAnswerResults: [{ exampleAnswerId: "e1", pointResults: [{ pointItemId: "p1", earned: false, confidence: "high",
+      evidence: "전라도 행의 모든 셀 내용이 적절함", evidenceQuote: "모델 추측" }] }],
+  }, metadata);
+  const evidence = "전라도 - 워메 - [판독 확인 필요] · 일부 칸 판독 확인 필요";
+  assert.equal(result.totalScore, 0);
+  assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence, evidence);
+  assert.equal(result.questionResults[0].evidence, evidence);
+});
+
 test("evaluation examples verify fraction equality and the separately entered answer", () => {
   assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "27/4 = 6과 3/4", answerText: "6 3/4" }), []);
   assert.deepEqual(AI.exampleFractionEquationIssues({ mathNotation: "12 × 2/9 = 8/3 = 2와 2/9" }), [
