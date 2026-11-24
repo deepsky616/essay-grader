@@ -368,7 +368,8 @@ test("individual AI regrading reports real phases, completion, and a failed phas
     loadGeminiApiKey: async () => "key", getSetting: async (name) => name === "model" ? "test-model" : { generationVerified: true, model: "test-model" },
     getPdfPageCount: async () => 1, asFile: (file) => file, getCourse: async () => course,
     showToast: (message) => toasts.push(message), friendlyError: (error) => error.message,
-    putCourse: async (value) => { stored = value; events.push("save"); },
+    withSelectedAssessment: (value) => value,
+    saveAssessmentWork: async (value) => { stored = value; events.push("save"); },
     gradeStudentAssignment: async ({ onStage }) => {
       onStage("답안 준비 확인", "prepare");
       onStage("1차 채점 1/2", "primary");
@@ -452,10 +453,10 @@ test("reset and AI restore remain drafts, and the explicit save confirms the tea
   assert.match(restore, /initialAiQuestionRows/);
   for (const draft of [reset, restore]) {
     assert.match(draft, /markReviewDraft/);
-    assert.doesNotMatch(draft, /saveCurrent\(|putCourse\(/);
+    assert.doesNotMatch(draft, /saveCurrent\(|saveAssessmentWork\(/);
   }
   assert.match(schoolSource, /saveReviewButton\.addEventListener\("click", async \(\) => \{\s*if \(await saveCurrent\(\)\)/);
-  assert.match(schoolSource, /teacherConfirmed: true,[^]*await putCourse\([^]*dismissTeacherReviewAlert\(\)/);
+  assert.match(schoolSource, /teacherConfirmed: true,[^]*await saveAssessmentWork\([^]*dismissTeacherReviewAlert\(\)/);
 });
 
 test("teacher score snapshots keep AI results available for restoration after saving zero", () => {

@@ -518,6 +518,48 @@ test("submission selection updates in place without jumping the student list to 
   assert.doesNotMatch(saveSource, /renderCourse\(course\.id, "submissions"\)/);
 });
 
+test("assessment selection preserves legacy answers and keeps each design's work separate on later saves", async () => {
+  const selection = source.slice(source.indexOf("function selectedAssessmentId"), source.indexOf("function isAssessmentBusy"));
+  const persistence = source.slice(source.indexOf("function saveAssessmentWork"), source.indexOf("function deleteCourse"));
+  const designs = [{ id: "b", updatedAt: "rubric-b" }, { id: "a", updatedAt: "rubric-a" }];
+  const submissionA = { designId: "a", updatedAt: "scan-a", pageAssignments: [{ studentId: "s4", pageNumbers: [4] }] };
+  const gradingA = { results: [{ studentId: "s4", teacherTotal: 3 }] };
+  let stored = { id: "course", grade: "5", designs, submission: submissionA, grading: gradingA };
+  const updateStoredCourse = async (id, update) => {
+    assert.equal(id, stored.id);
+    stored = update(stored);
+    return stored;
+  };
+  const { selectedAssessmentId, withSelectedAssessment, saveAssessmentWork } = new Function("updateStoredCourse",
+    selection + persistence + "\nreturn { selectedAssessmentId, withSelectedAssessment, saveAssessmentWork };")(updateStoredCourse);
+
+  assert.equal(selectedAssessmentId(stored), "a");
+  const openA = withSelectedAssessment(stored);
+  assert.equal(openA.submission, submissionA);
+  assert.equal(openA.grading, gradingA);
+  stored = withSelectedAssessment(stored, "b");
+  assert.equal(stored.submission, null);
+  assert.equal(stored.grading, null);
+  const submissionB = { designId: "b", updatedAt: "scan-b", pageAssignments: [{ studentId: "s4", pageNumbers: [8, 9] }] };
+  const gradingB = { designId: "b", results: [{ studentId: "s4", teacherTotal: 8 }] };
+  await saveAssessmentWork({ ...stored, submission: submissionB, grading: gradingB }, null);
+
+  const revisedA = { designId: "a", results: [{ studentId: "s4", teacherTotal: 4 }] };
+  await saveAssessmentWork({ ...openA, grading: revisedA });
+  assert.equal(stored.selectedDesignId, "b");
+  assert.equal(stored.submission, submissionB);
+  assert.equal(stored.grading, gradingB);
+  stored = withSelectedAssessment(stored, "a");
+  assert.equal(stored.submission, submissionA);
+  assert.equal(stored.grading, revisedA);
+  assert.deepEqual(stored.assessmentWorkByDesign.b, { submission: submissionB, grading: gradingB });
+
+  await saveAssessmentWork({ ...stored, submission: { ...submissionA, includedStudentIds: [] }, grading: gradingA },
+    submissionA, { keepGrading: true });
+  assert.equal(stored.grading, revisedA);
+  await assert.rejects(saveAssessmentWork({ ...stored, submission: submissionA }, { ...submissionA, updatedAt: "obsolete" }), /과제물이 바뀌었습니다/);
+});
+
 test("submission management can preview each student's assigned PDF at full screen", () => {
   assert.match(source, /data-preview-submission="\$\{escapeHtml\(student\.id\)\}"/);
   assert.match(source, /data-expand-submission-preview>전체 화면으로 크게 보기<\/button>/);
