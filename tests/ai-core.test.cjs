@@ -192,7 +192,7 @@ test("evaluation design keeps independent readings and flags only conflicting or
       requests += 1;
       if (requests === 2) {
         const request = JSON.parse(options.body);
-        assert.match(request.contents[0].parts[0].text, /1차에서 찾은 문항 번호: \["1-\(1\)","1-\(4\)","2"\]/);
+        assert.match(request.contents[0].parts[0].text, /2차 검증 대상 문항 번호: \["1-\(1\)","1-\(4\)","2"\]/);
         assert.doesNotMatch(request.contents[0].parts[0].text, /27\/4|12 × 2\/9/);
       }
       const text = JSON.stringify({ exampleAnswers: requests === 1 ? first : second, notes: [] });
@@ -1690,6 +1690,93 @@ test("extractEvaluationDocument can fill achievement, rubric, and example sectio
   assert.equal(result.exampleAnswers[0].mathNotation, "1-(1) 9/16 × 12 = 27/4 = 6 3/4");
   assert.equal(result.exampleAnswers[0].mathLines[0].fractions[1].wholeNumber, "6");
   assert.match(result.notes.join(" "), /고해상도 이미지로 2차 검증/);
+});
+
+async function extractDesignWithMockedReadings(first, second, { enlarged = true } = {}) {
+  const file = new File(["document"], enlarged ? "평가기준안.pdf" : "평가기준안.jpg",
+    { type: enlarged ? "application/pdf" : "image/jpeg" });
+  const visionFiles = enlarged ? [new File(["crop"], "원본확대.jpg", { type: "image/jpeg" })] : [];
+  const requests = [];
+  const progress = [];
+  const result = await AI.extractEvaluationDocument({
+    apiKey: VALID_KEY, kind: "design", file, visionFiles,
+    onProgress: (event) => progress.push(event),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      const extracted = requests.length === 1 ? first : second;
+      const text = JSON.stringify({ taskName: "자료를 비교하여 설명하기", exampleAnswers: extracted, notes: [] });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+    },
+  });
+  return { result, requests, progress };
+}
+
+test("combined design import skips the second request for readable prose and table answers with no formulas", async () => {
+  const first = [
+    { questionNumber: "1", answerText: "전라도 방언을 표준어에 대응시킴", mathNotation: "", readingUncertain: false },
+    { questionNumber: "2", visualDescription: "작품의 특징 2가지. 관람 기록은 2026/11/24.", readingUncertain: false },
+  ];
+  const { result, requests, progress } = await extractDesignWithMockedReadings(first);
+  assert.equal(requests.length, 1);
+  const schema = requests[0].generationConfig.responseSchema.properties.exampleAnswers.items;
+  assert.ok(schema.required.includes("readingUncertain"));
+  assert.ok(progress.some(({ stage, exampleCount }) => stage === "primary-complete" && exampleCount === 0));
+  assert.ok(progress.every(({ stage }) => !stage.startsWith("fraction-")));
+  assert.equal(result.taskName, "자료를 비교하여 설명하기");
+  assert.deepEqual(result.exampleAnswers, first);
+});
+
+test("combined design import verifies formulas and uncertain prose from the original photo, preserving other answers", async () => {
+  const first = [
+    { questionNumber: "1. (1)", maxScore: 2, answerText: "의미를 설명함", mathNotation: "", readingUncertain: false },
+    { questionNumber: "(2)", answerText: "물의 양이 전체의 ½", mathNotation: "", readingUncertain: false },
+    { questionNumber: "2", visualDescription: "속력 = 거리 ÷ 시간", readingUncertain: false },
+    { questionNumber: "3", answerText: "소재는 …", readingUncertain: true },
+  ];
+  const second = [
+    { questionNumber: "1-(1)", answerText: "다른 문항에서 가져온 내용", mathNotation: "" },
+    { questionNumber: "1-(2)", mathNotation: "1/2", readingUncertain: false },
+    { questionNumber: "2", mathNotation: "속력 = 거리 ÷ 시간", readingUncertain: false },
+    { questionNumber: "3", answerText: "소재는 수박이다.", readingUncertain: false },
+  ];
+  const { result, requests, progress } = await extractDesignWithMockedReadings(first, second, { enlarged: false });
+  assert.equal(requests.length, 2);
+  const parts = requests[1].contents[0].parts;
+  assert.match(parts[0].text, /2차 검증 대상 문항 번호: \["1-\(2\)","2","3"\]/);
+  assert.match(parts[0].text, /목록에 있는 문항만 판독하고 반환/);
+  assert.ok(parts.some((part) => part.inlineData?.mimeType === "image/jpeg"));
+  assert.ok(progress.some(({ stage, exampleCount }) => stage === "fraction-verification" && exampleCount === 3));
+  assert.deepEqual(result.exampleAnswers[0], { ...first[0], questionNumber: "1-(1)" });
+  assert.equal(result.exampleAnswers[1].mathNotation, "1/2");
+  assert.equal(result.exampleAnswers[2].mathNotation, "속력 = 거리 ÷ 시간");
+  assert.equal(result.exampleAnswers[3].answerText, "소재는 수박이다.");
+  assert.equal(result.exampleAnswers[3].mathReview, undefined);
+});
+
+test("combined design import can split a selected parent and flags selected answers it still cannot verify", async () => {
+  const first = [
+    { questionNumber: "1", answerText: "소문항 답을 합쳐 읽음", readingUncertain: true },
+    { questionNumber: "1-(1)", answerText: "확인된 표 답안", readingUncertain: false },
+    { questionNumber: "2", mathNotation: "3 × 4 = 12", answerText: "12" },
+    { questionNumber: "3", answerText: "흐릿한 글", readingUncertain: true },
+  ];
+  const second = [
+    { questionNumber: "1", answerText: "합쳐진 답" },
+    { questionNumber: "1-(1)", answerText: "덮어쓰면 안 되는 답" },
+    { questionNumber: "1-(2)", answerText: "추가로 확인한 하위 답" },
+    { questionNumber: "3", answerText: "", mathNotation: "", readingUncertain: true },
+  ];
+  const { result, requests, progress } = await extractDesignWithMockedReadings(first, second);
+  assert.match(requests[1].contents[0].parts[0].text, /2차 검증 대상 문항 번호: \["1","2","3"\]/);
+  const items = new Map(result.exampleAnswers.map((item) => [item.questionNumber, item]));
+  assert.equal(items.has("1"), false);
+  assert.equal(items.get("1-(1)").answerText, "확인된 표 답안");
+  assert.equal(items.get("1-(2)").answerText, "추가로 확인한 하위 답");
+  assert.equal(items.get("2").mathNotation, "3 × 4 = 12");
+  assert.match(items.get("2").mathReview.reasons[0], /확인하지 못했습니다/);
+  assert.equal(items.get("3").answerText, "흐릿한 글");
+  assert.match(items.get("3").mathReview.reasons[0], /확실히 읽지 못했습니다/);
+  assert.equal(progress.at(-1).stage, "fraction-warning");
 });
 
 test("generateRubricCriteria requests the exact teacher-selected band scores", async () => {

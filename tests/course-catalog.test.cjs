@@ -116,7 +116,8 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.match(source, /ChaejeomAI\.generateRubricCriteria/);
   assert.match(source, /data-extract-document="design">AI로 1~3 자동 입력/);
   assert.match(source, /prepareEvaluationReferenceImages\(file\)/);
-  assert.match(source, /분수는 2차 검증 후 자동 입력/);
+  assert.match(source, /평가기준안 한 번에 자동 입력[\s\S]*?평가\(과제\)명<input name="taskName"[^>]*><\/label>\s*<div class="achievement-threshold-placement">/);
+  assert.match(source, /if \(result\.taskName\) form\.elements\.taskName\.value = String\(result\.taskName\)\.trim\(\)/);
   assert.match(source, /page\.getTextContent\(\)/);
   assert.match(source, /pdfjsLib\?\.Util\?\.transform/);
   assert.match(source, /문제-\$\{anchor\.number\}-예시답안/);
@@ -366,6 +367,7 @@ test("assessment document AI input shows a visible five-stage progress card", ()
   assert.match(source, /작은 수식·분수 고해상도 확대 중/);
   assert.match(source, /AI가 문서 내용을 구조화하는 중/);
   assert.match(source, /분자·분모와 계산식 2차 검증 중/);
+  assert.match(source, /2차 검증 대상이 없어 1차 분석 결과를 입력했습니다/);
   assert.match(source, /분석 결과를 화면에 입력하는 중/);
   assert.match(source, /status: "complete"/);
   assert.match(source, /status: "error"/);
