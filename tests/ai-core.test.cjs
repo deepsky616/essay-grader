@@ -120,6 +120,10 @@ test("table grading gives the same-row handwritten pair and the judgment as evid
     assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence, evidence);
     assert.equal(result.questionResults[0].evidence, "1 · " + evidence);
   }
+  const scoped = dialectTableSettings("제주도 행에서 방언과 표준어의 대응이 알맞음");
+  const { result } = await gradeWrittenTestAnswer({ first, answer, quote: "자장구 바쿠", metadata: scoped });
+  assert.equal(result.exampleAnswerResults[0].pointResults[0].evidence,
+    "제주도 - 혼저 - 어서 · 채점 근거가 다른 행에 있어 판독 확인 필요");
 });
 
 test("table grading preserves the printed row heading and exact cell order without guessing a disputed heading", async () => {

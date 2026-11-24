@@ -2581,13 +2581,14 @@ ${JSON.stringify(roster)}
       : rowNumbers.size ? rows.filter((row) => rowNumbers.has(row.rowIndex)) : namedRows.length ? namedRows : rows;
     if (!scopedRows.length) return "해당 행 판독 확인 필요";
     const literal = writtenLiteral(quote).replace(/^[‘“"'「]+|[’”"'」]+$/gu, "");
-    const quotedRows = literal ? scopedRows.filter((row) => {
+    const quotedRows = literal && !matchedRow ? rows.filter((row) => {
       const readings = row.cells.map(tableCellEvidence).filter(Boolean).map(writtenLiteral);
       return readings.includes(literal) || readings.join(" | ") === literal || readings.join(" ") === literal;
     }) : [];
-    const selected = quotedRows.length === 1 && !matchedRow && !rowNumbers.size && !namedRows.length ? quotedRows : scopedRows;
+    const differentRow = quotedRows.length > 0 && !quotedRows.some((row) => scopedRows.includes(row));
+    const selected = quotedRows.length === 1 && !rowNumbers.size && !namedRows.length ? quotedRows : scopedRows;
     const hasUnclearCell = selected.some((row) => row.cells.some((cell) => tableCellEvidence(cell) === null));
-    if ((outcome === "earned" || outcome === "unearned") && selected.length === 1 && !hasUnclearCell
+    if (!differentRow && (outcome === "earned" || outcome === "unearned") && selected.length === 1 && !hasUnclearCell
       && /방언|사투리/u.test(criterion) && /표준어/u.test(criterion) && /대응|짝|알맞|바꾸|옮|고치|연결/u.test(criterion)) {
       const { cells } = selected[0];
       const [dialect, standard] = cells;
@@ -2604,7 +2605,7 @@ ${JSON.stringify(roster)}
         return `‘${dialect.value}’${objectParticle} ‘${standard.value}’${directionParticle} ${judgment}`;
       }
     }
-    const reason = outcome === "review" ? "채점 판독 확인 필요"
+    const reason = differentRow ? "채점 근거가 다른 행에 있어 판독 확인 필요" : outcome === "review" ? "채점 판독 확인 필요"
       : hasUnclearCell ? "일부 칸 판독 확인 필요"
         : outcome === "earned" ? "채점 기준 충족" : outcome === "partial" ? "채점 기준 일부 충족" : "채점 기준 미충족";
     const readings = selected.map((row) => [
