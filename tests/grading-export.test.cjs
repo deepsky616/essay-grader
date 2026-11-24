@@ -210,8 +210,7 @@ test("grading detail source exposes rubric score buttons and the requested revie
 
 test("student question evidence shows example-answer point attainment", () => {
   const styles = fs.readFileSync(path.join(__dirname, "..", "web", "styles.css"), "utf8");
-  assert.match(schoolSource, /function exampleAnswerPointStatus\(score, maxScore, missing = false, writtenPending = false\)/);
-  assert.match(schoolSource, /if \(missing && writtenPending\).*판독 확인 필요/);
+  assert.match(schoolSource, /if \(missing && writtenPending\).*reviewKind === "score" \? "배점 확인 필요" : "판독 확인 필요"/);
   assert.match(schoolSource, /문제·배점 항목별 획득표/);
   assert.match(schoolSource, /pointResults/);
   assert.match(schoolSource, /3 문제별 예시답안 기준/);

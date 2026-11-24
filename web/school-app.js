@@ -3838,6 +3838,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   let desiredParallelism = Math.min(GRADING_PARALLELISM, pendingAssignments.length);
   activeGradingRun.parallelism = desiredParallelism;
   const redactedStudentFileCache = new Map();
+  const tableReferenceCache = new Map();
   let saveQueue = Promise.resolve();
   const queueCourseSave = () => {
     const snapshot = {
@@ -3890,6 +3891,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           blankFile,
           privacySession,
           redactedStudentFileCache,
+          tableReferenceCache,
           signal: controller.signal,
           onStage: (stage) => {
             activeStages.set(workerIndex, { label: currentLabel, stage });
@@ -4062,7 +4064,8 @@ function preliminaryReadingsFromResult(result) {
   }));
 }
 
-async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null, signal, onStage }) {
+async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null,
+  tableReferenceCache = new Map(), signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
   if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
@@ -4082,10 +4085,13 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   } else onStage?.("신원 삭제된 안전한 답안 PDF 재사용 중", "prepare");
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
   const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
+  const attachedExamples = (design.exampleAnswers || []).flatMap((item, index) => item.file
+    ? [{ role: "example", file: asFile(item.file), exampleAnswerId: item.id || `example-${index + 1}` }] : []);
+  const sharedExample = design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : [];
   const referenceFiles = [
-    ...(!structuredExamples.length && design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : []),
-    ...(design.exampleAnswers || []).filter((item) => item.file).map((item) => ({ role: "example", file: asFile(item.file) })),
+    ...(!structuredExamples.length ? sharedExample : []), ...attachedExamples,
   ];
+  const tableReferenceFiles = [...sharedExample, ...attachedExamples];
   const recognitionWarnings = [];
   const firstPassFiles = [
     ...referenceFiles,
@@ -4107,6 +4113,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     recognitionWarnings,
     requireBlankComparison: true,
     verifyWrittenText: true,
+    compareTableCells: true,
     identityRedacted: true,
     student: { ...StudentWorkflow.createAnonymousStudent(student, anonymousIndex), pageNumbers: assignment.pageNumbers, matchConfidence: "high" },
   };
@@ -4117,6 +4124,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     signal,
     metadata: baseMetadata,
     files: firstPassFiles,
+    tableReferenceFiles,
+    tableReferenceCache,
     onProgress: (message) => onStage?.(message, "primary"),
   });
   let enhancedFiles = [];
@@ -4204,6 +4213,8 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
           recognitionWarnings,
         },
         files: precisionFiles,
+        tableReferenceFiles,
+        tableReferenceCache,
         onProgress: (message) => onStage?.(message, "review"),
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
@@ -4879,8 +4890,8 @@ function nearestScoreChoice(value, choices) {
   return choices.reduce((nearest, candidate) => Math.abs(candidate - numeric) < Math.abs(nearest - numeric) ? candidate : nearest, choices[0]);
 }
 
-function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPending = false) {
-  if (missing && writtenPending) return { state: "unlinked", label: "판독 확인 필요" };
+function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPending = false, reviewKind = "") {
+  if (missing && writtenPending) return { state: "unlinked", label: reviewKind === "score" ? "배점 확인 필요" : "판독 확인 필요" };
   if (missing) return { state: "unlinked", label: "세부 채점 없음" };
   const earned = Math.max(0, Number(score || 0));
   const maximum = Math.max(0, Number(maxScore || 0));
@@ -5054,6 +5065,7 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         confidence: ["high", "medium", "low"].includes(storedPoint?.confidence) ? storedPoint.confidence : "low",
         missingResult: !storedPoint || Boolean(storedPoint.missingResult),
         writtenPending: Boolean(storedPoint?.writtenPending),
+        reviewKind: storedPoint?.reviewKind,
         teacherAdjusted: Boolean(storedPoint?.teacherAdjusted),
       };
     });
@@ -5067,6 +5079,7 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       confidence: ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low",
       missingResult: !item || Boolean(item.missingResult),
       teacherAdjusted: Boolean(item?.teacherAdjusted),
+      tableEvidence: Array.isArray(item?.tableEvidence) ? item.tableEvidence : [],
       pointResults,
       evaluationElementIds: Array.isArray(example.evaluationElementIds) ? example.evaluationElementIds.map(String) : [],
       evaluationElementScores: example.evaluationElementScores && typeof example.evaluationElementScores === "object" && !Array.isArray(example.evaluationElementScores)
@@ -5074,6 +5087,25 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         : {},
     };
   });
+}
+
+function renderTableCellEvidence(questionNumber, cells) {
+  if (!cells?.length) return "";
+  return `<section class="table-cell-evidence"><table>
+    <caption>문제 ${escapeHtml(questionNumber)} · 표의 행·열별 채점 근거</caption>
+    <thead><tr><th scope="col">행·열</th><th scope="col">학생 답안</th><th scope="col">예시답안</th><th scope="col">확인 상태</th></tr></thead>
+    <tbody>${cells.map((cell) => {
+      const status = cell.readingStatus === "unclear" ? "판독 확인 필요" : cell.readingStatus === "blank" ? "미응답"
+        : cell.readingStatus === "unlocated" ? "답안 위치 확인 필요" : cell.exampleText == null ? "예시답안 확인 필요"
+          : cell.matchesExample ? "예시와 일치" : "예시와 표기 다름";
+      const student = cell.studentText || (cell.readingStatus === "blank" ? "빈칸" : "—");
+      return `<tr data-table-cell-evidence data-row="${escapeHtml(cell.rowIndex)}" data-column="${escapeHtml(cell.columnIndex)}">
+        <th scope="row">${escapeHtml(cell.rowIndex)}행 ${escapeHtml(cell.columnIndex)}열${cell.columnLabel ? `<small>${escapeHtml(cell.columnLabel)}</small>` : ""}</th>
+        <td>${escapeHtml(student)}${cell.studentText && cell.readingStatus === "unclear" ? "<small>읽힌 부분</small>" : ""}</td>
+        <td>${escapeHtml(cell.exampleText ?? "—")}</td><td>${escapeHtml(status)}</td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table></section>`;
 }
 
 function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
@@ -5104,11 +5136,12 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th scope="col">문제·배점 항목</th><th scope="col">획득 점수 / 배점</th><th scope="col">채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const needsWrittenReview = item.writtenPending && item.missingResult;
-        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending);
+        const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending, item.reviewKind);
         const confidence = ["high", "medium", "low"].includes(item.confidence) ? item.confidence : "low";
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
         return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
       }).join("") || `<tr><td colspan="3" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
+      ${subQuestionRows.map(({ item }) => renderTableCellEvidence(item.questionNumber, item.tableEvidence)).join("")}
     </section>`;
   }).join("");
   const rubricSubtotal = rows.reduce((sum, item, index) => sum + Number(teacherScores[index] ?? item.score ?? 0), 0);
@@ -5318,7 +5351,7 @@ async function openStudentResult(course, targetStudents, studentId) {
       select.value = target.missingResult && target.writtenPending ? ""
         : String(nearestScoreChoice(target.awardedScore || 0, pointScoreChoices(target.maxScore, target.awardedScore)));
     }
-    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult, target.writtenPending);
+    const status = exampleAnswerPointStatus(target.awardedScore, target.maxScore, target.missingResult, target.writtenPending, target.reviewKind);
     const statusLabel = row.querySelector("[data-point-status]");
     if (statusLabel) {
       statusLabel.textContent = status.label;
@@ -5444,7 +5477,7 @@ async function openStudentResult(course, targetStudents, studentId) {
     const pendingScore = pointScoreSelects.find((select) =>
       pointTarget(Number(select.dataset.exampleIndex), Number(select.dataset.pointIndex))?.writtenPending && select.value === "");
     if (pendingScore) {
-      showToast("‘판독 확인 필요’로 표시된 답안을 확인하고 해당 배점을 선택해 주세요.");
+      showToast("확인이 필요한 답안의 근거를 확인한 뒤 해당 배점을 선택해 주세요.");
       pendingScore.focus();
       return false;
     }
