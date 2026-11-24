@@ -4914,9 +4914,10 @@ function teacherPointEvidenceText(point, awardedScore) {
   const score = Math.max(0, Number(awardedScore || 0));
   const maximum = Math.max(0, Number(point?.maxScore || 0));
   const criterion = String(point?.criterion || "배점 항목").trim();
-  if (score >= maximum - 0.001 && maximum > 0) return `교사 수정: ‘${criterion}’ 항목을 충족하여 ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
-  if (score > 0) return `교사 수정: ‘${criterion}’ 항목을 일부 충족하여 ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
-  return `교사 수정: ‘${criterion}’ 항목의 근거가 충분하지 않아 ${formatScore(maximum)}점 중 0점으로 확정했습니다.`;
+  const decision = score >= maximum - 0.001 && maximum > 0 ? "항목을 충족하여"
+    : score > 0 ? "항목을 일부 충족하여" : "항목의 근거가 충분하지 않아";
+  const evidence = `교사 수정: ‘${criterion}’ ${decision} ${formatScore(maximum)}점 중 ${formatScore(score)}점으로 확정했습니다.`;
+  return point?.tablePointEvidence ? `${evidence}\n\nAI가 확인한 글씨와 예시\n${point.tablePointEvidence}` : evidence;
 }
 
 function refreshExampleAnswerScore(exampleRow) {
@@ -5062,6 +5063,7 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         maxScore: point.score,
         earned: storedPoint ? Boolean(storedPoint.earned) : false,
         evidence: storedPoint?.evidence || "기존 결과에는 이 배점 항목의 채점 근거가 없습니다. AI 채점을 다시 실행해 주세요.",
+        tablePointEvidence: storedPoint?.tablePointEvidence || (storedPoint?.evidenceCells?.length ? storedPoint.evidence : ""),
         confidence: ["high", "medium", "low"].includes(storedPoint?.confidence) ? storedPoint.confidence : "low",
         missingResult: !storedPoint || Boolean(storedPoint.missingResult),
         writtenPending: Boolean(storedPoint?.writtenPending),
@@ -5079,7 +5081,6 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
       confidence: ["high", "medium", "low"].includes(item?.confidence) ? item.confidence : "low",
       missingResult: !item || Boolean(item.missingResult),
       teacherAdjusted: Boolean(item?.teacherAdjusted),
-      tableEvidence: Array.isArray(item?.tableEvidence) ? item.tableEvidence : [],
       pointResults,
       evaluationElementIds: Array.isArray(example.evaluationElementIds) ? example.evaluationElementIds.map(String) : [],
       evaluationElementScores: example.evaluationElementScores && typeof example.evaluationElementScores === "object" && !Array.isArray(example.evaluationElementScores)
@@ -5087,25 +5088,6 @@ function resultExampleAnswerRows(result, design, includeTeacherEdits = true) {
         : {},
     };
   });
-}
-
-function renderTableCellEvidence(questionNumber, cells) {
-  if (!cells?.length) return "";
-  return `<section class="table-cell-evidence"><table>
-    <caption>문제 ${escapeHtml(questionNumber)} · 표의 행·열별 채점 근거</caption>
-    <thead><tr><th scope="col">행·열</th><th scope="col">학생 답안</th><th scope="col">예시답안</th><th scope="col">확인 상태</th></tr></thead>
-    <tbody>${cells.map((cell) => {
-      const status = cell.readingStatus === "unclear" ? "판독 확인 필요" : cell.readingStatus === "blank" ? "미응답"
-        : cell.readingStatus === "unlocated" ? "답안 위치 확인 필요" : cell.exampleText == null ? "예시답안 확인 필요"
-          : cell.matchesExample ? "예시와 일치" : "예시와 표기 다름";
-      const student = cell.studentText || (cell.readingStatus === "blank" ? "빈칸" : "—");
-      return `<tr data-table-cell-evidence data-row="${escapeHtml(cell.rowIndex)}" data-column="${escapeHtml(cell.columnIndex)}">
-        <th scope="row">${escapeHtml(cell.rowIndex)}행 ${escapeHtml(cell.columnIndex)}열${cell.columnLabel ? `<small>${escapeHtml(cell.columnLabel)}</small>` : ""}</th>
-        <td>${escapeHtml(student)}${cell.studentText && cell.readingStatus === "unclear" ? "<small>읽힌 부분</small>" : ""}</td>
-        <td>${escapeHtml(cell.exampleText ?? "—")}</td><td>${escapeHtml(status)}</td>
-      </tr>`;
-    }).join("")}</tbody>
-  </table></section>`;
 }
 
 function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
@@ -5141,7 +5123,6 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
         const scoreChoices = pointScoreChoices(item.maxScore, item.awardedScore);
         return `<tr data-example-point-row data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}"><th scope="row">${escapeHtml(item.pointLabel)}${item.criterion ? `<small>${escapeHtml(item.criterion)}</small>` : ""}</th><td><label class="example-point-score-edit"><select data-example-point-score data-example-index="${item.exampleIndex}" data-point-index="${item.pointIndex}" aria-label="${escapeHtml(item.pointLabel)} 획득점수">${item.writtenPending ? `<option value="" disabled ${needsWrittenReview ? "selected" : ""}>미확정</option>` : ""}${scoreChoices.map((score) => `<option value="${score}" ${!needsWrittenReview && Math.abs(score - Number(item.awardedScore || 0)) < 0.001 ? "selected" : ""}>${formatScore(score)}</option>`).join("")}</select><strong>/ ${formatScore(item.maxScore)}</strong></label><em class="example-point-status is-${pointStatus.state}" data-point-status>${pointStatus.label}</em></td><td><p data-point-evidence>${escapeHtml(item.evidence)}</p><small class="confidence-badge confidence-${confidence}" data-point-confidence>확신도 ${confidence}</small></td></tr>`;
       }).join("") || `<tr><td colspan="3" class="example-point-empty">3 문제별 예시답안에 연결된 배점 항목이 없습니다.</td></tr>`}</tbody></table></div>
-      ${subQuestionRows.map(({ item }) => renderTableCellEvidence(item.questionNumber, item.tableEvidence)).join("")}
     </section>`;
   }).join("");
   const rubricSubtotal = rows.reduce((sum, item, index) => sum + Number(teacherScores[index] ?? item.score ?? 0), 0);
