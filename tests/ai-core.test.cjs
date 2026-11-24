@@ -8,9 +8,12 @@ const AI = require("../web/ai-core.js");
 
 const VALID_KEY = "AIza-test-key-123456789012345";
 
-async function gradeWrittenTestAnswer({ first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata, prepareWrittenSources, readingCount = 2 } = {}) {
+async function gradeWrittenTestAnswer({
+  first = "상민", second = first, answer = "상민", quote = answer, earned = true, metadata,
+  pageNumbers = [7], prepareWrittenImages, repairMissingPoint = false,
+} = {}) {
   const settings = metadata || {
-    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [7] },
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers },
     rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }, { score: 0, criterion: "오답 또는 미응답" }] }],
     exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "상민", maxScore: 1, evaluationElementIds: ["r1"], evaluationElementScores: { r1: 1 },
       pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
@@ -21,7 +24,7 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
   const result = await AI.gradeAnswer({
     apiKey: VALID_KEY,
     metadata: settings,
-    prepareWrittenSources,
+    prepareWrittenImages,
     files: [
       { role: "studentAnswer", file: new File(["answer"], "student.pdf", { type: "application/pdf" }) },
       { role: "blank", file: new File(["blank"], "blank.pdf", { type: "application/pdf" }) },
@@ -29,14 +32,17 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
     ],
     fetchImpl: async (_url, options) => {
       calls += 1;
-      const parts = JSON.parse(options.body).contents[0].parts;
-      if (calls <= readingCount) {
+      const request = JSON.parse(options.body);
+      const parts = request.contents[0].parts;
+      if (calls <= 2) {
         assert.match(parts[0].text, /학생 답안의 글자 전사만/);
         assert.doesNotMatch(parts[0].text, /상민|세금|신분 용어/);
         assert.equal(parts.filter((part) => part.inlineData).length, 2);
-        if (calls === 2 && prepareWrittenSources) {
-          assert.match(parts[0].text, /문제별로 짝지은 두 확대 이미지/);
-          assert.ok(parts.filter((part) => part.inlineData).every((part) => part.inlineData.mimeType === "image/jpeg"));
+        if (prepareWrittenImages && calls === 2) {
+          assert.match(parts[0].text, /학생 답안 이미지는 원본 PDF의 2쪽만/);
+          const attachments = parts.filter((part) => part.inlineData).map((part) => part.inlineData);
+          assert.deepEqual(attachments.map((part) => part.mimeType), ["application/pdf", "image/jpeg"]);
+          assert.equal(Buffer.from(attachments[1].data, "base64").toString(), "second answer image");
         }
         const value = calls === 1 ? first : second;
         return response({ readings: [{
@@ -45,15 +51,20 @@ async function gradeWrittenTestAnswer({ first = "상민", second = first, answer
         }] });
       }
       assert.match(parts[0].text, /independentTextReadings/);
+      if (repairMissingPoint && calls === 4) {
+        const pointSchema = request.generationConfig.responseSchema.properties.exampleAnswerResults.items.properties.pointResults.items;
+        assert.ok(pointSchema.required.includes("evidenceQuote"));
+        assert.equal(pointSchema.properties.evidenceQuote.type, "string");
+      }
       return response({
         questionResults: [{ criterionId: "r1", questionNumber: "1", evaluationElement: "신분 용어", answerReading: answer, score: earned ? 1 : 0, maxScore: 1, confidence: "high", evidence: narrative, feedback: narrative }],
-        exampleAnswerResults: [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
+        exampleAnswerResults: repairMissingPoint && calls === 3 ? [] : [{ exampleAnswerId: "e1", questionNumber: "1", answerReading: answer, awardedScore: earned ? 1 : 0, maxScore: 1, confidence: "high",
           pointResults: [{ pointItemId: "p1", earned, awardedScore: earned ? 1 : 0, maxScore: 1, evidenceQuote: quote, confidence: "high", evidence: narrative }] }],
         summary: narrative, strengths: [narrative],
       });
     },
   });
-  assert.equal(calls, readingCount + 1);
+  assert.equal(calls, repairMissingPoint ? 4 : 3);
   return { result, settings };
 }
 
@@ -63,8 +74,30 @@ test("written grading uses two blind readings and excludes invented grading feed
   assert.equal(result.independentTextReadings[0].transcript, "상민");
   assert.match(result.questionResults[0].answerReading, /상민/);
   assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /독립 판독 근거 · ‘상민’/);
-  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /알맞은 신분을 적음.*충족/);
   assert.doesNotMatch(JSON.stringify(result), /세금/);
+});
+
+test("an isolated second-page image cannot ground a reading attributed to the wrong page", async () => {
+  const answer = "물이 차가운 표면을 만나 물방울이 맺혔다.";
+  const reading = { pageNumber: 2, status: "readable", transcript: answer };
+  const prepareWrittenImages = async () => [
+    new File(["first answer image"], "page-1.jpg", { type: "image/jpeg" }),
+    new File(["second answer image"], "page-2.jpg", { type: "image/jpeg" }),
+  ];
+  const matching = await gradeWrittenTestAnswer({ first: reading, second: reading, answer, quote: "물방울이 맺혔다", pageNumbers: [7, 8], prepareWrittenImages });
+  assert.equal(matching.result.totalScore, 1);
+  assert.match(matching.result.exampleAnswerResults[0].pointResults[0].evidence, /물방울이 맺혔다.*기준을 충족/);
+  const mismatch = await gradeWrittenTestAnswer({ first: reading, second: { ...reading, pageNumber: 1 }, answer, quote: "물방울이 맺혔다", pageNumbers: [7, 8], prepareWrittenImages });
+  assert.equal(mismatch.result.totalScore, 0);
+  assert.equal(mismatch.result.hasMissingScores, true);
+  assert.doesNotMatch(mismatch.result.exampleAnswerResults[0].pointResults[0].evidence, /물방울/);
+});
+
+test("a missing written point is retried with a schema that can return its grounded quote", async () => {
+  const { result } = await gradeWrittenTestAnswer({ repairMissingPoint: true });
+  assert.equal(result.totalScore, 1);
+  assert.equal(result.hasMissingScores, false);
+  assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /상민.*알맞은 신분을 적음/);
 });
 
 test("written grading holds confident wrong transcriptions and unsupported quotes", async () => {
@@ -82,16 +115,6 @@ test("written grading holds confident wrong transcriptions and unsupported quote
   assert.match(invented.result.reviewReasons.join("\n"), /독립 판독문에서 확인하지 못했습니다/);
 });
 
-test("written grades explain an unearned point using the student's wording and the configured criterion", async () => {
-  const answer = "일부 농사는 지주가 아닌 다른 사람이 지었다고 설명했다.";
-  const { result } = await gradeWrittenTestAnswer({ first: answer, answer, quote: "실제로 쓰지 않은 설명", earned: false });
-  const row = result.exampleAnswerResults[0];
-  const point = row.pointResults[0];
-  assert.match(point.evidence, /지주가 아닌.*알맞은 신분을 적음.*근거를 찾지 못했습니다/);
-  assert.doesNotMatch(point.evidence, /실제로 쓰지 않은/);
-  assert.equal(AI.writtenPointSuggestion(row.writtenReading, point, point).evidence, point.evidence);
-});
-
 test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {
   const uncertain = await gradeWrittenTestAnswer({ second: "천인" });
   const { result: accepted } = await gradeWrittenTestAnswer();
@@ -105,42 +128,6 @@ test("written grading keeps disagreement pending on precision merge and recogniz
   assert.equal(blank.independentTextReadings[0].status, "blank");
   assert.equal(blank.exampleAnswerResults[0].answerReading, "무응답");
   assert.equal(blank.exampleAnswerResults[0].pointResults[0].missingResult, false);
-});
-
-test("written grading checks the located crop and holds a repeated short-text mismatch", async () => {
-  const sourceBox = [90, 400, 290, 530];
-  const prepareWrittenSources = async ([reading]) => {
-    assert.deepEqual(reading.sourceBox, sourceBox);
-    return new Map([[reading.exampleAnswerId, {
-      student: new File(["synthetic crop"], "student-region.jpg", { type: "image/jpeg" }),
-      blank: new File(["synthetic blank crop"], "blank-region.jpg", { type: "image/jpeg" }),
-    }]]);
-  };
-  const read = (transcript) => ({ status: "readable", transcript, sourceBox });
-  const { result: mismatch } = await gradeWrittenTestAnswer({ first: read("천인"), second: "천인", answer: "천인", prepareWrittenSources });
-  assert.equal(mismatch.totalScore, 0);
-  assert.equal(mismatch.hasMissingScores, true);
-  assert.equal(mismatch.independentTextReadings[0].sourceVerified, true);
-  assert.match(mismatch.reviewReasons.join("\n"), /짧은 답의 판독값이 예시답과 다릅니다/);
-  const { result: consistent } = await gradeWrittenTestAnswer({ first: read("상민"), second: "상민", prepareWrittenSources });
-  assert.equal(consistent.totalScore, 1);
-  assert.deepEqual(consistent.exampleAnswerResults[0].writtenReading.sourceBox, sourceBox);
-  const { result: disagreement } = await gradeWrittenTestAnswer({ first: read("상민"), second: "천인", prepareWrittenSources });
-  assert.equal(disagreement.totalScore, 0);
-  assert.match(disagreement.exampleAnswerResults[0].answerReading, /판독 불일치.*상민.*천인/);
-});
-
-test("a missing or redacted answer box cannot approve a written score", async () => {
-  for (const sourceBox of [null, [90, 180, 290, 230]]) {
-    const { result } = await gradeWrittenTestAnswer({
-      first: { status: "readable", transcript: "상민", sourceBox },
-      prepareWrittenSources: async () => assert.fail("must not crop an unlocated or redacted answer"),
-      readingCount: 1,
-    });
-    assert.equal(result.totalScore, 0);
-    assert.equal(result.hasMissingScores, true);
-    assert.equal(result.exampleAnswerResults[0].writtenReading.sourceVerified, false);
-  }
 });
 
 test("evaluation examples verify fraction equality and the separately entered answer", () => {
