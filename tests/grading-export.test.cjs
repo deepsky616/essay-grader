@@ -16,7 +16,7 @@ function loadAchievementLevelForExport() {
 }
 
 function loadEditablePointHelpers() {
-  const start = schoolSource.indexOf("function pointScoreChoices");
+  const start = schoolSource.indexOf("function hasWrittenScoresToReview");
   const end = schoolSource.indexOf("function resultExampleAnswerRows", start);
   assert.ok(start >= 0 && end > start, "editable point helpers must exist");
   const formatScore = (value) => String(Number(value));
@@ -265,6 +265,8 @@ test("edited point helpers recalculate score, evidence, and feedback text", () =
   assert.match(example.evidence, /1-\(1\) 항목 1 1 \/ 1점/);
   assert.match(helpers.automaticQuestionFeedback("1", [example]), /일부 배점 항목/);
   assert.match(helpers.automaticTeacherFeedback([example]), /1-\(1\) 1 \/ 2점/);
+  Object.assign(example.pointResults[1], { missingResult: true, writtenPending: true });
+  assert.match(helpers.automaticQuestionFeedback("1", [example]), /1 \/ 2점 · 판독 확인 필요/);
 });
 
 test("problem 2 points remain linked when a rubric criterion also contains problem 1", () => {

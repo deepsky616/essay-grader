@@ -244,6 +244,42 @@ test("partial table grading preserves column positions and does not merge differ
   assert.equal(wrongColumn.result.hasMissingScores, true);
 });
 
+test("faint cells do not hide the completed rows or their points", async () => {
+  const cell = (columnIndex, value, confidence = "high") => ({ columnIndex, value, confidence });
+  const stablePair = "아야, 저게 뭣이여? | 저게 뭐지?";
+  const partiallyReadable = {
+    status: "partial",
+    transcript: "[판독 불가]\n" + stablePair,
+    tableRows: [
+      { rowIndex: 2, cells: [cell(1, "앞부분", "low"), cell(2, "가려진 글씨", "low")] },
+      { rowIndex: 4, cells: [cell(1, "아야, 저게 뭣이여?"), cell(2, "저게 뭐지?")] },
+    ],
+  };
+  const metadataFor = (criterion) => ({
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "방언과 표준어", scoreLevels: [{ score: 1, criterion: "정확함" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "방언과 표준어를 대응시킴", maxScore: 1,
+      pointItems: [{ id: "p1", score: 1, criterion }], evaluationElementIds: ["r1"] }],
+  });
+  const grade = async (criterion, quote = stablePair) => (await gradeWrittenTestAnswer({
+    first: partiallyReadable, answer: stablePair, quote, metadata: metadataFor(criterion),
+  })).result;
+  for (const criterion of ["아야, 저게 뭣이여?: 저게 뭐지?", "4행 방언과 표준어를 올바르게 짝지음"]) {
+    const result = await grade(criterion);
+    assert.equal(result.totalScore, 1);
+    assert.match(result.exampleAnswerResults[0].pointResults[0].evidence, /표 4행.*저게 뭐지/);
+  }
+  for (const [criterion, quote] of [["2행 방언과 표준어를 짝지음", stablePair], ["표의 모든 행을 정확히 작성", stablePair],
+    ["4행 방언과 표준어를 올바르게 짝지음", "저게 뭐지?"]]) {
+    const result = await grade(criterion, quote);
+    const point = result.exampleAnswerResults[0].pointResults[0];
+    assert.equal(point.missingResult, true);
+    assert.equal(point.writtenPending, true);
+    assert.match(point.evidence, /확인된 부분.*4행[^]*판독 확인 필요.*2행 1열/);
+    assert.doesNotMatch(point.evidence, /앞부분|가려진 글씨/);
+  }
+});
+
 test("written grading keeps disagreement pending on precision merge and recognizes a corroborated blank", async () => {
   const uncertain = await gradeWrittenTestAnswer({ second: "천인" });
   const { result: accepted } = await gradeWrittenTestAnswer();

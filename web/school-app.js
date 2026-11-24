@@ -4807,6 +4807,20 @@ function exampleAnswerPointStatus(score, maxScore, missing = false, writtenPendi
   return { state: "none", label: "배점 미획득" };
 }
 
+function hasWrittenScoresToReview(exampleRows) {
+  return (exampleRows || []).some((row) => row.pointResults?.some((point) => point.writtenPending && point.missingResult));
+}
+
+function visibleScoreTotal(score, maximum, includesPendingWrittenScores) {
+  const total = `${formatScore(score)} / ${formatScore(maximum)}점`;
+  return includesPendingWrittenScores ? `${total} · 판독 확인 필요` : total;
+}
+
+function scoreGroupBand(score, maximum, thresholds, includesPendingWrittenScores) {
+  return includesPendingWrittenScores ? { key: "pending", label: "산정 전", range: "판독 확인 필요" }
+    : achievementBandForScore(score, maximum, thresholds);
+}
+
 function pointScoreChoices(maxScore, currentScore = 0) {
   const maximum = Math.max(0, Number(maxScore || 0));
   const choices = Array.from({ length: Math.floor(maximum * 2) + 1 }, (_value, index) => index / 2)
@@ -4922,6 +4936,7 @@ function automaticQuestionFeedback(questionNumber, exampleRows) {
   const linkedRows = exampleRows.filter((item) => questionScoreGroupKey(item.questionNumber) === groupKey);
   const score = linkedRows.reduce((sum, item) => sum + Number(item.awardedScore || 0), 0);
   const maximum = linkedRows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
+  if (hasWrittenScoresToReview(linkedRows)) return `문제 ${questionNumber}번에서 확인된 배점 ${visibleScoreTotal(score, maximum, true)}`;
   const breakdown = linkedRows.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ");
   if (!linkedRows.length || maximum <= 0) return `문제 ${questionNumber}번은 교사가 수정한 배점 결과를 확인해 주세요.`;
   if (score >= maximum - 0.001) return `문제 ${questionNumber}번의 배점 항목을 모두 충족했습니다. (${breakdown})`;
@@ -4939,6 +4954,7 @@ function automaticCriterionFeedback(questionRow, linkedRows) {
   const maximum = linkedRows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
   const breakdown = linkedRows.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ");
   const label = questionRow?.evaluationElement || "채점기준";
+  if (hasWrittenScoresToReview(linkedRows)) return `‘${label}’에서 확인된 배점 ${visibleScoreTotal(score, maximum, true)}`;
   if (!linkedRows.length || maximum <= 0) return `‘${label}’ 채점기준에 연결된 문제 배점을 확인해 주세요.`;
   if (score >= maximum - 0.001) return `‘${label}’에 연결된 배점 항목을 모두 충족했습니다. (${breakdown})`;
   if (score > 0) return `‘${label}’에서 일부 배점 항목을 충족했습니다. 남은 조건을 보완해 보세요. (${breakdown})`;
@@ -5009,7 +5025,8 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
     const exampleMax = subQuestionRows.reduce((sum, entry) => sum + Number(entry.item.maxScore || 0), 0)
       || exampleQuestionScoreMap(design?.exampleAnswers).get(questionNumber)
       || 0;
-    const questionBand = achievementBandForScore(subtotal, exampleMax, design?.performanceThresholds);
+    const pendingWritten = hasWrittenScoresToReview(subQuestionRows.map(({ item }) => item));
+    const questionBand = scoreGroupBand(subtotal, exampleMax, design?.performanceThresholds, pendingWritten);
     const pointRows = subQuestionRows.flatMap(({ item, exampleIndex }) => item.pointResults?.length ? item.pointResults.map((point, pointIndex) => ({
       ...point,
       questionNumber: item.questionNumber,
@@ -5018,7 +5035,7 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
       pointIndex,
     })) : [{ ...item, pointLabel: item.questionNumber, exampleIndex, pointIndex: -1 }]);
     return `<section class="question-score-group">
-      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${formatScore(subtotal)} / ${formatScore(exampleMax)}점</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(`${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
+      <div class="question-score-group-head"><strong>문제 ${escapeHtml(questionNumber)}번</strong><div class="question-score-group-result"><span>문제별 평가요소 합산 점수 <b data-question-total="${groupIndex}" data-question-key="${escapeHtml(questionNumber)}" data-question-max="${exampleMax}">${visibleScoreTotal(subtotal, exampleMax, pendingWritten)}</b></span><em class="performance-level-badge is-${questionBand.key}" data-question-level="${groupIndex}" title="${escapeHtml(pendingWritten ? questionBand.range : `${questionBand.percentage}% · ${questionBand.range}`)}">합산 ${questionBand.label}</em></div></div>
       <div class="example-point-table-wrap"><div class="example-point-table-title"><strong>AI 문제·배점 항목별 획득표</strong><span>획득점수 교사 수정 가능 · 3 문제별 예시답안 기준</span></div><table class="example-point-table"><thead><tr><th scope="col">문제·배점 항목</th><th scope="col">획득 점수 / 배점</th><th scope="col">채점 근거</th></tr></thead><tbody>${pointRows.map((item) => {
         const needsWrittenReview = item.writtenPending && item.missingResult;
         const pointStatus = exampleAnswerPointStatus(item.awardedScore, item.maxScore, item.missingResult, item.writtenPending);
@@ -5030,9 +5047,10 @@ function renderQuestionScoreGroups(rows, teacherScores, design, exampleRows) {
   }).join("");
   const rubricSubtotal = rows.reduce((sum, item, index) => sum + Number(teacherScores[index] ?? item.score ?? 0), 0);
   const rubricMaximum = rows.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
-  const rubricBand = achievementBandForScore(rubricSubtotal, rubricMaximum, design?.performanceThresholds);
+  const pendingWritten = hasWrittenScoresToReview(exampleRows);
+  const rubricBand = scoreGroupBand(rubricSubtotal, rubricMaximum, design?.performanceThresholds, pendingWritten);
   const rubricSection = `<section class="question-score-group rubric-score-summary">
-    <div class="question-score-group-head"><strong>채점기준별 종합 점수</strong><div class="question-score-group-result"><span>연결 배점 합산 <b data-rubric-total data-rubric-max="${rubricMaximum}">${formatScore(rubricSubtotal)} / ${formatScore(rubricMaximum)}점</b></span><em class="performance-level-badge is-${rubricBand.key}" data-rubric-level title="${escapeHtml(`${rubricBand.percentage}% · ${rubricBand.range}`)}">종합 ${rubricBand.label}</em></div></div>
+    <div class="question-score-group-head"><strong>채점기준별 종합 점수</strong><div class="question-score-group-result"><span>연결 배점 합산 <b data-rubric-total data-rubric-max="${rubricMaximum}">${visibleScoreTotal(rubricSubtotal, rubricMaximum, pendingWritten)}</b></span><em class="performance-level-badge is-${rubricBand.key}" data-rubric-level title="${escapeHtml(pendingWritten ? rubricBand.range : `${rubricBand.percentage}% · ${rubricBand.range}`)}">종합 ${rubricBand.label}</em></div></div>
     ${rows.map((item, index) => {
         const choices = scoreChoicesForResultRow(item, design);
         const selectedScore = nearestScoreChoice(teacherScores[index] ?? item.score ?? 0, choices);
@@ -5099,7 +5117,9 @@ async function openStudentResult(course, targetStudents, studentId) {
   const initialTeacherTotal = teacherScores.reduce((sum, value) => sum + value, 0);
   const alignedAiTotal = alignedAiScores.reduce((sum, value) => sum + value, 0);
   const awaitingScores = result.hasMissingScores && !result.teacherConfirmed;
+  const initialWrittenReview = hasWrittenScoresToReview(workingExampleRows);
   function teacherAchievementBand(score) {
+    if (hasWrittenScoresToReview(workingExampleRows)) return { key: "pending", label: "산정 전", range: "판독 확인 필요" };
     return result.hasMissingScores && !result.teacherConfirmed
       ? { key: "pending", label: "산정 전", range: "누락된 문항 확인 필요" }
       : achievementBandForScore(score, summary.maxScore, design.performanceThresholds);
@@ -5118,7 +5138,7 @@ async function openStudentResult(course, targetStudents, studentId) {
         <section class="student-answer-preview"><div class="mini-panel-head pdf-preview-head"><div><strong>학생 답안 PDF</strong><span>${answerFile.name}</span></div><button type="button" data-expand-student-answer>전체 화면으로 크게 보기</button></div><iframe src="${fitPdfPreviewUrl(previewUrl)}" title="${escapeHtml(student.name)} 학생 답안 미리보기" data-student-answer-frame></iframe></section>
         <section class="teacher-score-panel">
           <div class="mini-panel-head"><strong>문제별 채점기준과 배점 결과</strong><span>${questionRows.length}개 평가요소 · 교사가 수정 가능</span></div>
-          <div class="teacher-total"><span data-teacher-total-label>${awaitingScores ? "잠정 총점" : "교사 확정 총점"}</span><div class="teacher-total-result"><strong data-teacher-total>${formatScore(initialTeacherTotal)} / ${formatScore(summary.maxScore)}점</strong><em class="performance-level-badge is-${initialAchievementBand.key}" data-teacher-level title="${escapeHtml(awaitingScores ? initialAchievementBand.range : `${initialAchievementBand.percentage}% · ${initialAchievementBand.range}`)}">${initialAchievementBand.label}</em></div></div>
+          <div class="teacher-total"><span data-teacher-total-label>${initialWrittenReview ? "현재 확인된 총점" : awaitingScores ? "잠정 총점" : "교사 확정 총점"}</span><div class="teacher-total-result"><strong data-teacher-total>${visibleScoreTotal(initialTeacherTotal, summary.maxScore, initialWrittenReview)}</strong><em class="performance-level-badge is-${initialAchievementBand.key}" data-teacher-level title="${escapeHtml(initialAchievementBand.key === "pending" ? initialAchievementBand.range : `${initialAchievementBand.percentage}% · ${initialAchievementBand.range}`)}">${initialAchievementBand.label}</em></div></div>
           <div class="teacher-score-list">
             ${renderQuestionScoreGroups(questionRows, teacherScores, design, workingExampleRows)}
           </div>
@@ -5172,7 +5192,8 @@ async function openStudentResult(course, targetStudents, studentId) {
   });
   const updateTotal = () => {
     const total = scoreInputs.reduce((sum, input) => sum + Number(input.value || 0), 0);
-    panel.querySelector("[data-teacher-total]").textContent = `${formatScore(total)} / ${formatScore(summary.maxScore)}점`;
+    const pendingWritten = hasWrittenScoresToReview(workingExampleRows);
+    panel.querySelector("[data-teacher-total]").textContent = visibleScoreTotal(total, summary.maxScore, pendingWritten);
     const achievementBand = teacherAchievementBand(total);
     const teacherLevel = panel.querySelector("[data-teacher-level]");
     teacherLevel.textContent = achievementBand.label;
@@ -5180,13 +5201,13 @@ async function openStudentResult(course, targetStudents, studentId) {
     teacherLevel.title = achievementBand.key === "pending" ? achievementBand.range : `${achievementBand.percentage}% · ${achievementBand.range}`;
     const rubricTotal = panel.querySelector("[data-rubric-total]");
     const rubricMaximum = Number(rubricTotal?.dataset.rubricMax || 0) || summary.maxScore;
-    if (rubricTotal) rubricTotal.textContent = `${formatScore(total)} / ${formatScore(rubricMaximum)}점`;
-    const rubricBand = achievementBandForScore(total, rubricMaximum, design.performanceThresholds);
+    if (rubricTotal) rubricTotal.textContent = visibleScoreTotal(total, rubricMaximum, pendingWritten);
+    const rubricBand = scoreGroupBand(total, rubricMaximum, design.performanceThresholds, pendingWritten);
     const rubricLevel = panel.querySelector("[data-rubric-level]");
     if (rubricLevel) {
       rubricLevel.textContent = `종합 ${rubricBand.label}`;
       rubricLevel.className = `performance-level-badge is-${rubricBand.key}`;
-      rubricLevel.title = `${rubricBand.percentage}% · ${rubricBand.range}`;
+      rubricLevel.title = pendingWritten ? rubricBand.range : `${rubricBand.percentage}% · ${rubricBand.range}`;
     }
     panel.querySelectorAll("[data-question-total]").forEach((label) => {
       const groupIndex = label.dataset.questionTotal;
@@ -5194,13 +5215,14 @@ async function openStudentResult(course, targetStudents, studentId) {
       const linkedExamples = workingExampleRows.filter((item) => questionScoreGroupKey(item.questionNumber) === groupKey);
       const groupTotal = linkedExamples.reduce((sum, item) => sum + Number(item.awardedScore || 0), 0);
       const groupMax = Number(label.dataset.questionMax || 0) || linkedExamples.reduce((sum, item) => sum + Number(item.maxScore || 0), 0);
-      label.textContent = `${formatScore(groupTotal)} / ${formatScore(groupMax)}점`;
-      const questionBand = achievementBandForScore(groupTotal, groupMax, design.performanceThresholds);
+      const groupPending = hasWrittenScoresToReview(linkedExamples);
+      label.textContent = visibleScoreTotal(groupTotal, groupMax, groupPending);
+      const questionBand = scoreGroupBand(groupTotal, groupMax, design.performanceThresholds, groupPending);
       const questionLevel = panel.querySelector(`[data-question-level="${groupIndex}"]`);
       if (questionLevel) {
         questionLevel.textContent = `합산 ${questionBand.label}`;
         questionLevel.className = `performance-level-badge is-${questionBand.key}`;
-        questionLevel.title = `${questionBand.percentage}% · ${questionBand.range}`;
+        questionLevel.title = groupPending ? questionBand.range : `${questionBand.percentage}% · ${questionBand.range}`;
       }
     });
     const achievementResults = derivedAchievementResults(design, result, scoreInputs.map((input) => Number(input.value || 0)));
@@ -5266,7 +5288,9 @@ async function openStudentResult(course, targetStudents, studentId) {
     scoreInputs.forEach((input, scoreIndex) => {
       input.value = nearestScoreChoice(alignedScores[scoreIndex], scoreChoicesForResultRow(questionRows[scoreIndex], design));
       const linkedExamples = exampleRowsForCriterion(questionRows[scoreIndex], workingExampleRows);
-      const evidence = `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
+      const evidence = hasWrittenScoresToReview(linkedExamples)
+        ? linkedExamples.flatMap((item) => item.pointResults.map((point) => `${item.questionNumber} · ${point.evidence}`)).join("\n")
+        : `교사 수정 배점: ${linkedExamples.map((item) => `${item.questionNumber} ${formatScore(item.awardedScore)} / ${formatScore(item.maxScore)}점`).join(", ") || "연결된 배점 항목 없음"}`;
       const feedback = automaticCriterionFeedback(questionRows[scoreIndex], linkedExamples);
       if (questionRows[scoreIndex]) {
         questionRows[scoreIndex].score = Number(input.value || 0);

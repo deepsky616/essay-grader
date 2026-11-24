@@ -856,7 +856,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
             questionNumber: { type: "string" },
             pageNumber: { type: "integer" },
             sourceBox: { type: "array", items: { type: "integer" } },
-            status: { type: "string", enum: ["readable", "blank", "uncertain"] },
+            status: { type: "string", enum: ["readable", "partial", "blank", "uncertain"] },
             transcript: { type: "string" },
             tableRows: tableRowsSchema,
           },
@@ -885,38 +885,60 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
   function normalizeIndependentTextRow(row, target, pageCount, expectedPage = 0) {
     const pageNumber = positiveInteger(row?.pageNumber);
     const transcript = typeof row?.transcript === "string" ? row.transcript.trim() : "";
-    const tableRows = normalizeTableRows(row?.tableRows);
-    const rowIndexes = new Set(tableRows.map((line) => line.rowIndex));
-    const coordinatesValid = rowIndexes.size === tableRows.length && tableRows.every((line) => (
-      new Set(line.cells.map((cell) => cell.columnIndex)).size === line.cells.length
-    ));
     const scoped = pageNumber > 0 && pageNumber <= pageCount && (!expectedPage || pageNumber === expectedPage);
-    const readable = scoped && coordinatesValid && row?.status === "readable" && transcript.length > 0 && transcript.length <= 5000
-      && !/판독\s*불가|확인\s*불가|\[불명확\]|\[가림\]/.test(transcript)
+    const unreadable = /판독\s*불가|확인\s*불가|\[불명확\]|\[가림\]/u;
+    const rawTable = normalizeTableRows(row?.tableRows);
+    const uncertainCells = [];
+    const tableRows = rawTable.map((line) => {
+      const duplicateRow = rawTable.some((other) => other !== line && other.rowIndex === line.rowIndex);
+      const cells = line.cells.filter((cell) => {
+        const valid = !duplicateRow && cell.confidence !== "low" && !unreadable.test(cell.value)
+          && !line.cells.some((other) => other !== cell && other.columnIndex === cell.columnIndex);
+        if (!valid) uncertainCells.push({ rowIndex: line.rowIndex, columnIndex: cell.columnIndex });
+        return valid;
+      });
+      return { rowIndex: line.rowIndex, cells };
+    }).filter((line) => line.cells.length);
+    const hasText = transcript.length > 0 && transcript.length <= 5000;
+    const readable = scoped && row?.status === "readable" && hasText && !unreadable.test(transcript) && !uncertainCells.length
       && tableRows.every((line) => line.cells.every((cell) => !cell.value
-        || (cell.confidence !== "low" && writtenComparisonKey(transcript).includes(writtenComparisonKey(cell.value)))));
-    const blank = scoped && row?.status === "blank" && !transcript && !tableRows.some((line) => line.cells.some((cell) => cell.value));
+        || writtenComparisonKey(transcript).includes(writtenComparisonKey(cell.value))));
+    const blank = scoped && row?.status === "blank" && !transcript && !uncertainCells.length
+      && !rawTable.some((line) => line.cells.some((cell) => cell.value));
+    const partial = scoped && !readable && row?.status !== "blank"
+      && (tableRows.some((line) => line.cells.some((cell) => cell.value))
+        || (hasText && transcript.split(/\r?\n/u).some((line) => !unreadable.test(line) && /[.!?。]\s*$/u.test(line))));
     return {
       ...target, pageNumber: scoped ? pageNumber : 0,
       sourceBox: scoped ? writtenSourceBox(row?.sourceBox) : null,
-      status: readable ? "readable" : blank ? "blank" : "uncertain",
-      transcript: readable ? transcript : "",
-      tableRows: readable ? tableRows : [],
+      status: readable ? "readable" : blank ? "blank" : partial ? "partial" : "uncertain",
+      transcript: (readable || partial) && hasText ? transcript : "",
+      tableRows: readable || partial ? tableRows : [],
+      uncertainCells: scoped ? uncertainCells : [],
     };
   }
 
   function sameWrittenReading(first, second) {
     const table = (item) => (item.tableRows || []).map((row) => [row.rowIndex, row.cells
       .filter((cell) => cell.value).map((cell) => [cell.columnIndex, writtenComparisonKey(cell.value)])]).filter((row) => row[1].length);
-    if (first.pageNumber !== second.pageNumber || first.status !== second.status) return false;
+    if (first.pageNumber !== second.pageNumber || first.status !== second.status || first.status === "partial") return false;
     const firstTable = table(first);
     const secondTable = table(second);
     return JSON.stringify(firstTable) === JSON.stringify(secondTable)
       && writtenComparisonKey(first.transcript) === writtenComparisonKey(second.transcript);
   }
 
+  function completeWrittenTablePairs(rows) {
+    return (rows || []).flatMap((row) => {
+      const left = row.cells.find((cell) => cell.columnIndex === 1)?.value;
+      const right = row.cells.find((cell) => cell.columnIndex === 2)?.value;
+      return left && right ? [{ rowIndex: row.rowIndex, text: `${left} | ${right}` }] : [];
+    });
+  }
+
   function commonWrittenEvidence(first, second) {
-    if (first.status !== "readable" || second.status !== "readable" || first.pageNumber !== second.pageNumber) return {};
+    const known = (reading) => reading.status === "readable" || reading.status === "partial";
+    if (!known(first) || !known(second) || first.pageNumber !== second.pageNumber) return {};
     if (first.tableRows.length || second.tableRows.length) {
       const tableRows = first.tableRows.map((row) => {
         const matchingRow = second.tableRows.find((item) => item.rowIndex === row.rowIndex);
@@ -924,7 +946,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
           cell.columnIndex === other.columnIndex && writtenComparisonKey(cell.value) === writtenComparisonKey(other.value)));
         return { rowIndex: row.rowIndex, cells };
       }).filter((row) => row.cells.length);
-      return { tableRows };
+      return { tableRows, transcript: completeWrittenTablePairs(tableRows).map((row) => row.text).join("\n") };
     }
     const segments = (row) => row.transcript.split(/\r?\n|(?<=[.!?。])\s+(?=\p{L})/u).map((segment) => segment.trim()).filter(Boolean);
     const left = segments(first);
@@ -935,7 +957,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     if (pairs.some((pair) => !same(pair) && pair.some((line) => /아니|않|없|못|틀리|다만|그러나|하지만|반대로|제외/u.test(line)))) return {};
     // A complete common sentence is evidence. A shared word in a disputed sentence is not.
     const confirmedSegments = pairs.filter(same).map(([segment]) => segment)
-      .filter((segment) => /[.!?。]$/u.test(segment));
+      .filter((segment) => /[.!?。]$/u.test(segment) && !/판독\s*불가|확인\s*불가|\[불명확\]|\[가림\]/u.test(segment));
     return { confirmedSegments, transcript: confirmedSegments.join("\n") };
   }
 
@@ -944,6 +966,8 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
       return `답안 위치가 ${first.pageNumber}쪽과 ${second.pageNumber}쪽으로 다르게 확인됐습니다.`;
     }
     if (first.tableRows.length || second.tableRows.length) {
+      const uncertain = first.uncertainCells?.[0] || second.uncertainCells?.[0];
+      if (uncertain) return `표 ${uncertain.rowIndex}행 ${uncertain.columnIndex}열의 글씨가 흐리거나 잘렸습니다.`;
       for (const [source, other] of [[first, second], [second, first]]) {
         for (const row of source.tableRows) {
           const match = other.tableRows.find((item) => item.rowIndex === row.rowIndex);
@@ -968,7 +992,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     if (second.status === "disagreement") return second;
     if (first.status === "uncertain" || second.status === "uncertain") {
       return { ...first, status: "uncertain", transcript: "", tableRows: [],
-        candidateReadings: [first, second].filter((row) => row.status === "readable" || row.status === "blank") };
+        candidateReadings: [first, second].filter((row) => row.status !== "uncertain") };
     }
     if (sameWrittenReading(first, second)) return first;
     return { ...first, status: "disagreement", transcript: "", tableRows: [],
@@ -985,6 +1009,28 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     if (overlap < Math.max(area(first), area(second)) * 0.5) return null;
     return [Math.max(0, Math.min(first[0], second[0]) - 20), Math.max(220, Math.min(first[1], second[1]) - 24),
       Math.min(1000, Math.max(first[2], second[2]) + 20), Math.min(1000, Math.max(first[3], second[3]) + 24)];
+  }
+
+  function extendConfirmedTableReading(previous, candidates, reread) {
+    if (!reread?.pageNumber || candidates.some((row) => row.pageNumber !== reread.pageNumber)) return previous;
+    const rows = new Map((previous.tableRows || []).map((row) => [row.rowIndex, new Map(row.cells.map((cell) => [cell.columnIndex, cell]))]));
+    let added = false;
+    for (const candidate of candidates) {
+      for (const row of commonWrittenEvidence(candidate, reread).tableRows || []) {
+        if (!rows.has(row.rowIndex)) rows.set(row.rowIndex, new Map());
+        const cells = rows.get(row.rowIndex);
+        for (const cell of row.cells) {
+          if (cells.has(cell.columnIndex)) continue;
+          cells.set(cell.columnIndex, cell);
+          added = true;
+        }
+      }
+    }
+    if (!added) return previous;
+    const tableRows = normalizeTableRows([...rows].map(([rowIndex, cells]) => ({ rowIndex, cells: [...cells.values()] })));
+    return { ...previous, status: "disagreement", tableRows, verifiedOnReview: true,
+      transcript: completeWrittenTablePairs(tableRows).map((row) => row.text).join("\n"),
+      sourceIssue: "표에서 아직 두 판독으로 확인되지 않은 칸이 있습니다." };
   }
 
   async function readIndependentWrittenAnswers({ targets, files, pageCount, key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, prepareWrittenImages, cropWrittenImage, previousReadings, inlineFile }) {
@@ -1007,7 +1053,7 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
 같은 쪽 빈 평가지와 학생 답안을 대조하세요. 문제 문구와 인쇄된 예시, 다른 문항의 답, 표 머리글, 익명 번호는 옮기지 마세요.
 대상 번호의 답안 칸에 학생이 실제로 추가한 글자만 있는 그대로 transcript에 적으세요. 표현을 보완하거나 관련 용어로 바꾸지 마세요. 표는 같은 행·열 그대로 tableRows에 옮기고 transcript에도 그 순서대로 옮기세요.
 학생의 이름·학번 등 신원 칸은 전사하지 마세요. 답안 칸에 쓰인 교과 용어나 인물 이름은 실제 보이는 글자 그대로 옮기세요.
-문항이 가려졌거나 글자·칸·문항 번호가 불확실하면 uncertain입니다. 답 칸이 온전히 보이고 필기가 전혀 없을 때만 blank입니다. uncertain과 blank의 transcript는 빈 문자열입니다.
+문항 위치를 특정할 수 없거나 아무 글씨도 읽을 수 없으면 uncertain입니다. 같은 문항에서 일부만 읽히면 partial로 두고 읽히는 부분을 전사하세요. 표의 각 행·열 번호를 그대로 쓰고, 흐리거나 잘린 셀의 confidence는 low, 값은 빈 문자열로 남기세요. 빈칸과 구분해야 합니다. 일반 글에서 읽을 수 없는 줄은 [판독 불가]로 표시하고, 읽을 수 있는 온전한 문장은 별도 줄에 적으세요. 답 칸이 온전히 보이고 필기가 전혀 없을 때만 blank이며, uncertain과 blank의 transcript는 빈 문자열입니다.
 ${recheck ? "답안 칸을 처음부터 다시 읽으며 글자 하나씩 확인하세요. 뜻이나 문제의 정답을 추측하지 마세요. 지운 글씨가 아니라 최종적으로 남아 있는 글씨만 옮기고, 표에서 칸이 비어 있으면 그대로 비워 두세요." : ""}
 ${scoped ? `${pageNumbers.length === 1 ? `학생 답안 이미지는 원본 PDF의 ${pageNumbers[0]}쪽만 확대한 것입니다.` : "각 학생 답안 이미지는 표시된 쪽의 자료입니다."} 문항별 pageNumber와 이미지의 쪽 표기가 같은 자료만 사용하세요. cropped가 true이면 그 문항 번호를 표시한 확대 이미지에서만 읽고 좌표는 생략하세요. 빈 평가지에서도 같은 쪽을 대조합니다. 해당 칸이 안 보이면 uncertain·0입니다.`
   : "pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 위치를 특정할 수 없으면 0입니다."}
@@ -1111,7 +1157,7 @@ ${scoped ? `${pageNumbers.length === 1 ? `학생 답안 이미지는 원본 PDF�
     for (const [id, candidates] of disputed) {
       const reread = second.get(id);
       confirmed.set(id, reread && candidates.some((row) => sameWrittenReading(row, reread))
-        ? { ...reread, verifiedOnReview: true } : previous.get(id));
+        ? { ...reread, verifiedOnReview: true } : extendConfirmedTableReading(previous.get(id), candidates, reread));
     }
     return scope.map((target) => confirmed.get(target.exampleAnswerId));
   }
@@ -2410,7 +2456,7 @@ ${safeMetadata.alignedReferencePages.length ? "3-1. ‘위치 보정 빈 평가�
 7. 읽기 어렵거나 잘린 부분, 문항 대응이 불확실한 부분은 추측해서 점수를 주지 말고 낮은 confidence와 구체적인 근거를 기록합니다.
 7-1. 분수 계산은 세부 문항별 answerReading에 학생의 중간 계산과 최종 답을 등호 순서대로 전사하세요. 학생이 우변만 썼다면 평가지에 인쇄된 원래 식을 첫 등호의 좌변으로 붙이세요. 보이는 수를 정답에 맞춰 바꾸지 말고, 교사 예시의 등식은 학생 답안으로 옮기지 마세요. 각 등호의 값과 최종 답을 각각 검산하고, 식 세우기·풀이 과정·최종 답의 배점 기준을 구분하세요.
 ${safeMetadata.independentFractionReadings.length ? "7-2. independentFractionReadings는 예시답을 제외하고 전사한 학생 필기입니다. 해당 세부 문항은 여기에 기록된 최종 답과 풀이를 우선 사용하세요. uncertain이면 정답이나 예시풀이를 학생 필기로 채우지 말고 검토 사유를 남기세요." : ""}
-${safeMetadata.independentTextReadings.length ? "7-3. independentTextReadings에 있는 문항의 판독문은 채점 근거에 사용할 수 있는 학생 글자의 범위를 정합니다. readable 또는 confirmedPartsOnly이면 exampleAnswerResults.answerReading에 transcript를 그대로 복사하세요. confirmedPartsOnly이면 두 판독에 공통으로 나온 문장과 같은 위치의 표 셀만 포함되며, 그 자료만으로 독립적으로 충족되는 배점 항목만 earned=true입니다. 각 항목의 evidenceQuote에는 배점 판단에 사용한 구절을 transcript에서 그대로 복사하세요. 부정이나 조건이 의미를 바꾸면 함께 인용하세요. 인용할 구절이 없거나 독립 글 판독 대상이 아닌 항목은 빈 문자열입니다. 학생 답이나 근거를 이미지, 예시답 또는 문제에서 새로 보충하지 마세요. blank이면 무응답으로 기록하고, confirmedPartsOnly가 없는 uncertain이나 disagreement이면 판독 불가로 적고 교사 확인을 요청하세요." : ""}
+${safeMetadata.independentTextReadings.length ? "7-3. independentTextReadings에 있는 문항의 판독문은 채점 근거에 사용할 수 있는 학생 글자의 범위를 정합니다. readable 또는 confirmedPartsOnly이면 exampleAnswerResults.answerReading에 transcript를 그대로 복사하세요. confirmedPartsOnly이면 두 판독에 공통으로 나온 문장과 같은 위치의 표 셀만 포함되며, 그 자료만으로 독립적으로 충족되는 배점 항목만 earned=true입니다. 각 항목의 evidenceQuote에는 배점 판단에 사용한 구절을 transcript에서 그대로 복사하세요. 일부만 확인된 표의 짝을 인용할 때는 transcript의 같은 행 두 값을 구분 기호 |까지 포함해 그대로 복사하세요. 부정이나 조건이 의미를 바꾸면 함께 인용하세요. 인용할 구절이 없거나 독립 글 판독 대상이 아닌 항목은 빈 문자열입니다. 학생 답이나 근거를 이미지, 예시답 또는 문제에서 새로 보충하지 마세요. blank이면 무응답으로 기록하고, confirmedPartsOnly가 없는 uncertain이나 disagreement이면 판독 불가로 적고 교사 확인을 요청하세요." : ""}
 ${batch ? buildGradingBatchInstructions(batch, safeMetadata) : `
 ${safeMetadata.precisionReview && safeMetadata.precisionCriterionIds.length
     ? "8. 이것은 선별 정밀 재검토입니다. questionResults에는 precisionCriterionIds에 지정된 평가요소만 입력 순서대로 정확히 한 번씩 포함하고 criterionId를 그대로 복사하세요. 다른 평가요소의 점수를 다시 만들지 마세요."
@@ -2825,9 +2871,25 @@ ${JSON.stringify(roster)}
     if (reading.status === "readable") return reading.transcript;
     if (reading.status === "blank") return "무응답";
     if (reading.status === "disagreement") {
-      return `판독 불일치 · ${reading.alternatives.map((value) => `‘${value}’`).join(" / ")}`;
+      const confirmed = writtenEvidenceSummary(reading);
+      if (confirmed) return `확인된 부분 · ${confirmed}\n판독 확인 필요 · ${reading.sourceIssue || "나머지 글씨는 원본을 확인해 주세요."}`;
+      return reading.alternatives?.length
+        ? `판독 불일치 · ${reading.alternatives.map((value) => `‘${value}’`).join(" / ")} · 판독 확인 필요`
+        : "판독 확인 필요";
     }
     return "판독 불가";
+  }
+
+  function writtenEvidenceSummary(reading) {
+    const excerpt = (value) => value.length > 95 ? `${value.slice(0, 95)}…` : value;
+    if (reading.tableRows?.length) {
+      const pairs = completeWrittenTablePairs(reading.tableRows);
+      const fullRows = new Set(pairs.map((row) => row.rowIndex));
+      return [...pairs.map((row) => `${row.rowIndex}행 ‘${excerpt(row.text)}’`),
+        ...reading.tableRows.filter((row) => !fullRows.has(row.rowIndex)).flatMap((row) =>
+          row.cells.map((cell) => `${row.rowIndex}행 ${cell.columnIndex}열 ‘${excerpt(cell.value)}’`))].slice(0, 4).join(" · ");
+    }
+    return (reading.confirmedSegments || []).slice(0, 3).map((line) => `‘${excerpt(line)}’`).join(" · ");
   }
 
   function groundWrittenPoint(reading, point, item, rawPoint, earned, missing, tableDecision) {
@@ -2839,15 +2901,23 @@ ${JSON.stringify(roster)}
     if (reading.status !== "readable") {
       const quote = writtenLiteral(rawPoint?.evidenceQuote);
       const canUseQuote = !missing && earned && quote && writtenComparisonKey(rawPoint?.gradedAnswerReading ?? item?.answerReading)
-        === writtenComparisonKey(reading.transcript);
+        === writtenComparisonKey(reading.transcript) && !/모두|모든|전체|빠짐없이|전부|각각|[2-9]\d*\s*(?:개|쌍|짝)/u.test(point.criterion);
       const segment = canUseQuote && reading.confirmedSegments?.find((line) => writtenLiteral(line).includes(quote));
       if (segment) return {
         earned: true, pending: false, quote: segment,
         evidence: `두 판독에서 확인한 문장 ‘${segment}’이 ‘${point.criterion}’ 기준을 충족한다고 판단했습니다.`,
       };
-      return pending(reading.status === "disagreement"
-        ? reading.sourceIssue || "두 판독에서 이 항목의 근거가 일치하지 않습니다."
-        : "학생이 쓴 글자를 확인할 수 없어 원본 확인이 필요합니다.");
+      const namedRow = positiveInteger(point.criterion.match(/(\d+)\s*행/u)?.[1]);
+      const confirmedRows = canUseQuote && quote.includes("|") && !parseExactTablePairCriterion(point.criterion) ? completeWrittenTablePairs(reading.tableRows)
+        .filter((row) => (!namedRow || row.rowIndex === namedRow) && writtenLiteral(row.text) === quote) : [];
+      const confirmedRow = confirmedRows.length === 1 ? confirmedRows[0] : null;
+      if (confirmedRow) return {
+        earned: true, pending: false, quote: confirmedRow.text,
+        evidence: `두 판독에서 확인한 표 ${confirmedRow.rowIndex}행 ‘${confirmedRow.text}’이 ‘${point.criterion}’ 기준을 충족한다고 판단했습니다.`,
+      };
+      const confirmed = writtenEvidenceSummary(reading);
+      const reason = reading.sourceIssue || "이 배점 항목의 글씨를 원본에서 확인해 주세요.";
+      return pending(`${confirmed ? `확인된 부분 · ${confirmed}\n` : ""}판독 확인 필요 · ${reason}`);
     }
     if (missing) return pending("판독문은 있으나 이 항목의 배점 판단을 확인하지 못했습니다.");
     const gradedAnswer = rawPoint.gradedAnswerReading ?? item?.answerReading;
@@ -2883,7 +2953,7 @@ ${JSON.stringify(roster)}
       if (pending) question.confidence = "low";
     }
     return written.map(({ row }) => row.pointResults.some((point) => point.missingResult)
-      ? `문제 ${row.questionNumber} · 원본 확인 필요`
+      ? `문제 ${row.questionNumber} · 확인된 배점 ${row.awardedScore}/${row.maxScore} · 판독 확인 필요`
       : `문제 ${row.questionNumber} · 독립 판독을 적용한 배점 ${row.awardedScore}/${row.maxScore}`);
   }
 
