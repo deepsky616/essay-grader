@@ -937,7 +937,15 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
           }
         })());
       }
-      result.push({ exampleAnswerId: example.id, ...await cache.get(example.id) });
+      const request = cache.get(example.id);
+      try {
+        const reference = await request;
+        if (!reference.tableRows && cache.get(example.id) === request) cache.delete(example.id);
+        result.push({ exampleAnswerId: example.id, ...reference });
+      } catch (error) {
+        if (cache.get(example.id) === request) cache.delete(example.id);
+        throw error;
+      }
     }
     return result;
   }
@@ -1098,7 +1106,23 @@ ${enlarged ? "고해상도 원본색과 고대비 확대본의 글자 위치를 
     };
   }
 
-  async function readIndependentWrittenAnswers({ targets, files, pageCount, key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, precisionReview }) {
+  async function readInParallel(first, second, onProgress) {
+    const readers = [first, second];
+    const results = await Promise.allSettled(readers.map((read) => read()));
+    const failure = results.find((result) => result.status === "rejected" && !/HTTP 429/u.test(result.reason?.message || ""));
+    if (failure) throw failure.reason;
+    if (results.some((result) => result.status === "rejected")) {
+      onProgress?.("Gemini 요청 한도에 맞춰 남은 판독만 순서대로 다시 확인 중");
+    }
+    const completed = [];
+    for (const [index, result] of results.entries()) {
+      completed.push(result.status === "fulfilled" ? result.value : await readers[index]());
+    }
+    return completed;
+  }
+
+  async function readIndependentWrittenAnswers({ targets, files, pageCount, key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, precisionReview,
+    parallelReadings }) {
     const allowedRoles = new Set(["blank", "alignedBlank", "studentAnswer", "enhancedAnswer"]);
     const attachments = [];
     for (const { role, file } of files) {
@@ -1149,13 +1173,21 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
       }
       return results;
     };
-    onProgress?.("예시답 없이 학생이 쓴 글 답안 판독 중");
-    const first = await read(scope);
-    const recheck = first.filter((row) => row.status !== "uncertain");
-    if (!recheck.length) return first;
-    onProgress?.("학생이 쓴 글을 독립적으로 한 번 더 판독 중");
-    const second = new Map((await read(recheck, true)).map((row) => [row.exampleAnswerId, row]));
-    const combined = first.map((row) => combineWrittenReadings(row, second.get(row.exampleAnswerId)));
+    let first;
+    let secondReadings;
+    if (parallelReadings) {
+      onProgress?.("예시답 없이 학생 필기를 두 번 독립 판독 중");
+      [first, secondReadings] = await readInParallel(() => read(scope), () => read(scope, true), onProgress);
+    } else {
+      onProgress?.("예시답 없이 학생이 쓴 글 답안 판독 중");
+      first = await read(scope);
+      const recheck = first.filter((row) => row.status !== "uncertain");
+      if (!recheck.length) return first;
+      onProgress?.("학생이 쓴 글을 독립적으로 한 번 더 판독 중");
+      secondReadings = await read(recheck, true);
+    }
+    const second = new Map(secondReadings.map((row) => [row.exampleAnswerId, row]));
+    const combined = first.map((row) => row.status === "uncertain" ? row : combineWrittenReadings(row, second.get(row.exampleAnswerId)));
     const contextualTargets = precisionReview ? combined.filter((row) => row.pageNumber
       && (row.status === "partial" || row.status === "disagreement" || row.status === "uncertain")
       && (hasTableReading(row) ? row.reviewLocations?.some((location) => /^표 \d+행 \d+열$/u.test(location))
@@ -1167,7 +1199,7 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
   }
 
   async function gradeAnswer({ apiKey, metadata = {}, files, model = MODEL, fetchImpl = fetch, retryDelayMs = 1200, signal, onProgress,
-    tableReferenceFiles, tableReferenceCache = new Map() }) {
+    tableReferenceFiles, tableReferenceCache = new Map(), parallelRecognition = false }) {
     const key = validateApiKey(apiKey);
     const selectedModel = validateModelId(model);
     const normalizedFiles = Array.isArray(files) ? files.filter((item) => item?.file) : [];
@@ -1196,17 +1228,20 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
       const design = `${example.mathNotation}\n${example.answerText}`;
       return isFractionRelevantText(design) && normalizeUnknownSymbols(design).includes("□");
     }) : [];
-    const independentFractionReadings = numericalFractions.length ? await readIndependentFractionAnswers({
-      targets: numericalFractions, files: normalizedFiles, key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, precisionReview: metadata.precisionReview,
-    }) : [];
     const fractionIds = new Set(numericalFractions.map((item) => item.id));
     const writtenTargets = metadata.verifyWrittenText && requiredRoles.has("blank") ? examples.filter((item) => (
       !fractionIds.has(item.id) && exampleNeedsWrittenReading(item, rubrics, metadata.subject)
     )) : [];
-    const independentTextReadings = writtenTargets.length ? await readIndependentWrittenAnswers({
-      targets: writtenTargets, files: normalizedFiles, pageCount: metadata.student?.pageNumbers?.length || 50,
-      key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, precisionReview: metadata.precisionReview,
-    }) : [];
+    const recognitionOptions = { files: normalizedFiles, key, selectedModel, fetchImpl, retryDelayMs, signal, onProgress, precisionReview: metadata.precisionReview };
+    const readFractions = () => numericalFractions.length
+      ? readIndependentFractionAnswers({ ...recognitionOptions, targets: numericalFractions }) : [];
+    const readWriting = () => writtenTargets.length
+      ? readIndependentWrittenAnswers({ ...recognitionOptions, targets: writtenTargets, pageCount: metadata.student?.pageNumbers?.length || 50,
+        parallelReadings: parallelRecognition && !numericalFractions.length }) : [];
+    // Keep at most two recognition requests in flight for an individual regrade.
+    const [independentFractionReadings, independentTextReadings] = parallelRecognition && numericalFractions.length && writtenTargets.length
+      ? await readInParallel(readFractions, readWriting, onProgress)
+      : [await readFractions(), await readWriting()];
     const tableIds = new Set(independentTextReadings.filter(hasTableReading).map((reading) => reading.exampleAnswerId));
     const exampleTableReferences = metadata.compareTableCells && tableIds.size ? await readExampleTableReferences({
       targets: examples.filter((example) => tableIds.has(example.id)), files: tableReferenceFiles || normalizedFiles,
@@ -1280,6 +1315,7 @@ pageNumber는 학생 답안 PDF 안의 쪽 번호입니다. 첫 쪽은 1이고 �
         if (await requestGrade(batch) && !hasPartialScores()) throw lastError;
       }
     } else {
+      onProgress?.("학생 답안과 채점기준을 대조해 배점 확인 중");
       await requestGrade();
     }
     const missing = targets.filter((target) => !hasGradingTarget(parsed, target));

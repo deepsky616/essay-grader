@@ -66,6 +66,56 @@ test("written grading uses two blind readings and excludes invented grading feed
   assert.doesNotMatch(JSON.stringify(result), /세금/);
 });
 
+test("individual grading overlaps blind readings and serially retries only a rate-limited lane", async () => {
+  const metadata = {
+    requireBlankComparison: true, verifyWrittenText: true, totalScore: 1, student: { pageNumbers: [1] },
+    rubricCriteria: [{ id: "r1", questionNumber: "1", evaluationElement: "신분 용어", scoreLevels: [{ score: 1, criterion: "정확한 용어" }] }],
+    exampleAnswers: [{ id: "e1", questionNumber: "1", answerText: "상민", maxScore: 1, evaluationElementIds: ["r1"],
+      pointItems: [{ id: "p1", score: 1, criterion: "알맞은 신분을 적음" }] }],
+  };
+  for (const variant of ["agreed", "disagreement", "rate-limited"]) {
+    let inFlight = 0;
+    let peak = 0;
+    const reads = [0, 0];
+    const stages = [];
+    const fetchImpl = async (_url, options) => {
+      const parts = JSON.parse(options.body).contents[0].parts;
+      const prompt = parts[0].text;
+      let payload;
+      if (prompt.includes("학생 답안의 글자 전사만")) {
+        assert.doesNotMatch(prompt, /상민|천인/);
+        const lane = Number(prompt.includes("글자 하나씩 확인"));
+        reads[lane] += 1;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setImmediate(resolve));
+        inFlight -= 1;
+        if (variant === "rate-limited" && lane === 1 && reads[1] < 3) {
+          return new Response(JSON.stringify({ error: { message: "quota" } }), { status: 429 });
+        }
+        payload = { readings: [{ exampleAnswerId: "e1", questionNumber: "1", pageNumber: 1, status: "readable",
+          transcript: variant === "disagreement" && lane === 1 ? "천인" : "상민" }] };
+      } else {
+        assert.equal(inFlight, 0);
+        payload = {
+          questionResults: [{ criterionId: "r1", score: 1 }],
+          exampleAnswerResults: [{ exampleAnswerId: "e1", answerReading: "상민",
+            pointResults: [{ pointItemId: "p1", earned: true, evidenceQuote: "상민", confidence: "high" }] }],
+        };
+      }
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }));
+    };
+    const files = ["blank", "studentAnswer"].map((role) => ({ role, file: new File([role], role + ".pdf", { type: "application/pdf" }) }));
+    const result = await AI.gradeAnswer({ apiKey: VALID_KEY, metadata, files, parallelRecognition: true,
+      fetchImpl, retryDelayMs: 0, onProgress: (message) => stages.push(message) });
+    assert.equal(peak, 2);
+    assert.deepEqual(reads, variant === "rate-limited" ? [1, 3] : [1, 1]);
+    assert.equal(result.totalScore, variant === "disagreement" ? 0 : 1);
+    assert.equal(result.exampleAnswerResults[0].pointResults[0].missingResult, variant === "disagreement");
+    assert.equal(stages.some((message) => /남은 판독만 순서대로/u.test(message)), variant === "rate-limited");
+  }
+});
+
 test("written grading holds confident wrong transcriptions and unsupported quotes", async () => {
   const misread = await gradeWrittenTestAnswer({ answer: "천인", quote: "천인" });
   const invented = await gradeWrittenTestAnswer({ quote: "세금" });
@@ -1377,7 +1427,8 @@ test("dense fraction assessments are split by model and every subquestion point 
       },
     });
     assert.equal(requests, expectedRequests, model);
-    assert.equal(progress.length, expectedRequests === 1 ? 0 : expectedRequests, model);
+    assert.equal(progress.length, expectedRequests, model);
+    assert.match(progress[0], expectedRequests === 1 ? /채점기준을 대조/u : /문항 나누어 채점/u, model);
     assert.equal(result.totalScore, 11);
     assert.equal(result.hasMissingScores, false);
     assert.deepEqual(result.exampleAnswerResults.map((row) => row.questionNumber), numbers);

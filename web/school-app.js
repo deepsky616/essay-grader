@@ -50,6 +50,8 @@ let gradingResultsExpanded = false;
 let previewUrls = [];
 let activeGradingRun = null;
 const studentRegradeRuns = new Map();
+const studentRegradeMaterials = new WeakMap();
+const studentRegradeRedactions = new WeakMap();
 const submissionSelectionSaves = new Map();
 
 window.addEventListener("hashchange", renderRoute);
@@ -3771,6 +3773,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
     return;
   }
   const assignmentStudentIds = new Set(assignments.map((item) => item.studentId));
+  if (assignmentStudentIds.has(studentRegradeRuns.get(course.id)?.studentId)) studentRegradeRuns.delete(course.id);
   const preservePrevious = retryFailedOnly || canResume;
   const keptResults = previousResults.filter((item) => !assignmentStudentIds.has(item.studentId));
   const keptErrors = previousErrors.filter((item) => !assignmentStudentIds.has(item.studentId));
@@ -3839,6 +3842,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
   activeGradingRun.parallelism = desiredParallelism;
   const redactedStudentFileCache = new Map();
   const tableReferenceCache = new Map();
+  const exampleFileCache = new Map();
   let saveQueue = Promise.resolve();
   const queueCourseSave = () => {
     const snapshot = {
@@ -3892,6 +3896,7 @@ async function startCourseGrading(course, targetStudents, { retryFailedOnly = fa
           privacySession,
           redactedStudentFileCache,
           tableReferenceCache,
+          exampleFileCache,
           signal: controller.signal,
           onStage: (stage) => {
             activeStages.set(workerIndex, { label: currentLabel, stage });
@@ -4065,7 +4070,7 @@ function preliminaryReadingsFromResult(result) {
 }
 
 async function gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, privacySession = null, redactedStudentFileCache = null,
-  tableReferenceCache = new Map(), signal, onStage }) {
+  tableReferenceCache = new Map(), exampleFileCache, individualRegrade = false, signal, onStage }) {
   const submission = course.submission;
   const student = targetStudents.find((item) => item.id === assignment.studentId);
   if (!student) throw new Error("학생 명단에서 재채점할 학생을 찾지 못했습니다.");
@@ -4075,19 +4080,32 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
   const anonymousIndex = Math.max(0, allAssignments.findIndex((item) => item.studentId === assignment.studentId));
   const maxScore = assessmentDesignTotalScore(design);
   if (maxScore <= 0) throw new Error("평가 설계의 예시답안에서 문제별 배점을 입력해 주세요.");
-  let studentFile = redactedStudentFileCache?.get(student.id) || null;
+  const sourceBlob = submission.sourceFile.blob;
+  const redactionKey = individualRegrade ? JSON.stringify([student.id, anonymousIndex, assignment.pageNumbers]) : "";
+  const savedRedaction = individualRegrade ? studentRegradeRedactions.get(sourceBlob) : null;
+  let studentFile = redactedStudentFileCache?.get(student.id) || (savedRedaction?.key === redactionKey ? savedRedaction.file : null);
   if (!studentFile) {
     onStage?.("공유 원본에서 답안 분리·신원 픽셀 삭제·안전한 PDF 재생성 중", "prepare");
     studentFile = privacySession
       ? await privacySession.create(assignment.pageNumbers, anonymousIndex, { signal })
-      : await splitStudentPdf(submission.sourceFile.blob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
+      : await splitStudentPdf(sourceBlob, assignment.pageNumbers, anonymousIndex, { anonymize: true });
     redactedStudentFileCache?.set(student.id, studentFile);
+    if (individualRegrade && studentFile.size <= ChaejeomAI.MAX_INLINE_BYTES) {
+      studentRegradeRedactions.set(sourceBlob, { key: redactionKey, file: studentFile });
+    }
   } else onStage?.("신원 삭제된 안전한 답안 PDF 재사용 중", "prepare");
   if (signal?.aborted) throw new DOMException("AI 채점이 중단되었습니다.", "AbortError");
+  const prepareExampleFile = (source) => {
+    const cached = exampleFileCache?.get(source);
+    if (cached) return cached;
+    const file = asFile(source);
+    exampleFileCache?.set(source, file);
+    return file;
+  };
   const structuredExamples = (design.exampleAnswers || []).filter((item) => item.answerText || item.mathNotation || item.visualDescription);
   const attachedExamples = (design.exampleAnswers || []).flatMap((item, index) => item.file
-    ? [{ role: "example", file: asFile(item.file), exampleAnswerId: item.id || `example-${index + 1}` }] : []);
-  const sharedExample = design.exampleFile ? [{ role: "example", file: asFile(design.exampleFile) }] : [];
+    ? [{ role: "example", file: prepareExampleFile(item.file), exampleAnswerId: item.id || `example-${index + 1}` }] : []);
+  const sharedExample = design.exampleFile ? [{ role: "example", file: prepareExampleFile(design.exampleFile) }] : [];
   const referenceFiles = [
     ...(!structuredExamples.length ? sharedExample : []), ...attachedExamples,
   ];
@@ -4126,6 +4144,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
     files: firstPassFiles,
     tableReferenceFiles,
     tableReferenceCache,
+    parallelRecognition: individualRegrade,
     onProgress: (message) => onStage?.(message, "primary"),
   });
   let enhancedFiles = [];
@@ -4215,6 +4234,7 @@ async function gradeStudentAssignment({ course, design, targetStudents, assignme
         files: precisionFiles,
         tableReferenceFiles,
         tableReferenceCache,
+        parallelRecognition: individualRegrade,
         onProgress: (message) => onStage?.(message, "review"),
       });
       result = ChaejeomAI.mergePrecisionGradingResult(result, precisionResult, precisionCriterionIds, {
@@ -4261,7 +4281,10 @@ const STUDENT_REGRADE_STEPS = [
 
 function renderStudentRegradeProgress() {
   return `<section class="student-regrade-progress" data-student-regrade-progress hidden aria-label="학생별 AI 재채점 진행">
-    <div class="student-regrade-progress-head"><h3>학생별 AI 재채점 진행</h3><span data-regrade-elapsed aria-live="off"></span></div>
+    <div class="student-regrade-progress-head">
+      <h3>학생별 AI 재채점 진행</h3>
+      <div class="student-regrade-clock" role="timer" aria-live="off"><span data-regrade-clock-label>경과 시간</span><time data-regrade-elapsed datetime="PT0S">00:00</time></div>
+    </div>
     <ol class="student-regrade-steps">${STUDENT_REGRADE_STEPS.map(({ id, label }) => `<li data-regrade-step="${id}"><strong>${label}</strong><small data-regrade-step-status></small></li>`).join("")}</ol>
     <progress data-regrade-track max="${STUDENT_REGRADE_STEPS.length}" value="0" aria-label="학생별 재채점 단계"></progress>
     <p data-regrade-stage role="status" aria-atomic="true"></p>
@@ -4280,9 +4303,33 @@ function matchingStudentRegradePanel(run) {
   return panel?.dataset.regradeStudentId === run.studentId && panel.dataset.regradeCourseId === run.courseId ? panel : null;
 }
 
+function studentRegradeTiming(run, now = Date.now()) {
+  return run.timing || {
+    elapsedMs: Math.max(0, (run.gradingFinishedAt ?? now) - run.startedAt),
+    phaseMs: { ...run.phaseMs, [run.phase]: Math.max(0, now - run.phaseStartedAt) },
+  };
+}
+
 function updateStudentRegradeClock(run, panel = matchingStudentRegradePanel(run)) {
   const elapsed = panel?.querySelector("[data-regrade-elapsed]");
-  if (elapsed) elapsed.textContent = `경과 ${formatElapsedTime((run.finishedAt || Date.now()) - run.startedAt)}`;
+  if (!elapsed) return;
+  const timing = studentRegradeTiming(run);
+  elapsed.textContent = formatElapsedTime(timing.elapsedMs);
+  elapsed.dateTime = `PT${Math.floor(timing.elapsedMs / 1000)}S`;
+  if (run.status === "running") {
+    const activeStep = panel.querySelector(`[data-regrade-step="${run.phase}"] [data-regrade-step-status]`);
+    if (activeStep) activeStep.textContent = `진행 중 · ${formatElapsedTime(timing.phaseMs[run.phase])}`;
+  }
+}
+
+function savedStudentRegradeRun(courseId, result) {
+  const timing = result?.regradeTiming;
+  if (!Number.isFinite(timing?.elapsedMs) || timing.elapsedMs < 0) return null;
+  return {
+    courseId, studentId: result.studentId, status: "complete", phase: "save", timing,
+    reviewed: Number.isFinite(timing.phaseMs?.review),
+    detail: result.needsTeacherReview && !result.teacherConfirmed ? "최근 재채점 결과에 교사 확인이 필요한 항목이 있습니다." : "최근 재채점 결과를 저장했습니다.",
+  };
 }
 
 function updateStudentRegradeProgress(run, panel = matchingStudentRegradePanel(run)) {
@@ -4290,12 +4337,16 @@ function updateStudentRegradeProgress(run, panel = matchingStudentRegradePanel(r
   if (!card) return;
   const activeIndex = STUDENT_REGRADE_STEPS.findIndex(({ id }) => id === run.phase);
   const labels = { pending: "대기", active: "진행 중", done: "완료", skipped: "건너뜀", error: "실패" };
+  const timing = studentRegradeTiming(run);
   card.hidden = false;
   card.dataset.status = run.status;
+  card.querySelector("[data-regrade-clock-label]").textContent = run.status === "running" && run.phase !== "save" ? "경과 시간" : "채점 소요 시간";
   card.querySelectorAll("[data-regrade-step]").forEach((item, index) => {
     const state = studentRegradeStepState(index, activeIndex, run.status, run.reviewed);
+    const duration = timing.phaseMs?.[STUDENT_REGRADE_STEPS[index].id];
     item.dataset.state = state;
-    item.querySelector("[data-regrade-step-status]").textContent = labels[state];
+    item.querySelector("[data-regrade-step-status]").textContent = Number.isFinite(duration) && state !== "skipped"
+      ? `${labels[state]} · ${formatElapsedTime(duration)}` : labels[state];
     if (state === "active") item.setAttribute("aria-current", "step");
     else item.removeAttribute("aria-current");
   });
@@ -4322,17 +4373,28 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
   if (!submission || !design || !assignment || !student) { showToast("이 학생의 평가 설계 또는 답안 페이지를 찾지 못했습니다."); return; }
   if (!design.blankFile) { showToast("평가 설계에서 학생용 평가지 PDF를 먼저 등록해 주세요."); return; }
   if (!window.confirm(`${StudentWorkflow.rosterIdentity(student)} 학생만 AI로 다시 채점할까요? 이 학생의 기존 AI 점수와 교사 수정 내용은 새 결과로 교체됩니다.`)) return;
-  const run = { courseId: course.id, studentId, status: "running", phase: "prepare", detail: "AI 설정과 평가지 확인 중", startedAt: Date.now(), reviewed: false };
+  const startedAt = Date.now();
+  const run = { courseId: course.id, studentId, status: "running", phase: "prepare", detail: "AI 설정과 평가지 확인 중",
+    startedAt, phaseStartedAt: startedAt, phaseMs: {}, reviewed: false };
   studentRegradeRuns.set(course.id, run);
   const onStage = (detail, phase) => {
-    run.phase = phase;
+    if (run.status !== "running") return;
+    if (run.phase !== phase) {
+      const now = Date.now();
+      run.phaseMs[run.phase] = Math.max(0, now - run.phaseStartedAt);
+      run.phase = phase;
+      run.phaseStartedAt = now;
+      if (phase === "save") run.gradingFinishedAt = now;
+    }
     run.detail = detail;
     if (phase === "review") run.reviewed = true;
     updateStudentRegradeProgress(run);
   };
   updateStudentRegradeProgress(run);
   matchingStudentRegradePanel(run)?.querySelector("[data-student-regrade-progress]")?.scrollIntoView({ block: "start" });
-  const timer = window.setInterval(() => updateStudentRegradeClock(run), 1000);
+  const refreshClock = () => updateStudentRegradeClock(run);
+  const timer = window.setInterval(refreshClock, 1000);
+  document.addEventListener("visibilitychange", refreshClock);
   try {
     const [apiKey, selectedModel, keyStatus] = await Promise.all([
       loadGeminiApiKey(),
@@ -4342,10 +4404,18 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     if (!apiKey || !keyStatus?.generationVerified || keyStatus.model !== selectedModel) {
       throw new Error("설정에서 현재 모델의 실제 생성 테스트를 먼저 완료해 주세요.");
     }
-    const blankFile = asFile(design.blankFile);
-    const blankPageCount = await getPdfPageCount(blankFile);
+    let materials = studentRegradeMaterials.get(design);
+    if (!materials || materials.updatedAt !== design.updatedAt || materials.blankSource !== design.blankFile || materials.model !== selectedModel) {
+      materials = { updatedAt: design.updatedAt, blankSource: design.blankFile, model: selectedModel,
+        blankFile: asFile(design.blankFile), tableReferenceCache: new Map(), exampleFileCache: new Map() };
+      studentRegradeMaterials.set(design, materials);
+    }
+    const { blankFile, tableReferenceCache, exampleFileCache } = materials;
+    const blankPageCount = materials.blankPageCount ?? await getPdfPageCount(blankFile);
+    materials.blankPageCount = blankPageCount;
     if (blankPageCount !== assignment.pageNumbers.length) throw new Error(`학생용 평가지는 ${blankPageCount}쪽이고 이 학생 답안은 ${assignment.pageNumbers.length}쪽입니다.`);
-    const nextResult = await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile, onStage });
+    const nextResult = await gradeStudentAssignment({ course, design, targetStudents, assignment, apiKey, selectedModel, blankFile,
+      tableReferenceCache, exampleFileCache, individualRegrade: true, onStage });
     onStage("새 채점 결과를 브라우저에 저장 중", "save");
     let latest = await getCourse(course.id);
     if (latest?.submission && !Object.hasOwn(latest.submission, "pageAssignments") && submission.pageAssignments
@@ -4359,8 +4429,9 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     }
     const results = [...(latest.grading?.results || [])];
     const resultIndex = results.findIndex((item) => item.studentId === studentId);
-    if (resultIndex >= 0) results[resultIndex] = nextResult;
-    else results.push(nextResult);
+    const timedResult = { ...nextResult, regradeTiming: { elapsedMs: studentRegradeTiming(run).elapsedMs, phaseMs: { ...run.phaseMs } } };
+    if (resultIndex >= 0) results[resultIndex] = timedResult;
+    else results.push(timedResult);
     const errors = (latest.grading?.errors || []).filter((item) => item.studentId !== studentId);
     const selected = new Set(latest.submission.assignments.filter((item) => item.pageNumbers.length).map((item) => item.studentId));
     const selectedResultCount = results.filter((item) => selected.has(item.studentId)).length;
@@ -4378,10 +4449,11 @@ async function regradeSingleStudent(course, targetStudents, studentId) {
     run.detail = `재채점 실패 · ${friendlyError(error)}`;
   } finally {
     window.clearInterval(timer);
-    run.finishedAt = Date.now();
+    document.removeEventListener("visibilitychange", refreshClock);
+    run.timing = studentRegradeTiming(run);
     updateStudentRegradeProgress(run);
   }
-  showToast(run.detail);
+  showToast(`${run.detail} · 채점 소요 시간 ${formatElapsedTime(run.timing.elapsedMs)}`);
   if (run.status === "complete" && matchingStudentRegradePanel(run)) {
     try { await openStudentResult(course, targetStudents, studentId); }
     catch { showToast("재채점 결과를 저장했습니다. 상세 화면을 다시 열어 확인해 주세요."); }
@@ -5235,8 +5307,9 @@ async function openStudentResult(course, targetStudents, studentId) {
       </div>
     </div></section>`;
   const panel = slot.querySelector(".student-result-inline");
-  const regradeRun = studentRegradeRuns.get(course.id);
-  if (regradeRun?.studentId === studentId) updateStudentRegradeProgress(regradeRun, panel);
+  const currentRegrade = studentRegradeRuns.get(course.id);
+  const regradeRun = currentRegrade?.studentId === studentId ? currentRegrade : savedStudentRegradeRun(course.id, result);
+  if (regradeRun) updateStudentRegradeProgress(regradeRun, panel);
   const scoreInputs = Array.from(panel.querySelectorAll("[data-teacher-score]"));
   const scoreButtons = Array.from(panel.querySelectorAll("[data-score-choice]"));
   const pointScoreSelects = Array.from(panel.querySelectorAll("[data-example-point-score]"));
