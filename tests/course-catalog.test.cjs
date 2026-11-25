@@ -109,6 +109,9 @@ test("assessment design selects curriculum standards by domain and can generate 
   assert.doesNotMatch(source, /<strong>성취기준 입력<\/strong>/);
   assert.match(source, /normalizeAchievementLevels/);
   assert.match(source, /data-achievement-band-range/);
+  assert.match(source, /<strong>성취수준 입력<\/strong>[\s\S]*?data-achievement-score-range-basis[\s\S]*?<strong>문제별 채점기준 입력<\/strong>/);
+  assert.match(source, /data-achievement-band-range[^<]+<\/span><small data-achievement-band-score hidden/);
+  assert.doesNotMatch(source, /question-score-ranges/);
   assert.match(source, /achievement-threshold-placement[\s\S]*?<strong>성취수준 입력<\/strong>[\s\S]*?<strong>문제별 채점기준 입력<\/strong>/);
   assert.match(source, /평가 내용과 \$\{levels\.length\}개 성취수준을 자동 입력/);
   assert.match(source, /data-add-achievement>＋ 성취수준 묶음 추가/);

@@ -826,6 +826,7 @@ function designEditor(design, course) {
       <section class="design-editor-section">
         <div class="editor-section-title"><div><span>1</span><strong>성취수준 입력</strong><p>성취수준을 적용할 문항 범위를 정하세요. 각 범위의 획득점수 합계와 위 배점 기준에 따라 최종 성취수준이 결정됩니다.</p></div><button type="button" data-add-achievement>＋ 성취수준 묶음 추가</button></div>
         ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취수준에 연결할 교육과정 항목을 선택할 수 있습니다.</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 교육과정 자료를 찾지 못했습니다.</span></div>`}
+        <p class="achievement-score-range-basis" data-achievement-score-range-basis aria-live="polite"></p>
         <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course, performanceThresholds)).join("")}</div>
       </section>
 
@@ -905,7 +906,7 @@ function levelEditor(level, index = 0, bandDefinitions = performanceBandDefiniti
   const band = bandDefinitions[index] || bandDefinitions.at(-1);
   const savedDescription = level.description || "";
   const placeholder = ACHIEVEMENT_LEVEL_EXAMPLES[band.label] || "예: 이 수준에서 학생이 보여야 할 수행을 입력하세요.";
-  return `<div class="level-editor-row" data-level data-achievement-level data-level-id="${escapeHtml(level.id || "")}" data-band-id="${escapeHtml(band.id || "")}"><div class="achievement-level-band"><strong data-achievement-band-label>${escapeHtml(band.label)}</strong><span data-achievement-band-range>${escapeHtml(band.range)}</span></div><input name="levelBandId" type="hidden" value="${escapeHtml(band.id || "")}"><input name="levelLabel" type="hidden" value="${escapeHtml(band.label)}"><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea></div>`;
+  return `<div class="level-editor-row" data-level data-achievement-level data-level-id="${escapeHtml(level.id || "")}" data-band-id="${escapeHtml(band.id || "")}"><div class="achievement-level-band"><strong data-achievement-band-label>${escapeHtml(band.label)}</strong><span data-achievement-band-range>${escapeHtml(achievementLevelRatioRange(bandDefinitions, index))}</span><small data-achievement-band-score hidden></small></div><input name="levelBandId" type="hidden" value="${escapeHtml(band.id || "")}"><input name="levelLabel" type="hidden" value="${escapeHtml(band.label)}"><textarea name="levelDescription" rows="2" placeholder="${escapeHtml(placeholder)}" required>${escapeHtml(savedDescription)}</textarea></div>`;
 }
 
 function performanceThresholdEditor(value) {
@@ -1098,6 +1099,12 @@ function totalPerformanceScoreRanges(maximum, thresholds = DEFAULT_RUBRIC_PERFOR
   }));
 }
 
+function achievementLevelRatioRange(bands, index) {
+  return index >= bands.length - 1 && bands.length > 1
+    ? `0% 이상 ${formatThresholdPercent(bands.at(-2).minimum)}% 미만`
+    : bands[index].range;
+}
+
 function achievementBandForScore(score, maxScore, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maximum = Math.max(0, Number(maxScore || 0));
   if (!maximum) return { key: "pending", label: "산정 전", percentage: 0, range: "총점 배점 확인 필요" };
@@ -1204,7 +1211,7 @@ function syncPerformanceThresholdUI(form) {
       const storedBandId = row.querySelector('[name="levelBandId"]');
       row.dataset.bandId = band.id;
       if (label) label.textContent = band.label;
-      if (range) range.textContent = band.range;
+      if (range) range.textContent = achievementLevelRatioRange(definitions, index);
       if (storedLabel) storedLabel.value = band.label;
       if (storedBandId) storedBandId.value = band.id;
     });
@@ -1563,12 +1570,35 @@ function syncRubricQuestionNumbersFromExampleLinks(form) {
   });
 }
 
+function syncAchievementScoreRanges(form, total, thresholds) {
+  const basis = form.querySelector("[data-achievement-score-range-basis]");
+  if (!basis) return;
+  const valid = performanceThresholdsAreValid(performanceThresholdsFromForm(form));
+  const ranges = total > 0 && valid ? totalPerformanceScoreRanges(total, thresholds) : [];
+  const basisText = total <= 0 ? "3번 예시답안에 배점을 입력하면 성취수준별 점수 범위가 표시됩니다."
+    : valid ? `성취수준별 점수 범위 · 문제별 배점 총합 ${formatScore(total)}점 기준`
+      : "위 성취수준별 배점 기준을 확인해 주세요.";
+  if (basis.textContent !== basisText) basis.textContent = basisText;
+  form.querySelectorAll("[data-achievement-group]").forEach((group) => {
+    group.querySelectorAll("[data-achievement-band-score]").forEach((label, index) => {
+      const range = ranges[index];
+      label.hidden = !range;
+      if (!range) { label.textContent = ""; return; }
+      const { minimum, maximum, includesMaximum } = range;
+      label.textContent = minimum === maximum ? `${maximum}점`
+        : `${minimum}점 이상 ${maximum}점 ${includesMaximum ? "이하" : "미만"}`;
+    });
+  });
+}
+
 function syncQuestionScoreUI(form) {
   syncExamplePointTotals(form);
   syncExampleEvaluationElementOptions(form);
   syncRubricQuestionNumbersFromExampleLinks(form);
   const performanceThresholds = syncPerformanceThresholdUI(form);
   const questionScores = questionScoreMapFromForm(form);
+  const total = positiveDesignScore([...questionScores.values()].reduce((sum, score) => sum + score, 0));
+  syncAchievementScoreRanges(form, total, performanceThresholds);
   const rubricGroups = Array.from(form.querySelectorAll("[data-rubric-group]"));
   const elements = rubricGroups.map((group, index) => ({
     id: group.dataset.groupId || `rubric-${index + 1}`,
@@ -1618,22 +1648,13 @@ function syncQuestionScoreUI(form) {
       if (!groupedQuestionRows.has(key)) groupedQuestionRows.set(key, []);
       groupedQuestionRows.get(key).push({ label, score: rowScore });
     });
-    const total = entries.reduce((sum, [, score]) => sum + score, 0);
     const reflectedTotal = Array.from(reflectedScores.values()).reduce((sum, score) => sum + score, 0);
     const totalsMatch = Math.abs(total - reflectedTotal) <= 0.001;
     summary.classList.toggle("is-warning", !entries.length || !totalsMatch);
-    const validThresholds = performanceThresholdsAreValid(performanceThresholdsFromForm(form));
-    const scoreRanges = total > 0 && validThresholds ? totalPerformanceScoreRanges(positiveDesignScore(total), performanceThresholds) : [];
     summary.innerHTML = entries.length
       ? `<div class="question-score-summary-total">
           <strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b>
           <span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span>
-          <div class="question-score-ranges">
-            <strong>성취수준별 점수 범위</strong>
-            ${scoreRanges.length ? `<dl>${scoreRanges.map(({ label, minimum, maximum, includesMaximum }) => `
-              <div><dt>${escapeHtml(label)}</dt><dd>${minimum === maximum ? `${maximum}점` : `${minimum}점 이상 ${maximum}점 ${includesMaximum ? "이하" : "미만"}`}</dd></div>`).join("")}</dl>`
-              : "<p>위 성취수준별 배점 기준을 확인해 주세요.</p>"}
-          </div>
         </div>
         <div class="question-score-breakdown"><strong>문제별 배점 합산</strong><ul>${entries.map(([question, score]) => {
           const rows = groupedQuestionRows.get(question) || [];
@@ -1907,6 +1928,7 @@ function handleDesignEditorClick(event, form, course) {
   if (addAchievement) {
     const thresholds = syncPerformanceThresholdUI(form);
     form.querySelector("[data-achievement-groups]").insertAdjacentHTML("beforeend", achievementEditor({ id: crypto.randomUUID(), itemRange: "", standard: "", levels: defaultAchievementLevels(thresholds) }, form.querySelectorAll("[data-achievement-group]").length, course, thresholds));
+    syncQuestionScoreUI(form);
     return;
   }
   const removeAchievement = event.target.closest("[data-remove-achievement]");
@@ -2018,6 +2040,7 @@ function handleAchievementCurriculumChange(event, form, course) {
     { id: crypto.randomUUID(), label: "하", description: standard.levels["하"] || "" },
   ], thresholds);
   group.querySelector("[data-levels]").innerHTML = levels.map((level, index) => levelEditor(level, index, definitions)).join("");
+  syncQuestionScoreUI(form);
   setDesignStatus(form, `[${standard.code}] 평가 내용과 ${levels.length}개 성취수준을 자동 입력했습니다.`);
 }
 
