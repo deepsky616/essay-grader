@@ -23,10 +23,10 @@ const COURSE_SUBJECTS_BY_GRADE = Object.freeze({
   "6": Object.freeze(["국어", "사회", "도덕", "수학", "과학", "실과", "체육", "음악", "미술", "영어"]),
 });
 const ACHIEVEMENT_LEVEL_EXAMPLES = {
-  "매우잘함": "예: 성취기준을 충분히 이해하고 조건에 맞게 정확하고 완전하게 수행한다.",
-  "잘함": "예: 성취기준을 대체로 이해하고 수행하나 일부 보완이 필요하다.",
-  "보통": "예: 성취기준을 부분적으로 이해하고 핵심 내용을 일부 수행한다.",
-  "노력요함": "예: 성취기준과 관련된 기초적인 시도를 하거나 추가적인 도움이 필요하다.",
+  "매우잘함": "예: 학습 목표를 충분히 이해하고 조건에 맞게 정확하고 완전하게 수행한다.",
+  "잘함": "예: 학습 목표를 대체로 이해하고 수행하나 일부 보완이 필요하다.",
+  "보통": "예: 학습 목표를 부분적으로 이해하고 핵심 내용을 일부 수행한다.",
+  "노력요함": "예: 학습 목표와 관련된 기초적인 시도를 하거나 추가적인 도움이 필요하다.",
 };
 const DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS = Object.freeze({ excellent: 80, good: 60, average: 40, effort: 20 });
 const RUBRIC_PERFORMANCE_BANDS = Object.freeze([
@@ -701,7 +701,7 @@ function renderDesignTab(course) {
   const designs = Array.isArray(course.designs) ? course.designs : [];
   const editing = editingDesignId === "new" ? createEmptyDesign() : designs.find((design) => design.id === editingDesignId);
   return `
-    <div class="workflow-heading"><div><p class="section-kicker">STEP 2</p><h2>평가 설계</h2><p>성취기준, 문제별 평가요소 기준, 수식·도형을 포함한 예시답안을 설계합니다.</p></div><button class="primary-action" type="button" data-add-design>설계 추가</button></div>
+    <div class="workflow-heading"><div><p class="section-kicker">STEP 2</p><h2>평가 설계</h2><p>성취수준, 문제별 채점기준, 수식·도형을 포함한 예시답안을 설정합니다.</p></div><button class="primary-action" type="button" data-add-design>설계 추가</button></div>
     ${designs.length ? `<div class="design-list">${designs.map((design, index) => designCard(design, index)).join("")}</div>` : `<div class="inline-empty"><strong>아직 평가 설계가 없습니다.</strong><p>설계 추가 버튼을 눌러 평가(과제)명과 기준을 입력해 주세요.</p></div>`}
     ${editing ? designEditor(editing, course) : ""}
     <div class="workflow-next"><a class="secondary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=targets">← 평가 대상</a><a class="primary-action" href="#/courses/${encodeURIComponent(course.id)}?tab=submissions">과제물 관리로 →</a></div>`;
@@ -710,7 +710,7 @@ function renderDesignTab(course) {
 function designCard(design, index) {
   const rubricCriteria = normalizeRubricCriteria(design.rubricCriteria || [], normalizePerformanceThresholds(design.performanceThresholds));
   const scoreLevelCount = rubricCriteria.reduce((sum, item) => sum + item.scoreLevels.length, 0);
-  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취기준 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(assessmentDesignTotalScore(design))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
+  return `<article class="design-card"><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(design.taskName)}</strong><p>성취수준 묶음 ${design.achievementGroups?.length || 0}개 · 평가요소 ${rubricCriteria.length}개 · 배점기준 ${scoreLevelCount}개 · ${formatScore(assessmentDesignTotalScore(design))}점 · 학생용 평가지 ${design.blankFile ? "등록" : "미등록"}</p></div><button type="button" data-edit-design="${escapeHtml(design.id)}">수정</button><button type="button" class="danger-text" data-delete-design="${escapeHtml(design.id)}">삭제</button></article>`;
 }
 
 function createEmptyDesign() {
@@ -788,11 +788,7 @@ function normalizeAchievementLevels(levels, thresholds = DEFAULT_RUBRIC_PERFORMA
       id: matched?.id || crypto.randomUUID(),
       bandId: band.id,
       label: band.label,
-      description: matched?.description || band.defaultCriterion
-        .replace(/평가요소를/g, "성취기준을")
-        .replace(/평가요소와/g, "성취기준과")
-        .replace(/평가요소가/g, "성취기준이")
-        .replace(/평가요소/g, "성취기준"),
+      description: matched?.description || band.defaultCriterion.replace(/평가요소/g, "학습 목표"),
       range: band.range,
     };
   });
@@ -828,8 +824,8 @@ function designEditor(design, course) {
       </div>
 
       <section class="design-editor-section">
-        <div class="editor-section-title"><div><span>1</span><strong>성취수준 입력</strong><p>성취기준을 선택하고 문항 범위를 연결하세요. 각 범위의 평가요소 점수 합계에 위 성취수준별 배점 기준을 적용해 최종 수준을 결정합니다.</p></div><button type="button" data-add-achievement>＋ 성취기준 추가</button></div>
-        ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취기준 선택 가능</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 성취기준 자료를 찾지 못했습니다.</span></div>`}
+        <div class="editor-section-title"><div><span>1</span><strong>성취수준 입력</strong><p>성취수준을 적용할 문항 범위를 정하세요. 각 범위의 획득점수 합계와 위 배점 기준에 따라 최종 성취수준이 결정됩니다.</p></div><button type="button" data-add-achievement>＋ 성취수준 묶음 추가</button></div>
+        ${Object.keys(curriculumDomains).length ? `<div class="curriculum-context"><strong>${escapeHtml(course.grade)}학년 · ${escapeHtml(course.subject)}</strong><span>${Object.keys(curriculumDomains).length}개 영역에서 성취수준에 연결할 교육과정 항목을 선택할 수 있습니다.</span></div>` : `<div class="curriculum-context is-warning"><strong>직접 입력을 사용해 주세요.</strong><span>이 학년·교과의 교육과정 자료를 찾지 못했습니다.</span></div>`}
         <div data-achievement-groups>${(design.achievementGroups || []).map((group, index) => achievementEditor(group, index, course, performanceThresholds)).join("")}</div>
       </section>
 
@@ -889,7 +885,7 @@ function curriculumDomainOptions(course, selectedDomain = "") {
 
 function curriculumStandardOptions(course, domain, selectedCode = "") {
   const standards = curriculumForCourse(course)[domain] || [];
-  return `<option value="">${domain ? "성취기준을 선택하세요" : "영역을 먼저 선택하세요"}</option>${standards.map((standard) => `<option value="${escapeHtml(standard.code)}" ${standard.code === selectedCode ? "selected" : ""}>[${escapeHtml(standard.code)}] ${escapeHtml(standard.statement)}</option>`).join("")}`;
+  return `<option value="">${domain ? "교육과정 항목을 선택하세요" : "영역을 먼저 선택하세요"}</option>${standards.map((standard) => `<option value="${escapeHtml(standard.code)}" ${standard.code === selectedCode ? "selected" : ""}>[${escapeHtml(standard.code)}] ${escapeHtml(standard.statement)}</option>`).join("")}`;
 }
 
 function achievementEditor(group, index, course, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
@@ -897,9 +893,9 @@ function achievementEditor(group, index, course, thresholds = DEFAULT_RUBRIC_PER
   const definitions = performanceBandDefinitions(thresholds);
   const levels = normalizeAchievementLevels(group.levels, thresholds);
   return `<article class="achievement-editor-card" data-achievement-group data-group-id="${escapeHtml(group.id || "")}" data-standard-code="${escapeHtml(selection.code)}">
-    <div class="achievement-editor-head"><strong>성취기준 ${index + 1}</strong><button type="button" data-remove-achievement>삭제</button></div>
-    <div class="curriculum-picker"><label>교과 영역<select name="achievementDomain">${curriculumDomainOptions(course, selection.domain)}</select></label><label>성취기준 선택<select name="achievementCode" ${selection.domain ? "" : "disabled"}>${curriculumStandardOptions(course, selection.domain, selection.code)}</select></label></div>
-    <div class="achievement-input-grid"><label>문항 범위<input name="achievementRange" value="${escapeHtml(group.itemRange || "")}" placeholder="예: 1~3번" required></label><label>성취기준 내용 <small>선택 후 필요한 경우 교사가 직접 수정할 수 있습니다.</small><textarea name="achievementStandard" rows="3" placeholder="직접 입력하거나 위 목록에서 선택하세요." required>${escapeHtml(group.standard || "")}</textarea></label></div>
+    <div class="achievement-editor-head"><strong>성취수준 묶음 ${index + 1}</strong><button type="button" data-remove-achievement>삭제</button></div>
+    <div class="curriculum-picker"><label>교과 영역<select name="achievementDomain">${curriculumDomainOptions(course, selection.domain)}</select></label><label>성취수준에 연결할 교육과정 항목<select name="achievementCode" ${selection.domain ? "" : "disabled"}>${curriculumStandardOptions(course, selection.domain, selection.code)}</select></label></div>
+    <div class="achievement-input-grid"><label>문항 범위<input name="achievementRange" value="${escapeHtml(group.itemRange || "")}" placeholder="예: 1~3번" required></label><label>성취수준 평가 내용 <small>교육과정에서 가져오거나 직접 작성할 수 있습니다.</small><textarea name="achievementStandard" rows="3" placeholder="평가할 학습 목표나 수행 내용을 입력하세요." required>${escapeHtml(group.standard || "")}</textarea></label></div>
     <div class="achievement-level-guide"><strong>평가요소 합산으로 결정되는 성취수준</strong><span>문항 범위에 연결된 모든 평가요소의 획득점수 ÷ 총 배점으로 자동 산정됩니다.</span></div>
     <div class="level-editor-list" data-levels>${levels.map((level, levelIndex) => levelEditor(level, levelIndex, definitions)).join("")}</div>
   </article>`;
@@ -1089,15 +1085,30 @@ function performanceBandDefinitions(thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRE
   });
 }
 
+function performanceScoreBoundary(maximum, percentage) {
+  return Number((maximum * percentage / 100).toFixed(6));
+}
+
+function totalPerformanceScoreRanges(maximum, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
+  return performanceBandDefinitions(thresholds).map((band, index, bands) => ({
+    label: band.label,
+    minimum: index === bands.length - 1 ? 0 : performanceScoreBoundary(maximum, band.minimum),
+    maximum: index === 0 ? maximum : performanceScoreBoundary(maximum, bands[index - 1].minimum),
+    includesMaximum: index === 0,
+  }));
+}
+
 function achievementBandForScore(score, maxScore, thresholds = DEFAULT_RUBRIC_PERFORMANCE_THRESHOLDS) {
   const maximum = Math.max(0, Number(maxScore || 0));
   if (!maximum) return { key: "pending", label: "산정 전", percentage: 0, range: "총점 배점 확인 필요" };
-  const percentage = Math.max(0, Math.min(100, (Number(score || 0) / maximum) * 100));
+  const points = Math.max(0, Math.min(maximum, Number(score || 0)));
+  const comparisonPoints = Number(points.toFixed(6));
+  const percentage = (points / maximum) * 100;
   const definitions = performanceBandDefinitions(thresholds);
-  let index = definitions.findIndex((band) => percentage >= band.minimum);
+  let index = definitions.findIndex((band) => comparisonPoints >= performanceScoreBoundary(maximum, band.minimum));
   if (index < 0) index = definitions.length - 1;
   const band = definitions[index];
-  const range = index === definitions.length - 1 && percentage < band.minimum
+  const range = index === definitions.length - 1 && comparisonPoints < performanceScoreBoundary(maximum, band.minimum)
     ? `${formatThresholdPercent(definitions[index - 1]?.minimum || 100)}% 미만 · 미응답·근거 없음 포함`
     : band.range;
   return { key: band.key, label: band.label, percentage: Math.round(percentage * 10) / 10, range };
@@ -1611,8 +1622,26 @@ function syncQuestionScoreUI(form) {
     const reflectedTotal = Array.from(reflectedScores.values()).reduce((sum, score) => sum + score, 0);
     const totalsMatch = Math.abs(total - reflectedTotal) <= 0.001;
     summary.classList.toggle("is-warning", !entries.length || !totalsMatch);
+    const validThresholds = performanceThresholdsAreValid(performanceThresholdsFromForm(form));
+    const scoreRanges = total > 0 && validThresholds ? totalPerformanceScoreRanges(positiveDesignScore(total), performanceThresholds) : [];
     summary.innerHTML = entries.length
-      ? `<div class="question-score-summary-total"><strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b><span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span></div><div class="question-score-breakdown"><strong>문제별 배점 합산</strong><ul>${entries.map(([question, score]) => { const rows = groupedQuestionRows.get(question) || []; const reflected = reflectedScores.get(question) || 0; const matches = Math.abs(score - reflected) <= 0.001; const calculation = rows.map((item) => `${item.label} ${formatScore(item.score)}점`).join(" + ") || `문제 ${question} ${formatScore(score)}점`; return `<li><div><span>문제 ${escapeHtml(question)}</span><b>${formatScore(score)}점</b></div><small>${escapeHtml(calculation)}</small><em class="question-score-reflection ${matches ? "is-match" : "is-mismatch"}">채점기준 반영 ${formatScore(reflected)}점${matches ? " · 일치" : " · 확인 필요"}</em></li>`; }).join("")}</ul></div>`
+      ? `<div class="question-score-summary-total">
+          <strong>문제별 배점 총합</strong><b>${formatScore(total)}점</b>
+          <span>채점기준 반영 ${formatScore(reflectedTotal)}점${totalsMatch ? "" : " · 확인 필요"}</span>
+          <div class="question-score-ranges">
+            <strong>성취수준별 점수 범위</strong>
+            ${scoreRanges.length ? `<dl>${scoreRanges.map(({ label, minimum, maximum, includesMaximum }) => `
+              <div><dt>${escapeHtml(label)}</dt><dd>${minimum === maximum ? `${maximum}점` : `${minimum}점 이상 ${maximum}점 ${includesMaximum ? "이하" : "미만"}`}</dd></div>`).join("")}</dl>`
+              : "<p>위 성취수준별 배점 기준을 확인해 주세요.</p>"}
+          </div>
+        </div>
+        <div class="question-score-breakdown"><strong>문제별 배점 합산</strong><ul>${entries.map(([question, score]) => {
+          const rows = groupedQuestionRows.get(question) || [];
+          const reflected = reflectedScores.get(question) || 0;
+          const matches = Math.abs(score - reflected) <= 0.001;
+          const calculation = rows.map((item) => `${item.label} ${formatScore(item.score)}점`).join(" + ") || `문제 ${question} ${formatScore(score)}점`;
+          return `<li><div><span>문제 ${escapeHtml(question)}</span><b>${formatScore(score)}점</b></div><small>${escapeHtml(calculation)}</small><em class="question-score-reflection ${matches ? "is-match" : "is-mismatch"}">채점기준 반영 ${formatScore(reflected)}점${matches ? " · 일치" : " · 확인 필요"}</em></li>`;
+        }).join("")}</ul></div>`
       : `<div><strong>문제별 배점을 먼저 입력해 주세요.</strong><span>3번 예시답안의 문제 번호와 배점을 입력하면 이곳에 총점이 표시됩니다.</span></div>`;
   }
   syncRubricAiScoreSummaries(form);
@@ -1978,7 +2007,7 @@ function handleAchievementCurriculumChange(event, form, course) {
   const code = event.target.value;
   if (!code) { group.dataset.standardCode = ""; return; }
   const standard = globalThis.CurriculumStandards?.find?.(course.grade, course.subject, code);
-  if (!standard) { setDesignStatus(form, "선택한 성취기준 자료를 찾지 못했습니다. 다시 선택해 주세요.", true); return; }
+  if (!standard) { setDesignStatus(form, "선택한 교육과정 항목을 찾지 못했습니다. 다시 선택해 주세요.", true); return; }
   group.dataset.standardCode = standard.code;
   group.querySelector('[name="achievementStandard"]').value = `[${standard.code}] ${standard.statement}`;
   const thresholds = syncPerformanceThresholdUI(form);
@@ -1989,7 +2018,7 @@ function handleAchievementCurriculumChange(event, form, course) {
     { id: crypto.randomUUID(), label: "하", description: standard.levels["하"] || "" },
   ], thresholds);
   group.querySelector("[data-levels]").innerHTML = levels.map((level, index) => levelEditor(level, index, definitions)).join("");
-  setDesignStatus(form, `[${standard.code}] 성취기준과 ${levels.length}개 성취수준을 자동 입력했습니다.`);
+  setDesignStatus(form, `[${standard.code}] 평가 내용과 ${levels.length}개 성취수준을 자동 입력했습니다.`);
 }
 
 function clearChangedCurriculumSelection(textarea, course) {
@@ -2433,7 +2462,7 @@ async function extractDesignDocument(form, kind, course) {
     updateDocumentAnalysisProgress(form, kind, {
       phase: 2,
       title: "AI가 문서 내용을 구조화하는 중",
-      message: kind === "design" ? "성취기준·채점기준·예시답안을 구분해 읽고 있습니다." : kind === "rubric" ? "문제별 평가요소와 배점 기준을 표에서 찾고 있습니다." : "문제별 예시답안과 수식을 읽고 있습니다.",
+      message: kind === "design" ? "성취수준·채점기준·예시답안을 구분해 읽고 있습니다." : kind === "rubric" ? "문제별 평가요소와 배점 기준을 표에서 찾고 있습니다." : "문제별 예시답안과 수식을 읽고 있습니다.",
     });
     let fractionProgressWarning = "";
     let skipVerification = false;
@@ -2489,7 +2518,7 @@ async function extractDesignDocument(form, kind, course) {
       const achievements = Array.isArray(result.achievementGroups) ? result.achievementGroups : [];
       const rubrics = normalizeRubricCriteria(result.rubricCriteria || [], performanceThresholds);
       const rawExamples = Array.isArray(result.exampleAnswers) ? result.exampleAnswers : [];
-      if (!achievements.length || !rubrics.length || !rawExamples.length) throw new Error("문서에서 성취기준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
+      if (!achievements.length || !rubrics.length || !rawExamples.length) throw new Error("문서에서 성취수준, 채점기준, 예시답안을 모두 찾지 못했습니다.");
       if (result.taskName) form.elements.taskName.value = String(result.taskName).trim();
       form.querySelector("[data-achievement-groups]").innerHTML = achievements.map((group, index) => achievementEditor({
         ...group,
@@ -2520,7 +2549,7 @@ async function extractDesignDocument(form, kind, course) {
     }
     if (kind !== "rubric") renderExampleMathReview(form);
     const note = result.notes?.length ? ` 확인사항: ${result.notes.join(" / ")}` : "";
-    const completion = kind === "design" ? "성취기준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
+    const completion = kind === "design" ? "성취수준·채점기준·예시답안 자동 입력을 마쳤습니다." : "자동 입력을 마쳤습니다.";
     setDesignStatus(form, `${file.name} ${completion}${note}`);
     updateDocumentAnalysisProgress(form, kind, {
       phase: 4,
@@ -2738,8 +2767,8 @@ function collectDesignForm(form, existing) {
       file,
     };
   });
-  if (!achievementGroups.length || !rubricCriteria.length || !exampleAnswers.length) throw new Error("성취기준, 채점기준, 예시답안을 각각 한 개 이상 입력해 주세요.");
-  if (achievementGroups.some((group) => !group.itemRange || !group.standard || group.levels.some((level) => !level.label || !level.description))) throw new Error("성취기준과 모든 성취수준을 입력해 주세요.");
+  if (!achievementGroups.length || !rubricCriteria.length || !exampleAnswers.length) throw new Error("성취수준 묶음, 채점기준, 예시답안을 각각 한 개 이상 입력해 주세요.");
+  if (achievementGroups.some((group) => !group.itemRange || !group.standard || group.levels.some((level) => !level.label || !level.description))) throw new Error("각 성취수준 묶음의 문항 범위와 평가 내용, 단계별 설명을 입력해 주세요.");
   if (rubricCriteria.some((item) => !item.questionNumber || !item.evaluationElement || !item.scoreLevels.length || item.scoreLevels.some((level) => !level.criterion || level.score < 0))) throw new Error("각 평가요소의 문제 번호와 배점별 채점기준을 모두 입력해 주세요.");
   if (rubricCriteria.some((item) => new Set(item.scoreLevels.map((level) => String(level.score))).size !== item.scoreLevels.length)) throw new Error("같은 평가요소 안에서는 서로 다른 배점을 입력해 주세요.");
   if (exampleAnswers.some((item) => !item.questionNumber || (!item.answerText && !item.mathNotation && !item.visualDescription && !item.file))) throw new Error("각 예시답안에 문제 번호와 답안 내용 또는 파일을 입력해 주세요.");

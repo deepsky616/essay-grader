@@ -703,10 +703,17 @@ a { color: inherit; text-decoration: none; }
 .editor-section-title > button, .mini-add, .document-auto-row button { padding: 8px 11px; border: 1px solid var(--ink); border-radius: 8px; background: white; color: var(--blue); cursor: pointer; font-size: 13px; font-weight: 900; }
 .rubric-section-title > button { flex: 0 0 auto; min-width: max-content; white-space: nowrap; word-break: keep-all; }
 .question-score-summary { display: grid; grid-template-columns: minmax(210px,.72fr) minmax(0,1.28fr); gap: 14px; align-items: stretch; margin-bottom: 13px; padding: 13px 15px; border: 1px solid rgba(49,84,214,.24); border-radius: 11px; background: rgba(233,239,255,.5); }
-.question-score-summary-total { display: grid; grid-template-columns: auto 1fr; gap: 4px 9px; align-content: center; min-width: 0; padding: 10px 12px; border-radius: 9px; background: white; }
+.question-score-summary-total { display: grid; grid-template-columns: auto 1fr; gap: 4px 9px; align-content: start; min-width: 0; padding: 10px 12px; border-radius: 9px; background: white; }
 .question-score-summary-total > strong { align-self: center; font-size: 14px; }
 .question-score-summary-total > b { color: var(--blue); font-size: 22px; }
 .question-score-summary-total > span { grid-column: 1 / -1; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.question-score-ranges { grid-column: 1 / -1; min-width: 0; margin-top: 5px; padding-top: 9px; border-top: 1px solid var(--line); }
+.question-score-ranges > strong { display: block; color: var(--ink); font-size: 14px; }
+.question-score-ranges dl { display: grid; gap: 5px; margin: 6px 0 0; }
+.question-score-ranges dl > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.9fr); align-items: baseline; gap: 8px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.question-score-ranges dt { font-weight: 850; }
+.question-score-ranges dd { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+.question-score-ranges p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .question-score-breakdown { min-width: 0; }
 .question-score-breakdown > strong { display: block; margin-bottom: 7px; color: var(--ink); font-size: 14px; }
 .question-score-summary ul { display: grid; grid-template-columns: repeat(auto-fit,minmax(185px,1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
